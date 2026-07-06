@@ -2,6 +2,8 @@
 
 AI-powered interactive HTML courseware generator for international Chinese teaching.
 
+专门用于国际中文教育课件制作的开源 skills、workflow 与互动课件生成 demo。
+
 This v0.1 implementation is a local-first portfolio demo. It runs a teacher-facing web app and a FastAPI backend that can parse PPTX/PDF materials, generate a structured lesson blueprint with placeholder AI providers, render offline-ready HTML courseware, run quality checks, and export a ZIP package.
 
 ## v0.1 Demo Status
