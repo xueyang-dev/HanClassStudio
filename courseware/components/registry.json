@@ -1,0 +1,59 @@
+{
+  "$schema": "hanclassstudio.component_registry.v1",
+  "AudioButton": {
+    "renderer": "builtin",
+    "requires": ["audio_key", "label"],
+    "optional": ["audio_text", "lang"],
+    "quality": ["audio_exists", "label_not_empty"],
+    "accessible": true,
+    "experimental": false
+  },
+  "VocabularyFlipCard": {
+    "renderer": "builtin",
+    "requires": ["items"],
+    "optional": ["audio_key", "audio_text", "scaffold_text"],
+    "quality": ["items_not_empty", "vocab_has_zh"],
+    "accessible": true,
+    "experimental": false
+  },
+  "SentenceDragBuilder": {
+    "renderer": "builtin",
+    "requires": ["words", "answer"],
+    "optional": ["feedback_correct", "feedback_wrong", "hint"],
+    "quality": ["answer_not_empty", "answer_in_words"],
+    "accessible": true,
+    "experimental": false
+  },
+  "ListenAndChoose": {
+    "renderer": "builtin",
+    "requires": ["choices", "answer", "audio_key"],
+    "optional": ["audio_text", "feedback_correct", "feedback_wrong", "hint"],
+    "quality": ["answer_in_choices", "audio_exists"],
+    "accessible": true,
+    "experimental": false
+  },
+  "MatchGame": {
+    "renderer": "builtin",
+    "requires": ["pairs"],
+    "optional": ["title", "hint"],
+    "quality": ["pairs_not_empty"],
+    "accessible": true,
+    "experimental": false
+  },
+  "CharacterFormation": {
+    "renderer": "builtin",
+    "requires": ["character", "parts", "explanation"],
+    "optional": ["image_key"],
+    "quality": ["character_not_empty", "parts_not_empty"],
+    "accessible": true,
+    "experimental": false
+  },
+  "ClassroomGame": {
+    "renderer": "builtin",
+    "requires": ["game_type", "items"],
+    "optional": ["timer_seconds"],
+    "quality": ["items_not_empty"],
+    "accessible": true,
+    "experimental": true
+  }
+}

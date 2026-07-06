@@ -1,0 +1,16 @@
+{
+  "name": "hanclassstudio",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "PYTHONPATH=apps/api/src uv run --project apps/api python -m uvicorn hcs_api.main:app --reload --reload-dir apps/api/src --host 127.0.0.1 --port 8000",
+    "dev:web": "npm --prefix apps/web run dev",
+    "install:web": "npm --prefix apps/web install",
+    "build:web": "npm --prefix apps/web run build",
+    "test:api": "PYTHONPATH=apps/api/src uv run --project apps/api python -m pytest apps/api/tests",
+    "test": "npm run test:api && npm run build:web"
+  }
+}

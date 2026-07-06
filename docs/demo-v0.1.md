@@ -1,0 +1,78 @@
+# HanClassStudio v0.1 Demo
+
+HanClassStudio is an AI-assisted interactive courseware generation system for international Chinese teaching. It turns source lesson material into a structured, inspectable project workspace, then renders slide-based offline HTML courseware with interaction components, language scaffolding, quality checks, and ZIP export.
+
+The v0.1 demo is local-first and portfolio-oriented. It proves the product workflow and architecture without connecting real LLM, image, TTS, or video providers.
+
+## What v0.1 Can Do
+
+- Upload PPTX or PDF teaching material.
+- Parse source pages into `sources/source_material.json`.
+- Confirm a course profile for learner level, target students, lesson mode, and scaffolding language.
+- Generate `lesson_spec.md`, `spec_lock.json`, `lesson_blueprint.json`, `interaction_plan.json`, and `media_plan.json`.
+- Render a slide-based `courseware/lesson.html` runtime.
+- Support interactive components:
+  - `AudioButton`
+  - `VocabularyFlipCard`
+  - `SentenceDragBuilder`
+  - `ListenAndChoose`
+  - `MatchGame`
+  - `CharacterFormation`
+- Switch runtime language display between Chinese, scaffolding hints, and bilingual mode.
+- Run a quality gate before export.
+- Export an offline ZIP package with HTML, assets, data artifacts, quality report, and export manifest.
+- Generate Agent Handoff files for Claude Code, Codex, Hermes, or Cursor Agent.
+- Validate external Agent artifact edits before render/export.
+
+## Demo Flow
+
+1. Start the backend and frontend:
+
+   ```bash
+   npm run dev:api
+   npm run dev:web
+   ```
+
+2. Open the web workbench at `http://localhost:5173`.
+3. Upload a PPTX or PDF.
+4. Review and save the course profile.
+5. Choose the generation mode and scaffolding language.
+6. Click "一键生成课件".
+7. Inspect:
+   - route badge
+   - pipeline phases
+   - quality panel
+   - Spec Lock Summary
+   - Artifact Inspector
+8. Open the rendered preview and demonstrate:
+   - slide navigation
+   - keyboard left/right navigation
+   - fullscreen
+   - language mode toggle
+   - interactive components
+9. Generate an Agent Handoff package.
+10. Show `agent/AGENT_TASK.md` and `agent/AGENT_RULES.md`.
+11. Explain that an external Agent may edit canonical artifacts, then HanClassStudio validates, renders, runs quality, and exports.
+12. Download the ZIP and open `lesson.html` offline.
+
+## Current Boundaries
+
+- Real LLM providers are not wired into the demo path by default.
+- Image generation uses placeholder SVGs unless provider code is explicitly configured later.
+- Audio uses placeholder demo tones unless a TTS provider is added later.
+- Video is represented by planning/fallback only.
+- The runtime is a fixed template; Agents should not generate custom CSS or edit `courseware/lesson.html`.
+- Existing projects under `runtime/projects` are development artifacts and are not migrated.
+- Quality gate is pragmatic v0.1 coverage, not a full pedagogical review engine.
+
+## Roadmap
+
+- v0.2 Provider layer for configurable LLM, image, TTS, OCR, and video services.
+- Template discovery and richer runtime themes.
+- Streaming pipeline progress through SSE or WebSocket.
+- Deeper interaction authoring UI.
+- More classroom activity components.
+- Teacher review checkpoints for Agent changes.
+- Export variants for LMS packages or SCORM-like delivery.
+- Persistent project library and version history.
+
