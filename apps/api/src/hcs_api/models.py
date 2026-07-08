@@ -594,7 +594,7 @@ class RenderedArtifactReview(BaseModel):
 StateType = Literal["unseen", "noticed", "recognized", "understood", "controlled_production", "communicative_use", "transfer"]
 EvidenceType = Literal["deterministic_choice", "matching", "listen_choose", "constrained_production", "role_play", "semantic_judgment", "teacher_observation"]
 AssessmentMode = Literal["deterministic", "rubric_ai", "teacher", "hybrid"]
-TransitionPolicy = Literal["all_required", "any_required", "custom_threshold"]
+TransitionPolicy = Literal["all_required", "any_required", "custom_threshold", "exposure_only"]
 
 
 class LearningGoal(BaseModel):
@@ -621,6 +621,7 @@ class LearningTransition(BaseModel):
     required_evidence_ids: list[str] = Field(default_factory=list)
     optional_evidence_ids: list[str] = Field(default_factory=list)
     transition_policy: TransitionPolicy = "all_required"
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvidenceSpec(BaseModel):

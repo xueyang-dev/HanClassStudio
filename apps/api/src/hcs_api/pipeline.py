@@ -181,23 +181,44 @@ def run_full_pipeline(
     write_json(project_id, "learning/activity_plan.json", activity_plan.model_dump(mode="json"))
     write_json(project_id, "quality/evidence_alignment_report.json", alignment.model_dump(mode="json"))
 
-    # Pipeline gate: blocked alignment stops classroom render/export
+    # Pipeline gate: blocked alignment stops classroom render/export, writes diagnostic artifact
     if alignment.state == "blocked":
-        # Write kernel revision plan
-        from .review_agent import build_revision_plan
-        from .models import LessonBlueprint as _LB
-        write_json(project_id, "quality/kernel_revision_plan.json", {
+        from .storage import write_json as _wj, ensure_project as _ep
+        _wj(project_id, "quality/kernel_revision_plan.json", {
             "schema": "hanclassstudio.kernel_revision_plan.v1",
             "state": "blocked",
             "blocking_issues": alignment.blocking[:10],
-            "message": "Evidence alignment blocked. Only diagnostic export allowed.",
-            "recommended_action": "Fix evidence alignment before classroom export.",
+            "message": "Evidence alignment blocked. Classroom render/export stopped. Diagnostic artifact generated.",
         })
-        # Don't render classroom HTML/PPTX - return early with diagnostic-only state
+        # Generate diagnostic ZIP with kernel artifacts only
+        import zipfile, datetime
+        diag_root = _ep(project_id)
+        diag_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        diag_path = diag_root / "exports" / f"HanClassStudio_Kernel_Diagnostic_{diag_ts}.zip"
+        diag_path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(diag_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for src_name, arc_name in [
+                ("learning/learning_state_plan.json", "learning/learning_state_plan.json"),
+                ("learning/evidence_plan.json", "learning/evidence_plan.json"),
+                ("learning/activity_plan.json", "learning/activity_plan.json"),
+                ("quality/evidence_alignment_report.json", "quality/evidence_alignment_report.json"),
+                ("quality/kernel_revision_plan.json", "kernel_revision_plan.json"),
+                ("sources/source_material.json", "source_material.json"),
+            ]:
+                fp = diag_root / src_name
+                if fp.exists():
+                    zf.write(fp, arc_name)
+        _wj(project_id, "exports/export_manifest.json", {
+            "project_id": project_id,
+            "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+            "export_type": "kernel_diagnostic",
+            "diagnostic": True,
+            "kernel_alignment_state": "blocked",
+        })
+        # Return project state without classroom render
         manifest = generate_project_media(project_root, blueprint, settings)
         write_model(project_id, "asset_manifest.json", manifest)
-        from .storage import get_project_state as _get_state
-        return _get_state(project_id)
+        return get_project_state(project_id)
 
     manifest = generate_project_media(project_root, blueprint, settings)
     write_model(project_id, "asset_manifest.json", manifest)

@@ -79,7 +79,7 @@ def _build_greeting_state_plan(plan: LearningStatePlan, vocab: list[str]) -> Non
     # Transitions
     plan.transitions = [
         LearningTransition(from_state="unseen_greeting", to_state="noticed_greeting",
-                            transition_intent="first_exposure", transition_policy="any_required"),
+                            transition_intent="first_exposure", transition_policy="exposure_only"),
         LearningTransition(from_state="noticed_greeting", to_state="recognized_nihao",
                             transition_intent="vocabulary_intro", required_evidence_ids=["ev_recognize_nihao"]),
         LearningTransition(from_state="noticed_greeting", to_state="recognized_ninhao",
@@ -265,11 +265,11 @@ def check_evidence_alignment(
     for t in state_plan.transitions:
         if not t.required_evidence_ids:
             is_exposure = t.transition_intent == "first_exposure"
-            has_exception = hasattr(t, "metadata") and isinstance(getattr(t, "metadata", None), dict) and getattr(t, "metadata", {}).get("allow_without_evidence") is True
-            if is_exposure and t.transition_policy in ("any_required",):
-                continue  # exposure_only implicit: first exposure may not need evidence
-            if not is_exposure and not has_exception:
-                msg = f"Transition '{t.from_state}' -> '{t.to_state}' ({t.transition_intent}) lacks required evidence"
+            allow_no_evidence = t.metadata.get("allow_without_evidence", False) or t.transition_policy == "exposure_only"
+            if is_exposure and allow_no_evidence:
+                continue  # first_exposure + exposure_only = intentional no-evidence transition
+            if not is_exposure and not allow_no_evidence:
+                msg = f"Transition '{t.from_state}' -> '{t.to_state}' ({t.transition_intent}) lacks required evidence. Use transition_policy=exposure_only or metadata.allow_without_evidence=true if intentional."
                 report.blocking.append(msg)
 
     # ── 1. Production / communicative evidence check ──
