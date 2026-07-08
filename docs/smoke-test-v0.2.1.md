@@ -1,9 +1,9 @@
 # HanClassStudio v0.2.1-alpha — Smoke Test Report
 
 **Generated**: 2026-07-09  
-**Commit**: `9b07b6f`  
+**Commit**: `7090b2d`  
 **Branch**: `main`  
-**Test count**: 66 passed, 1 warning
+**Test count**: 70 passed, 1 warning
 
 ---
 
