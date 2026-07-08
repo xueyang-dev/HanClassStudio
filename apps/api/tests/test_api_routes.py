@@ -162,9 +162,14 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     assert pipeline_response.status_code == 200
 
     project_root = projects_dir / project_id
-    for directory in ["uploads", "sources", "analysis", "specs", "blueprints", "assets", "courseware", "quality", "exports", "agent"]:
+    for directory in ["uploads", "sources", "analysis", "learning", "presentation", "specs", "blueprints", "assets", "courseware", "quality", "exports", "agent"]:
         assert (project_root / directory).is_dir()
     for artifact in [
+        "learning/learning_state_plan.json",
+        "learning/evidence_plan.json",
+        "learning/activity_plan.json",
+        "presentation/activity_bindings.json",
+        "presentation/binding_quality_report.json",
         "specs/lesson_spec.md",
         "specs/spec_lock.json",
         "blueprints/lesson_blueprint.json",
@@ -186,6 +191,8 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     assert "lesson.html" in names
     assert "assets/data/lesson_blueprint.json" in names
     assert "assets/data/asset_manifest.json" in names
+    assert "assets/data/activity_bindings.json" in names
+    assert "assets/data/binding_quality_report.json" in names
     assert "assets/data/quality_report.json" in names
 
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
@@ -194,6 +201,9 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     assert artifact_body["spec_lock"]["route"] == "main-generation"
     artifact_paths = {item["path"]: item for group in artifact_body["groups"] for item in group["items"]}
     assert artifact_paths["specs/spec_lock.json"]["exists"] is True
+    assert artifact_paths["presentation/activity_bindings.json"]["exists"] is True
+    assert artifact_paths["presentation/binding_quality_report.json"]["exists"] is True
+    assert artifact_paths["presentation/binding_quality_report.json"]["artifact_type"] == "presentation"
     assert artifact_paths["quality/quality_report.json"]["artifact_type"] == "quality"
 
     agent_response = client.post(f"/api/projects/{project_id}/agent/package")

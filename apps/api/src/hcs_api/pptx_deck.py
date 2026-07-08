@@ -8,6 +8,7 @@ from .content_contract import is_allowed_learner_text, load_language_profile, re
 from .models import (
     LessonBlueprint,
     LessonSlide,
+    PresentationBindingPlan,
     PptxDeckPlan,
     PptxDeckSlide,
     TraditionalLayout,
@@ -23,6 +24,7 @@ def build_pptx_deck_plan(
     evidence_plan: Any | None = None,
     activity_plan: Any | None = None,
     state_plan: Any | None = None,
+    activity_bindings: PresentationBindingPlan | None = None,
 ) -> PptxDeckPlan:
     """Build a traditional PPTX deck plan from a lesson blueprint."""
     plan = PptxDeckPlan(
@@ -36,73 +38,41 @@ def build_pptx_deck_plan(
         deck_slide = _map_slide_to_deck(slide, scaffold_language, learner_level, item_lookup)
         plan.slides.append(deck_slide)
 
-    # Map evidence info to slides — accurate per-slide, not first-wins-all
-    if evidence_plan and state_plan and blueprint:
-        ev_map: dict[str, dict] = {ev.evidence_id: ev for ev in evidence_plan.evidence_specs}
-        # Build activities per evidence
-        act_per_ev: dict[str, list[str]] = {}
-        if activity_plan:
-            for act in activity_plan.activities:
-                for ev_id in act.collects_evidence:
-                    act_per_ev.setdefault(ev_id, []).append(act.activity_id)
-        # Slide type -> evidence intent mapping hints
-        slide_intent_map = {
-            "VocabularySlide": "vocabulary_",
-            "GrammarPatternSlide": "politeness",
-            "DialogueSlide": "dialogue",
-            "PracticeSlide": "choice",
-            "SummarySlide": "production",
-        }
-        for deck in plan.slides:
-            # Skip cover/objective slides — they are not evidence collection points
-            if deck.slide_purpose in ("CoverSlide", "ObjectiveSlide"):
-                continue
-            # Find best matching evidence for this slide
-            best_ev_id = ""
-            best_score = 0
-            for t in state_plan.transitions:
-                if not t.required_evidence_ids:
-                    continue
-                for ev_id in t.required_evidence_ids:
-                    if ev_id not in ev_map:
-                        continue
-                    score = 0
-                    hint = slide_intent_map.get(deck.slide_purpose, "")
-                    if hint and hint in t.transition_intent:
-                        score += 2
-                    # Check activity references
-                    acts = act_per_ev.get(ev_id, [])
-                    for act_id in acts:
-                        if deck.slide_purpose.lower() in act_id:
-                            score += 1
-                    if score > best_score:
-                        best_score = score
-                        best_ev_id = ev_id
-            # Also match if this is the only evidence for this transition
-            if not best_ev_id:
-                for t in state_plan.transitions:
-                    if not t.required_evidence_ids:
-                        continue
-                    for ev_id in t.required_evidence_ids:
-                        if ev_id in ev_map and ev_id not in {s.evidence_id for s in plan.slides}:
-                            best_ev_id = ev_id
-                            break
-                    if best_ev_id:
-                        break
-            if best_ev_id:
-                ev = ev_map[best_ev_id]
-                deck.evidence_id = best_ev_id
-                deck.evidence_claim = ev.learning_claim
-                deck.expected_behavior = ev.expected_behavior
-                deck.failure_action = ev.failure_action
-                deck.speaker_notes.append(f"Evidence: {best_ev_id}")
-                deck.speaker_notes.append(f"Claim: {ev.learning_claim}")
-                deck.speaker_notes.append(f"Pass: {ev.pass_criteria.get('min_correct', 1)}/{ev.pass_criteria.get('attempts_allowed', 2)}")
-                if ev.failure_action:
-                    fa = ev.failure_action
-                    deck.speaker_notes.append(f"Fail: {fa.get('remediation_type','')} → {fa.get('recommended_activity','')}")
+    if activity_bindings:
+        _apply_bindings_to_deck(plan, activity_bindings, evidence_plan)
 
     return plan
+
+
+def _apply_bindings_to_deck(plan: PptxDeckPlan, activity_bindings: PresentationBindingPlan, evidence_plan: Any | None) -> None:
+    ev_map: dict[str, Any] = {ev.evidence_id: ev for ev in (evidence_plan.evidence_specs if evidence_plan else [])}
+    bindings_by_slide = {}
+    for binding in activity_bindings.bindings:
+        if "pptx_classroom" in binding.presentation_modes or "speaker_notes" in binding.presentation_modes:
+            bindings_by_slide.setdefault(binding.slide_id, []).append(binding)
+
+    for deck in plan.slides:
+        bindings = bindings_by_slide.get(deck.slide_id, [])
+        if not bindings:
+            continue
+        binding = bindings[0]
+        ev = ev_map.get(binding.evidence_id)
+        deck.binding_id = binding.binding_id
+        deck.activity_id = binding.activity_id
+        deck.evidence_id = binding.evidence_id
+        if ev:
+            deck.evidence_claim = ev.learning_claim
+            deck.expected_behavior = ev.expected_behavior
+            deck.failure_action = ev.failure_action
+        deck.speaker_notes.append(f"Binding: {binding.binding_id}")
+        deck.speaker_notes.append(f"Activity: {binding.activity_id}")
+        deck.speaker_notes.append(f"Evidence: {binding.evidence_id}")
+        if ev:
+            deck.speaker_notes.append(f"Claim: {ev.learning_claim}")
+            deck.speaker_notes.append(f"Pass: {ev.pass_criteria.get('min_correct', 1)}/{ev.pass_criteria.get('attempts_allowed', 2)}")
+            if ev.failure_action:
+                fa = ev.failure_action
+                deck.speaker_notes.append(f"Fail: {fa.get('remediation_type','')} -> {fa.get('recommended_activity','')}")
 
 
 def _map_slide_to_deck(

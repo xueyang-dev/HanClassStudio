@@ -74,6 +74,28 @@ def write_blueprint_artifacts(project_id: str, blueprint: LessonBlueprint) -> No
     write_json(project_id, "blueprints/media_plan.json", build_media_plan(blueprint))
 
 
+def write_presentation_bindings(
+    project_id: str,
+    blueprint: LessonBlueprint,
+    evidence_plan,
+    activity_plan,
+    state_plan,
+    learner_level: str,
+):
+    from .presentation_bindings import build_activity_bindings
+    binding_plan = build_activity_bindings(blueprint, evidence_plan, activity_plan, state_plan, learner_level)
+    write_json(project_id, "presentation/activity_bindings.json", binding_plan.model_dump(mode="json"))
+    write_json(project_id, "presentation/binding_quality_report.json", binding_plan.model_dump(mode="json"))
+    if binding_plan.state == "blocked":
+        write_json(project_id, "presentation/binding_revision_recommendation.json", {
+            "schema": "hanclassstudio.binding_revision_recommendation.v1",
+            "state": "blocked",
+            "blocking_issues": binding_plan.blocking[:10],
+            "message": "Presentation binding blocked. Classroom-ready render/export stopped.",
+        })
+    return binding_plan
+
+
 def render_and_check(
     project_id: str,
     project_root: Path,
@@ -86,35 +108,17 @@ def render_and_check(
     render_mode: str = "debug",
 ) -> QualityReport:
     preliminary = QualityReport(suggestions=["Rendering in progress; final quality gate runs after HTML output."])
-    # Build evidence map from kernel artifacts
-    ev_map: dict[int, str] | None = None
-    if language_items is not None:
-        ep_data = read_json(project_id, "learning/evidence_plan.json")
-        if ep_data:
-            from .models import EvidencePlan as _EP, LearningStatePlan as _LSP
-            ep = _EP(**ep_data)
-            sp_data = read_json(project_id, "learning/learning_state_plan.json")
-            sp = _LSP(**sp_data) if sp_data else None
-            ev_map = {}
-            for slide in blueprint.slides:
-                # Map by matching slide vocabulary to evidence target items
-                for c in slide.components:
-                    for item in c.data.get("items", []):
-                        w = item.get("word", "")
-                        for ev in ep.evidence_specs:
-                            if w in ev.target_items:
-                                ev_map[slide.id] = ev.evidence_id
-                                break
-                        if slide.id in ev_map:
-                            break
-    render_lesson(project_root, profile, blueprint, manifest, preliminary, render_mode=render_mode, evidence_map=ev_map)
+    from .models import PresentationBindingPlan as _PBP
+    binding_data = read_json(project_id, "presentation/activity_bindings.json")
+    activity_bindings = _PBP(**binding_data) if binding_data else None
+    render_lesson(project_root, profile, blueprint, manifest, preliminary, render_mode=render_mode, activity_bindings=activity_bindings)
     report = check_quality(project_root, blueprint, manifest)
-    render_lesson(project_root, profile, blueprint, manifest, report, render_mode=render_mode, evidence_map=ev_map)
+    render_lesson(project_root, profile, blueprint, manifest, report, render_mode=render_mode, activity_bindings=activity_bindings)
     write_model(project_id, "quality_report.json", report)
     write_text(project_id, "quality/quality_summary.md", "\n".join(["# Quality Summary", "", f"State: {report.state}", *report.blocking, *report.warnings, *report.passed]))
 
     # Generate classroom HTML separately
-    render_lesson(project_root, profile, blueprint, manifest, report, render_mode="classroom", evidence_map=ev_map)
+    render_lesson(project_root, profile, blueprint, manifest, report, render_mode="classroom", activity_bindings=activity_bindings)
 
     # Learner comprehension artifacts
     if learner_model is not None and language_items is not None:
@@ -241,6 +245,13 @@ def run_full_pipeline(
         write_model(project_id, "asset_manifest.json", manifest)
         return get_project_state(project_id)
 
+    learner_level = str(difficulty.estimated_level) if hasattr(difficulty, "estimated_level") else "zero_beginner"
+    binding_plan = write_presentation_bindings(project_id, blueprint, evidence_plan, activity_plan, state_plan, learner_level)
+    if binding_plan.state == "blocked":
+        manifest = generate_project_media(project_root, blueprint, settings)
+        write_model(project_id, "asset_manifest.json", manifest)
+        return get_project_state(project_id)
+
     manifest = generate_project_media(project_root, blueprint, settings)
     write_model(project_id, "asset_manifest.json", manifest)
     write_json(project_id, "assets/data/attribution.json", {"schema": "hanclassstudio.attribution.v1", "items": []})
@@ -262,6 +273,9 @@ def run_full_pipeline(
         if revised_review.state != "blocked":
             blueprint = revised_bp
             write_model(project_id, "lesson_blueprint.json", revised_bp)
+            binding_plan = write_presentation_bindings(project_id, blueprint, evidence_plan, activity_plan, state_plan, learner_level)
+            if binding_plan.state == "blocked":
+                return get_project_state(project_id)
             manifest = generate_project_media(project_root, blueprint, settings)
             write_model(project_id, "asset_manifest.json", manifest)
             report = render_and_check(project_id, project_root, profile, blueprint, manifest, candidates, language_items, learner_model)

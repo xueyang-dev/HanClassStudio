@@ -36,6 +36,7 @@ from .storage import (
     get_artifact_tree,
     latest_export_path,
     get_project_state,
+    read_json,
     read_model,
     read_provider_settings,
     write_json,
@@ -718,7 +719,7 @@ def render_project(project_id: str) -> ProjectState:
         manifest = generate_project_media(root, blueprint, read_provider_settings())
         write_model(project_id, "asset_manifest.json", manifest)
     report = render_and_check(project_id, root, profile, blueprint, manifest)
-    if report.state != "blocked":
+    if report.state != "blocked" and not _binding_gate_blocked(project_id):
         zip_output(project_id)
     return get_project_state(project_id)
 
@@ -738,6 +739,8 @@ def export_project(project_id: str) -> FileResponse:
     state = get_project_state(project_id)
     if state.quality_report and state.quality_report.state == "blocked":
         raise HTTPException(status_code=409, detail="Quality gate is blocked; use forced export for demo output")
+    if _binding_gate_blocked(project_id):
+        raise HTTPException(status_code=409, detail="Presentation binding gate is blocked; use forced export for demo output")
     export_path = latest_export_path(project_id) or zip_output(project_id)
     return FileResponse(
         export_path,
@@ -752,6 +755,8 @@ def force_export_project(project_id: str, force: bool = Query(default=False)) ->
     state = get_project_state(project_id)
     if state.quality_report and state.quality_report.state == "blocked" and not force:
         raise HTTPException(status_code=409, detail="Quality gate is blocked; pass force=true to export anyway")
+    if _binding_gate_blocked(project_id) and not force:
+        raise HTTPException(status_code=409, detail="Presentation binding gate is blocked; pass force=true to export anyway")
     export_path = zip_output(project_id, force=force)
     return FileResponse(
         export_path,
@@ -792,3 +797,8 @@ def _assert_project(project_id: str) -> Path:
     if not root.exists():
         raise HTTPException(status_code=404, detail="Project not found")
     return root
+
+
+def _binding_gate_blocked(project_id: str) -> bool:
+    report = read_json(project_id, "presentation/binding_quality_report.json") or {}
+    return isinstance(report, dict) and report.get("state") == "blocked"

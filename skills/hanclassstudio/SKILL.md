@@ -9,7 +9,7 @@ Use this skill to work on HanClassStudio as a file workflow. External agents may
 
 ## Architecture Paradigm
 
-HanClassStudio uses a **State-first** architecture documented in [docs/state-evidence-kernel-v0.2.2.md](../docs/state-evidence-kernel-v0.2.2.md):
+HanClassStudio uses a **State-first** architecture documented in [docs/state-evidence-kernel-v0.2.2.md](../../docs/state-evidence-kernel-v0.2.2.md):
 
 ```text
 Source
@@ -34,9 +34,10 @@ Source Intake
   → Source Lesson Profile
   → Learner Model
   → Language Items
-  → Learning State Plan (new - state-first kernel)
-  → Evidence Plan (new)
-  → Activity Plan (new)
+  → Learning State Plan
+  → Evidence Plan
+  → Activity Plan
+  → Evidence Alignment Gate
   → Blueprint / Interaction / Media Plans
   → Courseware Review Agent
   → Revision Application
@@ -49,17 +50,21 @@ Source Intake
 
 | Artifact | Status | Description |
 |---|---|---|
-| `learning/learning_state_plan.json` | Planned | State DAG & transitions |
-| `learning/evidence_plan.json` | Planned | Evidence specs per transition |
-| `learning/activity_plan.json` | Planned | Activity definitions |
-| `quality/evidence_alignment_report.json` | Planned | Goal-Evidence-Activity alignment |
+| `learning/learning_state_plan.json` | Implemented | State DAG, goals, transitions |
+| `learning/evidence_plan.json` | Implemented | Evidence specs per transition |
+| `learning/activity_plan.json` | Implemented | Activity definitions and evidence collectors |
+| `quality/evidence_alignment_report.json` | Implemented | Goal-Evidence-Activity alignment gate |
+| `presentation/activity_bindings.json` | Implemented | Formal binding from activity/evidence to slide/component/presentation outputs |
+| `presentation/binding_quality_report.json` | Implemented | Binding quality gate for presentation targets |
 
-See [docs/state-evidence-kernel-v0.2.2.md](../docs/state-evidence-kernel-v0.2.2.md) for full model schemas and quality gate rules.
+See [docs/state-evidence-kernel-v0.2.2.md](../../docs/state-evidence-kernel-v0.2.2.md) for full model schemas and quality gate rules.
 
 ## Current Implementation Status
 
-Existing pipeline (working):
+Working pipeline:
 - Source intake → Learner Model → Language Items
+- State-Evidence Kernel generation
+- Evidence alignment quality gate
 - Blueprint generation (existing `agents.py`)
 - Quality checks (classroom, off-level, comprehensibility, realization)
 - Courseware Review Agent
@@ -68,12 +73,17 @@ Existing pipeline (working):
 - Traditional PPTX Deck render
 - Export (ZIP, diagnostic PPTX)
 
-Next phase (State-Evidence Kernel):
-- `learning_state_plan.json` generator
-- `evidence_plan.json` generator
-- `activity_plan.json` generator
-- `evidence_alignment_report.json` quality gate
-- Pipeline integration: state plan → evidence → activity → existing renderers
+Latest verified milestone:
+- v0.2.1-alpha smoke test: 70 tests passed, 1 warning.
+- Kernel artifacts are generated during the normal pipeline.
+- Alignment `blocked` stops classroom render/export and emits a kernel diagnostic ZIP.
+- Classroom HTML and PPTX deck plans carry evidence IDs and teacher-facing evidence notes.
+
+Current v0.2.2-alpha work:
+- `presentation/activity_bindings.json`
+- `presentation/binding_quality_report.json`
+- Centralize fallback evidence-to-slide matching in the binding builder.
+- Use a single binding source for HTML, PPTX, speaker notes, and teacher observation views.
 
 ## Blocking Gates
 
@@ -92,6 +102,12 @@ If quality state is `blocked`, fix upstream artifacts or use the explicit forced
 - `blueprints/lesson_blueprint.json` is the courseware structure.
 - `blueprints/interaction_plan.json` is the interaction contract.
 - `blueprints/media_plan.json` is the media requirement list.
+- `learning/learning_state_plan.json` is the state-first teaching kernel.
+- `learning/evidence_plan.json` is the evidence contract.
+- `learning/activity_plan.json` is the evidence collection activity contract.
+- `quality/evidence_alignment_report.json` is the kernel quality gate.
+- `presentation/activity_bindings.json` is the only formal Kernel-to-presentation binding contract.
+- `presentation/binding_quality_report.json` is the binding quality gate.
 - `courseware/lesson.html` is a derived artifact.
 - `exports/*.pptx` files are derived editable export artifacts.
 

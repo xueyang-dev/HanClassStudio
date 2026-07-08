@@ -60,6 +60,9 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
         raise PermissionError("Run quality gate before editable PPTX export")
     if report and report.state == "blocked" and not force:
         raise PermissionError("Quality gate is blocked; pass force=true to export editable PPTX anyway")
+    binding_report = read_json(project_id, "presentation/binding_quality_report.json") or {}
+    if isinstance(binding_report, dict) and binding_report.get("state") == "blocked" and not force:
+        raise PermissionError("Presentation binding gate is blocked; pass force=true to export editable PPTX anyway")
 
     # Classroom mode: check classroom_quality gate
     is_classroom = export_mode == "classroom"
@@ -75,7 +78,7 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     media_plan = read_json(project_id, "blueprints/media_plan.json") or {}
     manifest = read_model(project_id, "asset_manifest.json", AssetManifest) or AssetManifest()
 
-    # Build PPTX deck plan with kernel artifacts
+    # Build PPTX deck plan with kernel + presentation binding artifacts
     from .pptx_deck import build_pptx_deck_plan, build_pptx_structure_report
     from .storage import read_model as _rm, write_json as _wj, read_json as _rj
     from .models import LearnerModel as _LM
@@ -85,14 +88,17 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     ep_data = _rj(project_id, "learning/evidence_plan.json")
     ap_data = _rj(project_id, "learning/activity_plan.json")
     sp_data = _rj(project_id, "learning/learning_state_plan.json")
-    from .models import EvidencePlan as _EP, ActivityPlan as _AP, LearningStatePlan as _LSP
+    binding_data = _rj(project_id, "presentation/activity_bindings.json")
+    from .models import EvidencePlan as _EP, ActivityPlan as _AP, LearningStatePlan as _LSP, PresentationBindingPlan as _PBP
     evidence_plan = _EP(**ep_data) if ep_data else None
     activity_plan = _AP(**ap_data) if ap_data else None
     state_plan = _LSP(**sp_data) if sp_data else None
+    activity_bindings = _PBP(**binding_data) if binding_data else None
     deck_plan = build_pptx_deck_plan(
         blueprint, "Chinese", profile.scaffolding_language if profile else "English",
         level or "zero_beginner",
         evidence_plan=evidence_plan, activity_plan=activity_plan, state_plan=state_plan,
+        activity_bindings=activity_bindings,
     )
     _wj(project_id, "blueprints/pptx_deck_plan.json", deck_plan.model_dump(mode="json"))
     struct_report = build_pptx_structure_report(deck_plan)
@@ -134,6 +140,7 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
                 "spec_lock": bool(spec_lock),
                 "interaction_plan": bool(interaction_plan),
                 "media_plan": bool(media_plan),
+                "activity_bindings": bool(activity_bindings and activity_bindings.bindings),
                 "asset_manifest": bool(manifest.model_dump(mode="json")),
             },
         },

@@ -1,12 +1,12 @@
 # HanClassStudio
 
-**v0.1 demo-ready alpha. Not production-ready.**
+**v0.2.2-alpha binding-layer MVP. Not production-ready.**
 
 AI-powered interactive HTML courseware generator for international Chinese teaching.
 
 专门用于国际中文教育课件制作的开源 skills、workflow 与互动课件生成 demo。
 
-This v0.1 implementation is a local-first portfolio demo. It runs a teacher-facing web app and a FastAPI backend that can parse PPTX/PDF materials, generate a structured lesson blueprint with placeholder AI providers, render offline-ready HTML courseware, run quality checks, export a ZIP package, and generate an editable PPTX classroom version.
+This implementation is a local-first portfolio demo. It runs a teacher-facing web app and a FastAPI backend that can parse PPTX/PDF materials, generate structured lesson artifacts, build a State-Evidence teaching kernel, render offline-ready HTML courseware, run quality checks, export a ZIP package, and generate an editable PPTX classroom version.
 
 ## Screenshots And GIF
 
@@ -18,9 +18,18 @@ Portfolio placeholders:
 - Agent Handoff panel screenshot.
 - Editable PPTX export screenshot.
 
+## Current Status
+
+HanClassStudio has moved beyond the original v0.1 export demo into a **State-first courseware pipeline**.
+
+- **v0.1 demo loop**: verified local workbench, artifact pipeline, offline HTML export, editable PPTX export, Agent Handoff, and quality gates.
+- **v0.2.1-alpha**: State-Evidence Kernel smoke-tested and closed with `70 passed, 1 warning`.
+- **v0.2.2 white paper**: [State-Evidence Kernel architecture](docs/state-evidence-kernel-v0.2.2.md) defines the long-term teaching kernel model.
+- **v0.2.2-alpha**: `presentation/activity_bindings.json` adds a formal activity/evidence/presentation contract between the kernel and HTML/PPTX renderers.
+
 ## v0.1 Demo Status
 
-HanClassStudio v0.1 engineering pipeline is verified. Classroom quality hardening is in progress.
+HanClassStudio v0.1 engineering pipeline is verified. Classroom/debug separation is complete; current demo blockers are now lesson-content quality issues rather than export-pipeline failures.
 
 ### Engineering Pipeline — Verified ✅
 
@@ -73,6 +82,28 @@ The Syllabus Engine puts textbook scope + learner level + i+1 at the center of g
 - **i+1 for zero_beginner**: max 1 new target item per slide, no "我会说"/"朋友之间" templates, no output before input.
 - **Tests**: 58 tests covering syllabus extraction, difficulty inference, allowed text planning, off-level detection, and pipeline integration.
 
+### State-Evidence Kernel — v0.2.1-alpha Verified ✅
+
+The State-Evidence Kernel makes the teaching logic explicit before presentation rendering:
+
+```text
+Source
+  -> Learning State Plan
+  -> Evidence Plan
+  -> Activity Plan
+  -> Evidence Alignment Report
+  -> Presentation / HTML / PPTX
+```
+
+Current generated artifacts:
+
+- `learning/learning_state_plan.json`: state DAG, learning goals, and transitions.
+- `learning/evidence_plan.json`: evidence specs for state transitions.
+- `learning/activity_plan.json`: learning activities that collect evidence.
+- `quality/evidence_alignment_report.json`: Goal-Evidence-Activity alignment gate.
+
+Alignment `blocked` now stops classroom render/export and writes a kernel diagnostic ZIP. See [smoke-test-v0.2.1.md](docs/smoke-test-v0.2.1.md) for the latest validation report.
+
 ### What Works Today
 
 - PPTX/PDF upload and parsing.
@@ -81,16 +112,20 @@ The Syllabus Engine puts textbook scope + learner level + i+1 at the center of g
 - Component registry-backed interactive runtime.
 - HTML ZIP export for offline interactive courseware.
 - Editable PPTX export for editable classroom display material.
+- State-Evidence Kernel artifacts and alignment gate.
+- Evidence-aware classroom HTML data and PPTX deck speaker notes.
 - Agent Handoff task/rules generation and validation.
 - Quality gate with `pass`, `warning`, and `blocked` states.
 
-## What Is Placeholder In v0.1
+## What Is Placeholder Or In Progress
 
 - LLM generation can fall back to deterministic local blueprint generation.
 - Images use local placeholder SVGs unless a provider is configured later.
 - Audio uses local demo tones unless a TTS provider is configured later.
 - Video is planning/fallback only.
 - Editable PPTX converts interactions into static classroom activity pages.
+- Evidence-to-slide fallback matching is centralized in `presentation/activity_bindings.json`; low-confidence bindings still need future teacher confirmation UX.
+- Real PPTX speaker-note XML inspection is not yet part of the smoke test.
 
 ## Quick Start
 
@@ -182,6 +217,9 @@ The PPTX version is editable classroom display material. HTML interactions are c
 
 - [v0.1 demo guide](docs/demo-v0.1.md)
 - [Architecture overview](docs/architecture-overview.md)
+- [State-Evidence Kernel white paper](docs/state-evidence-kernel-v0.2.2.md)
+- [Presentation bindings v0.2.2](docs/presentation-bindings-v0.2.2.md)
+- [v0.2.1 smoke test report](docs/smoke-test-v0.2.1.md)
 - [Agent workflow](docs/agent-workflow.md)
 - [3-5 minute demo script](docs/demo-script.md)
 - [Portfolio copy](docs/portfolio-copy.md)
@@ -196,5 +234,5 @@ The PPTX version is editable classroom display material. HTML interactions are c
 - Real LLM, image, TTS, OCR, and video providers are not connected by default.
 - Placeholder media is expected in the v0.1 demo.
 - Runtime themes are fixed templates, not user-authored CSS.
-- Quality checks are practical v0.1 gates, not a full instructional design review.
+- Quality checks now include State-Evidence alignment and presentation binding; low-confidence binding review is still being hardened.
 - Existing `runtime/projects` data is treated as disposable development output.
