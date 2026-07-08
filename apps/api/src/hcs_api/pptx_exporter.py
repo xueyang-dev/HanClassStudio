@@ -75,13 +75,25 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     media_plan = read_json(project_id, "blueprints/media_plan.json") or {}
     manifest = read_model(project_id, "asset_manifest.json", AssetManifest) or AssetManifest()
 
-    # Build PPTX deck plan
+    # Build PPTX deck plan with kernel artifacts
     from .pptx_deck import build_pptx_deck_plan, build_pptx_structure_report
-    from .storage import read_model as _rm, write_json as _wj
+    from .storage import read_model as _rm, write_json as _wj, read_json as _rj
     from .models import LearnerModel as _LM
     profile = _rm(project_id, "lesson_profile.json", LessonProfile)
     level = getattr(profile, "learner_level", "zero_beginner") if profile else "zero_beginner"
-    deck_plan = build_pptx_deck_plan(blueprint, "Chinese", profile.scaffolding_language if profile else "English", level or "zero_beginner")
+    # Read kernel artifacts (use read_json for dicts, then construct models)
+    ep_data = _rj(project_id, "learning/evidence_plan.json")
+    ap_data = _rj(project_id, "learning/activity_plan.json")
+    sp_data = _rj(project_id, "learning/learning_state_plan.json")
+    from .models import EvidencePlan as _EP, ActivityPlan as _AP, LearningStatePlan as _LSP
+    evidence_plan = _EP(**ep_data) if ep_data else None
+    activity_plan = _AP(**ap_data) if ap_data else None
+    state_plan = _LSP(**sp_data) if sp_data else None
+    deck_plan = build_pptx_deck_plan(
+        blueprint, "Chinese", profile.scaffolding_language if profile else "English",
+        level or "zero_beginner",
+        evidence_plan=evidence_plan, activity_plan=activity_plan, state_plan=state_plan,
+    )
     _wj(project_id, "blueprints/pptx_deck_plan.json", deck_plan.model_dump(mode="json"))
     struct_report = build_pptx_structure_report(deck_plan)
     _wj(project_id, "quality/pptx_structure_report.json", struct_report)

@@ -1,6 +1,8 @@
 
 """State-Evidence Kernel enforcement tests."""
 
+from pathlib import Path
+
 import json
 
 
@@ -109,3 +111,45 @@ def test_pptx_deck_evidence_in_speaker_notes() -> None:
     for s in ev_slides:
         assert s.evidence_claim
         assert any("Evidence:" in n for n in s.speaker_notes)
+
+def test_html_lesson_data_has_non_empty_evidence_ids(tmp_path: Path) -> None:
+    import json
+    from hcs_api.models import LessonProfile, TeachingCandidates, LessonBlueprint, LessonSlide, SlideComponent, QualityReport, AssetManifest
+    from hcs_api.state_evidence_kernel import build_learning_state_plan, build_evidence_plan, build_activity_plan
+    from hcs_api.renderer import render_lesson
+    profile = LessonProfile(lesson_title="第1课 您好", scaffolding_language="Arabic")
+    candidates = TeachingCandidates(route_hint="greeting_lesson", core_vocabulary=[
+        {"word": "你好", "pinyin": "nǐ hǎo"}, {"word": "您好", "pinyin": "nín hǎo"},
+    ])
+    sp = build_learning_state_plan(profile, candidates)
+    ep = build_evidence_plan(sp, "zero_beginner", "Arabic")
+    ap = build_activity_plan(ep, "zero_beginner", "Arabic")
+    # Build evidence map
+    ev_map: dict[int, str] = {}
+    bp = LessonBlueprint(lesson_title="test", route_hint="greeting_lesson", slides=[
+        LessonSlide(id=3, slide_type="VocabularySlide", layout_variant="card_grid", title="", components=[
+            SlideComponent(id="v1", component_type="VocabularyFlipCard", title="", data={"items": [{"word": "你好", "pinyin": "nǐ hǎo"}]}),
+        ], content_blocks=[]),
+    ])
+    for slide in bp.slides:
+        for c in slide.components:
+            for item in c.data.get("items", []):
+                w = item.get("word", "")
+                for ev in ep.evidence_specs:
+                    if w in ev.target_items:
+                        ev_map[slide.id] = ev.evidence_id
+    manifest = AssetManifest(images=[], audio=[])
+    result_path = render_lesson(tmp_path, profile, bp, manifest, QualityReport(), render_mode="classroom", evidence_map=ev_map)
+    html = result_path.read_text(encoding="utf-8")
+    # Extract lesson-data JSON
+    start = html.find("<script id=\"lesson-data\">")
+    end = html.find("</script>", start) if start >= 0 else -1
+    if start >= 0 and end > start:
+        data_json = html[start + len("<script id=\"lesson-data\">"):end].strip()
+        data = json.loads(data_json)
+        found = False
+        for s in data.get("blueprint", {}).get("slides", []):
+            for c in s.get("components", []):
+                if c.get("data", {}).get("evidence_id", ""):
+                    found = True
+        assert found, "No component has a non-empty evidence_id in lesson-data"

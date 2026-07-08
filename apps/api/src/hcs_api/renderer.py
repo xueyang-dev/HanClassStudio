@@ -15,12 +15,13 @@ def render_lesson(
     manifest: AssetManifest,
     report: QualityReport,
     render_mode: str = "debug",
-) -> Path:
+    evidence_map: dict[int, str] | None = None,
+) -> str:
     image_by_id = {asset.id: f"../{asset.path}" for asset in manifest.images}
     audio_by_id = {asset.id: f"../{asset.path}" for asset in manifest.audio}
     slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id, render_mode) for slide in blueprint.slides)
     is_classroom = render_mode == "classroom"
-    data_blob = _build_lesson_data_blob(profile, blueprint, report, is_classroom)
+    data_blob = _build_lesson_data_blob(profile, blueprint, report, is_classroom, evidence_map if is_classroom else None)
     title_label = escape(profile.scaffolding_language) if not is_classroom else "辅助语言"
     html = f"""<!doctype html>
 <html lang="zh-Hans">
@@ -99,12 +100,29 @@ def _build_lesson_data_blob(
     blueprint: LessonBlueprint,
     report: QualityReport,
     is_classroom: bool,
+    evidence_map: dict[int, str] | None = None,
 ) -> str:
     if not is_classroom:
         return json.dumps(
             {"profile": profile.model_dump(mode="json"), "blueprint": blueprint.model_dump(mode="json"), "quality": report.model_dump(mode="json")},
             ensure_ascii=False,
         ).replace("</", "<\\/")
+
+    # Build reverse lookup: evidence_id -> word(s) for matching
+    _ev_word_map: dict[str, str] = {}
+    if evidence_map:
+        for sid, ev_id in evidence_map.items():
+            if ev_id:
+                _ev_word_map[ev_id] = _ev_word_map.get(ev_id, "")
+
+    def _lookup_evidence_for_word(word: str, ev_map: dict[int, str]) -> str:
+        """Match a vocabulary word to an evidence_id via a simple heuristic."""
+        if not word:
+            return ""
+        for sid, ev_id in ev_map.items():
+            if ev_id and word and word in ev_id.lower():
+                return ev_id
+        return ""
 
     # Classroom: redact debug info
     safe_profile = {"lesson_title": profile.lesson_title, "scaffolding_language": profile.scaffolding_language}
@@ -131,8 +149,17 @@ def _build_lesson_data_blob(
                 elif key in data and isinstance(data[key], list):
                     data[key] = [_clean_arabic_from_zh(str(item)) for item in data[key]]
             # Add evidence_id to component data (not displayed to learner)
-            if "evidence_id" not in data:
-                data["evidence_id"] = ""
+            ev_id = (evidence_map or {}).get(s.id, "") or data.get("evidence_id", "")
+            if not ev_id:
+                # Try matching by component type and word content
+                word = ""
+                for item in data.get("items", []):
+                    word = item.get("word", "")
+                    break
+                ev_id = _lookup_evidence_for_word(word, evidence_map or {}) if not word else ""
+                if not ev_id and c.component_type in ("ListenAndChoose", "MatchGame"):
+                    pass  # leave empty if no mapping available
+            data["evidence_id"] = ev_id
             safe_comps.append({"component_type": c.component_type, "title": c.title, "data": data})
         safe_slides.append({
             "id": s.id,

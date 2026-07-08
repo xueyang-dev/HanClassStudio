@@ -18,7 +18,7 @@ from .models import (
 from .providers import ProviderError, generate_blueprint_with_llm
 from .quality import check_classroom_quality, check_quality
 from .renderer import render_lesson
-from .storage import get_project_state, read_model, read_provider_settings, write_json, write_model, write_text, zip_output
+from .storage import get_project_state, read_json, read_model, read_provider_settings, write_json, write_model, write_text, zip_output
 from .strategist import build_interaction_plan, build_lesson_spec, build_media_plan, build_spec_lock
 from .syllabus_engine import (
     build_allowed_text_plan,
@@ -86,14 +86,35 @@ def render_and_check(
     render_mode: str = "debug",
 ) -> QualityReport:
     preliminary = QualityReport(suggestions=["Rendering in progress; final quality gate runs after HTML output."])
-    render_lesson(project_root, profile, blueprint, manifest, preliminary, render_mode=render_mode)
+    # Build evidence map from kernel artifacts
+    ev_map: dict[int, str] | None = None
+    if language_items is not None:
+        ep_data = read_json(project_id, "learning/evidence_plan.json")
+        if ep_data:
+            from .models import EvidencePlan as _EP, LearningStatePlan as _LSP
+            ep = _EP(**ep_data)
+            sp_data = read_json(project_id, "learning/learning_state_plan.json")
+            sp = _LSP(**sp_data) if sp_data else None
+            ev_map = {}
+            for slide in blueprint.slides:
+                # Map by matching slide vocabulary to evidence target items
+                for c in slide.components:
+                    for item in c.data.get("items", []):
+                        w = item.get("word", "")
+                        for ev in ep.evidence_specs:
+                            if w in ev.target_items:
+                                ev_map[slide.id] = ev.evidence_id
+                                break
+                        if slide.id in ev_map:
+                            break
+    render_lesson(project_root, profile, blueprint, manifest, preliminary, render_mode=render_mode, evidence_map=ev_map)
     report = check_quality(project_root, blueprint, manifest)
-    render_lesson(project_root, profile, blueprint, manifest, report, render_mode=render_mode)
+    render_lesson(project_root, profile, blueprint, manifest, report, render_mode=render_mode, evidence_map=ev_map)
     write_model(project_id, "quality_report.json", report)
     write_text(project_id, "quality/quality_summary.md", "\n".join(["# Quality Summary", "", f"State: {report.state}", *report.blocking, *report.warnings, *report.passed]))
 
     # Generate classroom HTML separately
-    render_lesson(project_root, profile, blueprint, manifest, report, render_mode="classroom")
+    render_lesson(project_root, profile, blueprint, manifest, report, render_mode="classroom", evidence_map=ev_map)
 
     # Learner comprehension artifacts
     if learner_model is not None and language_items is not None:
