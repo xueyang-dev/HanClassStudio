@@ -20,6 +20,9 @@ def build_pptx_deck_plan(
     scaffold_language: str = "English",
     learner_level: str = "zero_beginner",
     language_items: list | None = None,
+    evidence_plan: Any | None = None,
+    activity_plan: Any | None = None,
+    state_plan: Any | None = None,
 ) -> PptxDeckPlan:
     """Build a traditional PPTX deck plan from a lesson blueprint."""
     plan = PptxDeckPlan(
@@ -32,6 +35,28 @@ def build_pptx_deck_plan(
     for slide in blueprint.slides:
         deck_slide = _map_slide_to_deck(slide, scaffold_language, learner_level, item_lookup)
         plan.slides.append(deck_slide)
+
+    # Map evidence info to slides
+    if evidence_plan and state_plan and blueprint:
+        ev_map: dict[str, dict] = {ev.evidence_id: ev for ev in evidence_plan.evidence_specs}
+        for deck in plan.slides:
+            # Find matching evidence by searching transitions for this slide role
+            for t in state_plan.transitions:
+                if not t.required_evidence_ids:
+                    continue
+                for ev_id in t.required_evidence_ids:
+                    if ev_id in ev_map and not deck.evidence_id:
+                        ev = ev_map[ev_id]
+                        deck.evidence_id = ev_id
+                        deck.evidence_claim = ev.learning_claim
+                        deck.expected_behavior = ev.expected_behavior
+                        deck.failure_action = ev.failure_action
+                        deck.speaker_notes.append(f"Evidence: {ev_id}")
+                        deck.speaker_notes.append(f"Claim: {ev.learning_claim}")
+                        deck.speaker_notes.append(f"Pass: {ev.pass_criteria.get('min_correct', 1)}/{ev.pass_criteria.get('attempts_allowed', 2)}")
+                        if ev.failure_action:
+                            fa = ev.failure_action
+                            deck.speaker_notes.append(f"Fail: {fa.get('remediation_type','')} → {fa.get('recommended_activity','')}")
 
     return plan
 

@@ -120,15 +120,19 @@ def _build_lesson_data_blob(
         for c in s.components:
             data = {k: v for k, v in c.data.items() if k not in ("image_prompt",)}
             # Clean provider_required hints
-            for key in ("hint",):
-                if key in data and isinstance(data[key], str) and PROVIDER_REQUIRED.search(data[key]):
-                    data[key] = ""
+            for key in list(data.keys()):
+                if isinstance(data[key], str) and PROVIDER_REQUIRED.search(data[key]):
+                    if is_classroom:
+                        data[key] = ""
             # Clean Arabic from text fields
             for key in ("audio_text", "choices", "answer"):
                 if key in data and isinstance(data[key], str):
                     data[key] = _clean_arabic_from_zh(data[key])
                 elif key in data and isinstance(data[key], list):
                     data[key] = [_clean_arabic_from_zh(str(item)) for item in data[key]]
+            # Add evidence_id to component data (not displayed to learner)
+            if "evidence_id" not in data:
+                data["evidence_id"] = ""
             safe_comps.append({"component_type": c.component_type, "title": c.title, "data": data})
         safe_slides.append({
             "id": s.id,

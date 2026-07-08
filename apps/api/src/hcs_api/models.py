@@ -493,6 +493,10 @@ class PptxDeckSlide(BaseModel):
     visual_hint: str = ""
     audio_key: str = ""
     image_key: str = ""
+    evidence_id: str = ""
+    evidence_claim: str = ""
+    expected_behavior: dict = Field(default_factory=dict)
+    failure_action: dict = Field(default_factory=dict)
 
 
 class PptxDeckPlan(BaseModel):
