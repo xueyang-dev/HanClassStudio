@@ -251,19 +251,77 @@ def check_evidence_alignment(
     activity_plan: ActivityPlan,
     learner_level: str = "zero_beginner",
 ) -> EvidenceAlignmentReport:
-    """Check Goal-Evidence-Activity alignment per white paper quality gates."""
+    """Check Goal-Evidence-Activity alignment per white paper quality gates + enforcement rules."""
     report = EvidenceAlignmentReport()
-    goal_ids = {g.goal_id for g in state_plan.goals}
     evidence_ids = {e.evidence_id for e in evidence_plan.evidence_specs}
     activity_ids = {a.activity_id for a in activity_plan.activities}
 
-    # Collect evidence IDs referenced in transitions
-    referenced_evidence: set[str] = set()
-    for t in state_plan.transitions:
-        referenced_evidence.update(t.required_evidence_ids)
-        referenced_evidence.update(t.optional_evidence_ids)
+    # Build collector -> evidence reverse map
+    collector_to_evidence: dict[str, set[str]] = {}
+    for a in activity_plan.activities:
+        collector_to_evidence[a.activity_id] = set(a.collects_evidence)
 
-    # 8.1 Goal Orphan Check
+    # ── 0. Transition without required evidence ──
+    for t in state_plan.transitions:
+        if not t.required_evidence_ids:
+            is_exposure = t.transition_intent == "first_exposure"
+            has_exception = hasattr(t, "metadata") and isinstance(getattr(t, "metadata", None), dict) and getattr(t, "metadata", {}).get("allow_without_evidence") is True
+            if is_exposure and t.transition_policy in ("any_required",):
+                continue  # exposure_only implicit: first exposure may not need evidence
+            if not is_exposure and not has_exception:
+                msg = f"Transition '{t.from_state}' -> '{t.to_state}' ({t.transition_intent}) lacks required evidence"
+                report.blocking.append(msg)
+
+    # ── 1. Production / communicative evidence check ──
+    production_goals = [g for g in state_plan.goals if g.goal_type in ("production", "transfer")]
+    for goal in production_goals:
+        goal_satisfied_by: list[str] = []
+        for t in state_plan.transitions:
+            if t.to_state == goal.required_state_to_reach:
+                for ev_id in t.required_evidence_ids:
+                    for ev in evidence_plan.evidence_specs:
+                        if ev.evidence_id == ev_id:
+                            goal_satisfied_by.append(ev.evidence_type)
+        only_low_level = all(et in ("deterministic_choice", "listen_choose", "matching") for et in goal_satisfied_by)
+        if only_low_level:
+            if learner_level in ("zero_beginner",):
+                # Zero_beginner: downgrade acceptable via teacher_observation warning
+                msg = f"Production goal '{goal.goal_id}' satisfied only by low-level evidence: {goal_satisfied_by}. Recommend teacher_observation or downgrade goal type."
+                report.warnings.append(msg)
+            else:
+                msg = f"Production goal '{goal.goal_id}' satisfied only by low-level evidence: {goal_satisfied_by}. Needs constrained_production, teacher_observation, or role_play."
+                report.blocking.append(msg)
+
+    # ── 2. Collector consistency check ──
+    for ev in evidence_plan.evidence_specs:
+        for ref in ev.collector_refs:
+            if ref not in activity_ids:
+                msg = f"Evidence '{ev.evidence_id}' references collector '{ref}' which has no matching activity"
+                report.blocking.append(msg)
+    for act in activity_plan.activities:
+        for ev_id in act.collects_evidence:
+            if ev_id not in evidence_ids:
+                msg = f"Activity '{act.activity_id}' collects evidence '{ev_id}' which does not exist"
+                report.blocking.append(msg)
+
+    # ── 3. Expanded Presentation Independence Check ──
+    FORBIDDEN_PRESENTATION_KEYS = [
+        "slide_id", "slide_ref", "page", "page_number",
+        "pptx_layout", "html_component_id", "component_id", "layout_variant",
+    ]
+    for artifact_name, artifact_obj in [
+        ("learning_state_plan", state_plan),
+        ("evidence_plan", evidence_plan),
+        ("activity_plan", activity_plan),
+    ]:
+        text = str(artifact_obj.model_dump(mode="json"))
+        for key in FORBIDDEN_PRESENTATION_KEYS:
+            if key in text:
+                msg = f"{artifact_name} contains presentation reference '{key}'"
+                report.presentation_independence.append(msg)
+                report.blocking.append(msg)
+
+    # ── 4. Original checks (Goal Orphan, Evidence Orphan, etc.) ──
     for goal in state_plan.goals:
         found = False
         for ev in evidence_plan.evidence_specs:
@@ -272,11 +330,10 @@ def check_evidence_alignment(
                     found = True
                     break
         if not found:
-            msg = f"Goal '{goal.goal_id}' ({goal.success_claim}) has no evidence spec"
+            msg = f"Goal '{goal.goal_id}' ({goal.success_claim[:60]}) has no evidence spec"
             report.goal_orphans.append(msg)
             report.blocking.append(msg)
 
-    # 8.2 Evidence Orphan Check
     for ev in evidence_plan.evidence_specs:
         collectors = [a for a in activity_plan.activities if ev.evidence_id in a.collects_evidence]
         if not collectors:
@@ -284,7 +341,6 @@ def check_evidence_alignment(
             report.evidence_orphans.append(msg)
             report.blocking.append(msg)
 
-    # 8.3 Activity Suitability Check
     for act in activity_plan.activities:
         if learner_level in ("zero_beginner",):
             unsuitable = {"open_response", "role_play_scene", "drag_sentence"}
@@ -293,32 +349,17 @@ def check_evidence_alignment(
                 report.activity_suitability.append(msg)
                 report.blocking.append(msg)
 
-    # 8.5 Presentation Independence Check
     for ev in evidence_plan.evidence_specs:
-        ev_json = ev.model_dump(mode="json")
-        ev_str = str(ev_json)
-        for forbidden in ["slide_id", "slide_type", "layout_variant"]:
-            if forbidden in ev_str:
-                msg = f"Evidence '{ev.evidence_id}' references '{forbidden}' (presentation-independent expected)"
-                report.presentation_independence.append(msg)
-                report.blocking.append(msg)
+        if ev.evidence_type == "teacher_observation" and not ev.failure_action:
+            report.teacher_observation_readiness.append(f"Teacher observation '{ev.evidence_id}' has no remediation notes")
+            report.warnings.append(f"Teacher observation '{ev.evidence_id}' has no remediation notes")
 
-    # 8.6 Teacher Observation Readiness
-    for ev in evidence_plan.evidence_specs:
-        if ev.evidence_type == "teacher_observation":
-            if not ev.failure_action:
-                msg = f"Teacher observation '{ev.evidence_id}' has no remediation/observation notes"
-                report.teacher_observation_readiness.append(msg)
-                report.warnings.append(msg)
-
-    # 8.4 Semantic Safety
     for ev in evidence_plan.evidence_specs:
         if ev.evidence_type == "semantic_judgment":
             cp = ev.confidence_policy
             if not cp.get("teacher_override") and not cp.get("deterministic"):
-                msg = f"Semantic evidence '{ev.evidence_id}' lacks fallback or teacher override"
-                report.semantic_safety.append(msg)
-                report.warnings.append(msg)
+                report.semantic_safety.append(f"Semantic evidence '{ev.evidence_id}' lacks fallback or teacher override")
+                report.warnings.append(f"Semantic evidence '{ev.evidence_id}' lacks fallback")
 
     # Derive state
     if report.blocking:
@@ -328,7 +369,7 @@ def check_evidence_alignment(
     else:
         report.state = "pass"
     if not report.passed:
-        report.passed.append(f"Evidence alignment check: {len(evidence_plan.evidence_specs)} specs, {len(activity_plan.activities)} activities, {len(report.blocking)} blocking")
+        report.passed.append(f"Evidence alignment: {len(evidence_plan.evidence_specs)} specs, {len(activity_plan.activities)} activities, {len(report.blocking)} blocking")
     return report
 
 

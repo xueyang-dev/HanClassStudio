@@ -39,6 +39,7 @@ def review_blueprint(
     level: str = "zero_beginner",
     scaffold_lang: str = "Arabic",
     language_items: list | None = None,
+    kernel_alignment: Any = None,
 ) -> CoursewareReviewReport:
     """Run 4-dimension review on a lesson blueprint."""
     report = CoursewareReviewReport()
@@ -194,6 +195,16 @@ def review_blueprint(
         report.state = "blocked"
     elif report.warnings:
         report.state = "warning"
+
+    # Kernel alignment integration
+    if kernel_alignment:
+        if isinstance(kernel_alignment, dict):
+            ka_state = kernel_alignment.get("state", "")
+        else:
+            ka_state = getattr(kernel_alignment, "state", "")
+        if ka_state == "blocked":
+            report.blocking.append("Evidence alignment check is blocked — review cannot pass")
+            report.state = "blocked"
 
     # Summary
     dims = [f for f in findings]

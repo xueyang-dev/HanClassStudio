@@ -37,6 +37,7 @@ PROJECT_GROUPS = [
     "uploads",
     "sources",
     "analysis",
+    "learning",
     "specs",
     "blueprints",
     "assets",

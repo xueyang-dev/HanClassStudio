@@ -127,7 +127,8 @@ def render_and_check(
         from .review_agent import review_blueprint, build_revision_plan
         from .storage import read_json as _rj
         language_items = _rj(project_id, "analysis/language_items.json") or []
-        review_report = review_blueprint(blueprint, zblevel, profile.scaffolding_language if profile else "English", language_items)
+        alignment_data = _rj(project_id, "quality/evidence_alignment_report.json") if _rj(project_id, "quality/evidence_alignment_report.json") else None
+        review_report = review_blueprint(blueprint, zblevel, profile.scaffolding_language if profile else "English", language_items, alignment_data)
         write_json(project_id, "quality/courseware_review_report.json", review_report.model_dump(mode="json"))
         if review_report.state == "blocked":
             rev_plan = build_revision_plan(review_report, blueprint)
@@ -179,6 +180,24 @@ def run_full_pipeline(
     write_json(project_id, "learning/evidence_plan.json", evidence_plan.model_dump(mode="json"))
     write_json(project_id, "learning/activity_plan.json", activity_plan.model_dump(mode="json"))
     write_json(project_id, "quality/evidence_alignment_report.json", alignment.model_dump(mode="json"))
+
+    # Pipeline gate: blocked alignment stops classroom render/export
+    if alignment.state == "blocked":
+        # Write kernel revision plan
+        from .review_agent import build_revision_plan
+        from .models import LessonBlueprint as _LB
+        write_json(project_id, "quality/kernel_revision_plan.json", {
+            "schema": "hanclassstudio.kernel_revision_plan.v1",
+            "state": "blocked",
+            "blocking_issues": alignment.blocking[:10],
+            "message": "Evidence alignment blocked. Only diagnostic export allowed.",
+            "recommended_action": "Fix evidence alignment before classroom export.",
+        })
+        # Don't render classroom HTML/PPTX - return early with diagnostic-only state
+        manifest = generate_project_media(project_root, blueprint, settings)
+        write_model(project_id, "asset_manifest.json", manifest)
+        from .storage import get_project_state as _get_state
+        return _get_state(project_id)
 
     manifest = generate_project_media(project_root, blueprint, settings)
     write_model(project_id, "asset_manifest.json", manifest)
