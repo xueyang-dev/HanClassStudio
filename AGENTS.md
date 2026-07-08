@@ -6,15 +6,29 @@ All Agents must read `skills/hanclassstudio/SKILL.md` before modifying any HanCl
 
 ## Core Pipeline
 
+HanClassStudio uses a **State-first** architecture ([docs/state-evidence-kernel-v0.2.2.md](docs/state-evidence-kernel-v0.2.2.md)):
+
+```text
+Source
+  → Learning State Plan
+  → Learning Goal / Evidence / Activity
+  → Presentation Plan
+  → Render
+```
+
+Current working pipeline:
 ```text
 Source Intake
-  -> Project Workspace
-  -> Lesson Strategist
-  -> Spec Lock
-  -> Blueprint / Interaction / Media Plans
-  -> Runtime Render
-  -> Quality Gate
-  -> Export
+  → Project Workspace
+  → Source Lesson Profile
+  → Learner Model
+  → Language Items
+  → Blueprint / Interaction / Media Plans
+  → Courseware Review Agent
+  → Revision Plan Application
+  → Runtime Render
+  → Quality Gate
+  → Export
 ```
 
 HanClassStudio expects external agents such as Claude Code, Codex, Hermes, or Cursor Agent to edit source workflow artifacts. HanClassStudio owns validation, rendering, quality gates, and export.
@@ -23,7 +37,7 @@ HanClassStudio expects external agents such as Claude Code, Codex, Hermes, or Cu
 
 - Do not directly edit `courseware/lesson.html`.
 - Do not directly edit `exports/`.
+- Do not directly edit generated `.pptx` exports.
 - Do not modify `uploads/`.
 - Do not invent components outside `courseware/components/registry.json`.
 - Do not bypass the quality gate.
-

@@ -1,0 +1,20 @@
+{
+  "language_code": "Japanese",
+  "writing_system": "Japanese",
+  "pronunciation_type": "romaji",
+  "default_font_stack": [
+    "Noto Sans JP",
+    "sans-serif"
+  ],
+  "text_direction": "ltr",
+  "beginner_instruction_policy": "scaffold_first",
+  "known_level_scheme": "JLPT",
+  "minimal_glossary": {
+    "你好": "こんにちは",
+    "您好": "こんにちは (丁寧)",
+    "你": "あなた",
+    "您": "あなた (敬語)",
+    "好": "良い",
+    "再见": "さようなら"
+  }
+}

@@ -12,6 +12,7 @@ HanClassStudio v0.1 is a local-first, demo-ready version of an agent-compatible 
 - Render slide-based offline `lesson.html`.
 - Run a stateful quality gate.
 - Export a ZIP package with HTML, assets, canonical data, quality report, and manifest.
+- Export an Editable PPTX package as a second classroom display target.
 - Generate Agent Handoff task/rules files.
 - Validate external Agent artifact edits.
 - Inspect artifacts from the frontend workbench.
@@ -26,6 +27,7 @@ HanClassStudio v0.1 is a local-first, demo-ready version of an agent-compatible 
 - Blueprint/media/render pipeline.
 - Quality gate and export policy.
 - Offline HTML runtime.
+- Editable PPTX exporter.
 - Agent Skill Layer.
 - Agent Handoff panel and API.
 - Golden sample and smoke tests.
@@ -39,6 +41,7 @@ HanClassStudio v0.1 is a local-first, demo-ready version of an agent-compatible 
 - Video generation is not implemented in v0.1.
 - Placeholder media is expected.
 - Runtime themes are fixed.
+- Editable PPTX converts HTML interactions into static classroom activity slides.
 - Project storage is local and development-oriented.
 - Quality gate is demo-grade coverage.
 
@@ -52,4 +55,3 @@ HanClassStudio v0.1 is a local-first, demo-ready version of an agent-compatible 
 - Project versioning and recovery.
 - More classroom interaction components.
 - Export options for LMS-oriented delivery.
-

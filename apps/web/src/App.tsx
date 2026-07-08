@@ -20,6 +20,7 @@ import {
   X
 } from "lucide-react";
 import {
+  exportEditablePptx,
   exportUrl,
   forceExportProject,
   generateAgentPackage,
@@ -43,6 +44,7 @@ import type {
   ComponentConfig,
   ComponentRegistry,
   ContentBlock,
+  EditablePptxExportResponse,
   GenerationMode,
   LessonBlueprint,
   LessonProfile,
@@ -71,20 +73,20 @@ type StepId = (typeof steps)[number]["id"];
 type PipelineStepStatus = "pending" | "running" | "done" | "error";
 
 const providerStatuses = [
-  { label: "LLM Provider", name: "Backend configured", status: "Mock", mode: "Mock" },
-  { label: "Image Provider", name: "Placeholder SVG", status: "Mock", mode: "Mock" },
-  { label: "TTS Provider", name: "Placeholder tone", status: "Mock", mode: "Mock" },
-  { label: "Video Provider", name: "Not connected", status: "Not configured", mode: "Mock" },
-  { label: "OCR Provider", name: "Parser fallback", status: "Mock", mode: "Local" }
+  { label: "LLM 语言模型", name: "后端已配置", status: "模拟运行", mode: "Mock" },
+  { label: "图片生成", name: "占位 SVG", status: "模拟运行", mode: "Mock" },
+  { label: "语音合成 TTS", name: "占位音调", status: "模拟运行", mode: "Mock" },
+  { label: "视频生成", name: "未连接", status: "未配置", mode: "Mock" },
+  { label: "OCR 文字识别", name: "解析器回退", status: "模拟运行", mode: "Local" }
 ] as const;
 
-const pipelineStepLabels = ["Spec Lock", "Blueprint", "Media", "Render", "Quality", "Export"] as const;
+const pipelineStepLabels = ["执行契约", "课件蓝图", "媒体资源", "课件渲染", "质量门禁", "打包导出"] as const;
 
 const emptyProfile: LessonProfile = {
   lesson_title: "",
-  subject: "International Chinese",
+  subject: "国际中文",
   learner_level: "Beginner",
-  target_students: "International Chinese learners",
+  target_students: "国际中文学习者",
   scaffolding_language: "English",
   lesson_type: "New lesson",
   generation_mode: "guided_redesign",
@@ -128,6 +130,7 @@ export function App() {
   const [agentPackage, setAgentPackage] = useState<AgentPackage | null>(null);
   const [agentValidation, setAgentValidation] = useState<AgentValidation | null>(null);
   const [agentCopied, setAgentCopied] = useState(false);
+  const [pptxExport, setPptxExport] = useState<EditablePptxExportResponse | null>(null);
 
   const progressIndex = useMemo(() => {
     if (project?.preview_url) return 4;
@@ -191,6 +194,7 @@ export function App() {
     setAgentPackage(null);
     setAgentValidation(null);
     setAgentCopied(false);
+    setPptxExport(null);
     setPreviewError("");
     setPreviewLoading(false);
     await run("正在解析课件", () => uploadProject(file), "profile");
@@ -213,12 +217,12 @@ export function App() {
     if (!project) return;
     setBusy("正在一键生成课件");
     setError("");
-    setPipelineSteps(markPipelineStep("Spec Lock"));
+    setPipelineSteps(markPipelineStep("执行契约"));
     try {
       const saved = await saveProfile(project.project_id, profile);
       setConfirmedProfileProjectId(saved.project_id);
       updateProject(saved);
-      setPipelineSteps(markPipelineStep("Spec Lock", "done"));
+      setPipelineSteps(markPipelineStep("执行契约", "done"));
       setPipelineSteps(markPipelineStep("Blueprint"));
       const next = await runPipeline(project.project_id);
       const nextSteps = initialPipelineSteps();
@@ -252,6 +256,21 @@ export function App() {
       const blob = await forceExportProject(project.project_id);
       downloadBlob(blob, `HanClassStudio_Output_${project.project_id}.zip`);
       setProject({ ...project, export_url: project.export_url ?? `/api/projects/${project.project_id}/export` });
+    } catch (err) {
+      setError(readableError(err));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function handleEditablePptxExport(force = false) {
+    if (!project) return;
+    setBusy(force ? "正在强制导出 Editable PPTX" : "正在导出 Editable PPTX");
+    setError("");
+    try {
+      const next = await exportEditablePptx(project.project_id, force);
+      setPptxExport(next);
+      await refreshArtifacts(project.project_id);
     } catch (err) {
       setError(readableError(err));
     } finally {
@@ -351,17 +370,17 @@ export function App() {
             <h1>{profile.lesson_title || "新建中文课件"}</h1>
           </div>
           <div className="status-strip">
-            <span>{project?.project_id ? `Project ${project.project_id}` : "No project"}</span>
-            <span>{project?.status ?? "ready"}</span>
-            <span>{project?.route ? `Route ${project.route}` : "Route pending"}</span>
-            <span>{profileConfirmed ? "Profile confirmed" : "Profile pending"}</span>
-            <span>{qualityState ? `Quality ${qualityState}` : "Quality pending"}</span>
-            <span>{issueCount === 0 ? "QC clear" : `${issueCount} QC issues`}</span>
+            <span>{project?.project_id ? `项目 ${project.project_id}` : "无项目"}</span>
+            <span>{project?.status ?? "就绪"}</span>
+            <span>{project?.route ? `路线 ${project.route}` : "路线待定"}</span>
+            <span>{profileConfirmed ? "课程已确认" : "课程待确认"}</span>
+            <span>{qualityState ? `质量 ${qualityState}` : "质量待定"}</span>
+            <span>{issueCount === 0 ? "质量通过" : `${issueCount} 个问题`}</span>
           </div>
           <div className="top-actions">
             <button type="button" className="secondary" onClick={() => setSettingsOpen(true)}>
               <Settings2 size={18} aria-hidden="true" />
-              Model Settings
+              模型设置
             </button>
             <button
               type="button"
@@ -401,7 +420,7 @@ export function App() {
 
         {activeStep === "profile" && (
           <section className="panel">
-            <PanelHeader icon={<Settings2 size={22} />} title="课程信息确认" action="Lesson Profile" />
+            <PanelHeader icon={<Settings2 size={22} />} title="课程信息确认" action="课程画像" />
             <ProfileForm profile={profile} onChange={setProfile} />
             <div className="action-row">
               <button
@@ -559,7 +578,28 @@ export function App() {
                 <ArrowDownToLine size={18} aria-hidden="true" />
                 强制导出
               </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={!project || !!busy || qualityBlocked}
+                onClick={() => handleEditablePptxExport(false)}
+              >
+                <ArrowDownToLine size={18} aria-hidden="true" />
+                导出 Editable PPTX
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={!project || !!busy || !qualityBlocked}
+                onClick={() => handleEditablePptxExport(true)}
+              >
+                <ArrowDownToLine size={18} aria-hidden="true" />
+                强制导出 PPTX
+              </button>
             </div>
+            <p className="export-note">
+              可编辑 PPTX 是课堂展示版本，HTML 互动组件已转为静态课堂活动页；HTML ZIP 仍是主交互输出。
+            </p>
             <QualityReportView project={project} />
             <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
             <AgentHandoffPanel
@@ -578,6 +618,13 @@ export function App() {
                 <CheckCircle2 size={18} aria-hidden="true" />
                 <span>导出包已生成：</span>
                 <a href={exportUrl(project.project_id)}>HanClassStudio_Output_*.zip</a>
+              </div>
+            )}
+            {pptxExport && (
+              <div className="export-ready">
+                <CheckCircle2 size={18} aria-hidden="true" />
+                <span>可编辑 PPTX 已生成：</span>
+                <a href={previewUrl(pptxExport.download_url) ?? undefined}>{pptxExport.filename}</a>
               </div>
             )}
             {previewUrl(project?.preview_url) ? (
@@ -662,20 +709,20 @@ function PipelineStatus({ steps }: { steps: Record<string, PipelineStepStatus> }
 
 function ModelSettingsModal({ onClose }: { onClose: () => void }) {
   const fields = [
-    ["LLM endpoint", "Configured in backend console"],
-    ["LLM model name", "Backend-managed model"],
-    ["Image generation endpoint", "Future image provider endpoint"],
-    ["TTS endpoint", "Future speech provider endpoint"],
-    ["OCR engine", "Future OCR provider"],
-    ["Video generation endpoint", "Future video provider endpoint"]
+    ["LLM 接口地址", "由后端控制台配置"],
+    ["LLM 模型名称", "由后端管理"],
+    ["图片生成接口", "后续版本开放"],
+    ["语音合成接口", "后续版本开放"],
+    ["OCR 引擎", "后续版本开放"],
+    ["视频生成接口", "后续版本开放"]
   ] as const;
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
         <header>
           <div>
-            <p className="eyebrow">Environment configuration</p>
-            <h2 id="modelSettingsTitle">Model Settings</h2>
+            <p className="eyebrow">环境配置</p>
+            <h2 id="modelSettingsTitle">模型设置</h2>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭模型设置">
             <X size={20} aria-hidden="true" />
@@ -888,7 +935,7 @@ function BlueprintEditor({
               <span className="slide-number">{slide.id}</span>
               <span>
                 <strong>{slide.title || `第 ${slide.id} 页`}</strong>
-                <small>{slide.slide_type || "Slide"} · {slide.layout_variant || "layout"}</small>
+                <small>{slide.slide_type || "页面"} · {slide.layout_variant || "布局"}</small>
               </span>
               {isExpanded ? <ChevronDown size={18} aria-hidden="true" /> : <ChevronRight size={18} aria-hidden="true" />}
             </button>
@@ -911,7 +958,7 @@ function BlueprintEditor({
 
                 <section className="editor-section">
                   <div className="editor-section-header">
-                    <h3>Content blocks</h3>
+                    <h3>内容区块</h3>
                     <button type="button" className="secondary small-button" onClick={() => addContentBlock(index)}>
                       <Plus size={16} aria-hidden="true" />
                       添加内容
@@ -921,7 +968,7 @@ function BlueprintEditor({
                     <div className="content-block-editor" key={block.id || blockIndex}>
                       <div className="compact-grid">
                         <label className="field">
-                          <span>Block type</span>
+                          <span>区块类型</span>
                           <input value={block.block_type} onChange={(event) => updateContentBlock(index, blockIndex, { block_type: event.target.value })} />
                         </label>
                         <button type="button" className="icon-text danger" onClick={() => removeContentBlock(index, blockIndex)}>
@@ -934,7 +981,7 @@ function BlueprintEditor({
                         <textarea value={block.text} onChange={(event) => updateContentBlock(index, blockIndex, { text: event.target.value })} />
                       </label>
                       <label className="field">
-                        <span>Scaffolding / bilingual explanation</span>
+                        <span>支架 / 双语说明</span>
                         <textarea
                           value={block.scaffolding_text}
                           onChange={(event) => updateContentBlock(index, blockIndex, { scaffolding_text: event.target.value })}
@@ -945,9 +992,9 @@ function BlueprintEditor({
                 </section>
 
                 <section className="editor-section">
-                  <h3>Media requirements</h3>
+                  <h3>媒体需求</h3>
                   <label className="field">
-                    <span>Media prompt</span>
+                    <span>媒体提示词</span>
                     <textarea
                       value={slide.media_requirements.image_prompt ?? ""}
                       onChange={(event) => updateMedia(index, "image_prompt", event.target.value)}
@@ -955,11 +1002,11 @@ function BlueprintEditor({
                   </label>
                   <div className="compact-grid">
                     <label className="field">
-                      <span>Audio text</span>
+                      <span>音频文本</span>
                       <input value={slide.media_requirements.audio_text ?? ""} onChange={(event) => updateMedia(index, "audio_text", event.target.value)} />
                     </label>
                     <label className="field">
-                      <span>Video scene prompt</span>
+                      <span>视频场景提示</span>
                       <input
                         value={slide.media_requirements.video_scene_prompt ?? ""}
                         onChange={(event) => updateMedia(index, "video_scene_prompt", event.target.value)}
@@ -970,7 +1017,7 @@ function BlueprintEditor({
 
                 <section className="editor-section">
                   <div className="editor-section-header">
-                    <h3>Components</h3>
+                    <h3>互动组件</h3>
                     <select
                       aria-label={`给第 ${slide.id} 页添加组件`}
                       defaultValue=""
@@ -981,7 +1028,7 @@ function BlueprintEditor({
                       }}
                     >
                       <option value="" disabled>
-                        {componentOptions.length ? "添加组件" : "加载组件中"}
+                        {componentOptions.length ? "选择组件" : "加载组件中"}
                       </option>
                       {componentOptions.map((type) => (
                         <option key={type} value={type}>
@@ -996,7 +1043,7 @@ function BlueprintEditor({
                         <div className="component-editor" key={component.id || componentIndex}>
                           <div className="compact-grid">
                             <label className="field">
-                              <span>Component type</span>
+                              <span>组件类型</span>
                               <select
                                 value={component.component_type}
                                 onChange={(event) => updateComponent(index, componentIndex, { component_type: event.target.value })}
@@ -1009,7 +1056,7 @@ function BlueprintEditor({
                               </select>
                             </label>
                             <label className="field">
-                              <span>Component title</span>
+                              <span>组件标题</span>
                               <input value={component.title} onChange={(event) => updateComponent(index, componentIndex, { title: event.target.value })} />
                             </label>
                           </div>
@@ -1044,7 +1091,7 @@ function defaultComponentValue(key: string): unknown {
 }
 
 function SpecLockSummary({ specLock }: { specLock: Record<string, unknown> | null }) {
-  if (!specLock) return <EmptyState text="生成大纲或一键生成后会显示 Spec Lock 摘要。" />;
+  if (!specLock) return <EmptyState text="生成大纲或一键生成后会显示执行契约摘要。" />;
   const lesson = objectValue(specLock.lesson);
   const templates = objectValue(specLock.templates);
   const components = objectValue(specLock.components);
@@ -1053,16 +1100,16 @@ function SpecLockSummary({ specLock }: { specLock: Record<string, unknown> | nul
   return (
     <section className="dev-panel">
       <div className="dev-panel-header">
-        <h3>Spec Lock Summary</h3>
+        <h3>执行契约摘要</h3>
         <span>{stringValue(specLock.schema)}</span>
       </div>
       <div className="spec-grid">
-        <SpecItem label="Route" value={stringValue(specLock.route)} />
-        <SpecItem label="Generation mode" value={stringValue(specLock.generation_mode)} />
-        <SpecItem label="Scaffolding" value={stringValue(lesson.scaffolding_language)} />
-        <SpecItem label="Runtime template" value={stringValue(templates.runtime)} />
-        <SpecItem label="Allowed components" value={allowed} />
-        <SpecItem label="Quality policy" value={qualityPolicySummary(quality)} />
+        <SpecItem label="课件路线" value={stringValue(specLock.route)} />
+        <SpecItem label="生成模式" value={stringValue(specLock.generation_mode)} />
+        <SpecItem label="支架语言" value={stringValue(lesson.scaffolding_language)} />
+        <SpecItem label="运行时模板" value={stringValue(templates.runtime)} />
+        <SpecItem label="可用组件" value={allowed} />
+        <SpecItem label="质量策略" value={qualityPolicySummary(quality)} />
       </div>
     </section>
   );
@@ -1078,11 +1125,11 @@ function SpecItem({ label, value }: { label: string; value: string }) {
 }
 
 function ArtifactInspector({ tree }: { tree: ArtifactTree | null }) {
-  if (!tree) return <EmptyState text="Artifact Inspector 会在项目创建后显示。" />;
+  if (!tree) return <EmptyState text="制品审查器会在项目创建后显示。" />;
   return (
     <section className="dev-panel">
       <div className="dev-panel-header">
-        <h3>Artifact Inspector</h3>
+        <h3>制品审查器</h3>
         <span>Project {tree.project_id}</span>
       </div>
       <div className="artifact-grid">
@@ -1127,8 +1174,8 @@ function AgentHandoffPanel({
   return (
     <section className="dev-panel">
       <div className="dev-panel-header">
-        <h3>Agent Handoff</h3>
-        <span>{agentPackage ? "Ready for Claude Code / Codex" : "Generate task package"}</span>
+        <h3>Agent 任务交接</h3>
+        <span>{agentPackage ? "可用于 Claude Code / Codex" : "生成任务包"}</span>
       </div>
       <div className="agent-actions">
         <button type="button" className="secondary" disabled={!project || busy} onClick={onGenerate}>
@@ -1141,7 +1188,7 @@ function AgentHandoffPanel({
         </button>
         <button type="button" className="primary" disabled={!project || busy} onClick={onValidate}>
           <CheckCircle2 size={16} aria-hidden="true" />
-          Validate Agent Output
+          验证 Agent 输出
         </button>
       </div>
       {agentPackage && (
@@ -1155,10 +1202,10 @@ function AgentHandoffPanel({
       )}
       {validation && (
         <div className={`agent-validation ${validation.state}`}>
-          <strong>Validation: {validation.state}</strong>
-          <ValidationList title="Blocking" items={validation.blocking} empty="无阻断项" />
-          <ValidationList title="Warnings" items={validation.warnings} empty="无警告" />
-          <ValidationList title="Passed" items={validation.passed} empty="暂无通过项" />
+          <strong>验证结果：{validation.state}</strong>
+          <ValidationList title="阻断项" items={validation.blocking} empty="无阻断项" />
+          <ValidationList title="警告项" items={validation.warnings} empty="无警告" />
+          <ValidationList title="通过项" items={validation.passed} empty="暂无通过项" />
         </div>
       )}
     </section>
@@ -1197,14 +1244,14 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
       ? safeList(report.suggestions)
       : ["标题、媒体引用和互动配置会在渲染后检查。"];
   const groups = [
-    ["Blocking", blocking, "需要先修复，否则普通导出会被阻止。"],
-    ["Warnings", warnings, "建议检查，但不一定阻止导出。"],
-    ["Passed checks", passed, "当前已经通过或完成的检查。"]
+    ["阻断项", blocking, "需要先修复，否则普通导出会被阻止。"],
+    ["警告项", warnings, "建议检查，但不一定阻止导出。"],
+    ["通过项", passed, "当前已经通过或完成的检查。"]
   ] as const;
   return (
     <>
       <div className={`quality-state ${report.state}`}>
-        <strong>Quality: {report.state}</strong>
+        <strong>质量门禁：{report.state}</strong>
         <span>{report.schema}</span>
       </div>
       <div className="quality-grid">

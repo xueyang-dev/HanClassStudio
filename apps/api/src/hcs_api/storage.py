@@ -78,8 +78,8 @@ EXPECTED_ARTIFACTS = {
         "assets/data/attribution.json",
     ],
     "courseware": ["courseware/lesson.html", "courseware/render_manifest.json"],
-    "quality": ["quality/quality_report.json", "quality/quality_summary.md"],
-    "exports": ["exports/export_manifest.json"],
+    "quality": ["quality/quality_report.json", "quality/quality_summary.md", "quality/pptx_quality_report.json"],
+    "exports": ["exports/export_manifest.json", "exports/pptx_export_manifest.json"],
     "agent": ["agent/AGENT_TASK.md", "agent/AGENT_RULES.md"],
 }
 
@@ -111,6 +111,7 @@ MODEL_PATHS = {
     "lesson_blueprint.json": Path("blueprints/lesson_blueprint.json"),
     "asset_manifest.json": Path("assets/data/asset_manifest.json"),
     "quality_report.json": Path("quality/quality_report.json"),
+    "classroom_quality_report.json": Path("quality/classroom_quality_report.json"),
 }
 
 
@@ -270,15 +271,17 @@ def _artifact_type(relative: Path, path: Path) -> str:
     return parts[0] if parts else "unknown"
 
 
-def zip_output(project_id: str, force: bool = False) -> Path:
+def zip_output(project_id: str, force: bool = False, classroom: bool = False) -> Path:
     root = ensure_project(project_id)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    export_path = root / "exports" / f"HanClassStudio_Output_{timestamp}.zip"
+    prefix = "HanClassStudio_Classroom" if classroom else "HanClassStudio_Output"
+    export_path = root / "exports" / f"{prefix}_{timestamp}.zip"
     manifest = {
         "schema": "hanclassstudio.export_manifest.v1",
         "project_id": project_id,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "forced": force,
+        "classroom": classroom,
     }
     write_json(project_id, "exports/export_manifest.json", manifest)
 
@@ -287,6 +290,12 @@ def zip_output(project_id: str, force: bool = False) -> Path:
         if lesson_path.exists():
             html = lesson_path.read_text(encoding="utf-8").replace("../assets/", "assets/")
             zf.writestr("lesson.html", html)
+
+        # Add classroom HTML if available
+        classroom_path = root / "courseware" / "lesson_classroom.html"
+        if classroom_path.exists():
+            html = classroom_path.read_text(encoding="utf-8").replace("../assets/", "assets/")
+            zf.writestr("lesson_classroom.html", html)
 
         assets_root = root / "assets"
         for file_path in assets_root.rglob("*"):

@@ -1,0 +1,39 @@
+{
+  "language_code": "English",
+  "writing_system": "Latin",
+  "pronunciation_type": "pinyin",
+  "default_font_stack": [
+    "Inter",
+    "Helvetica Neue",
+    "sans-serif"
+  ],
+  "text_direction": "ltr",
+  "beginner_instruction_policy": "scaffold_first",
+  "known_level_scheme": "HSK",
+  "minimal_glossary": {
+    "你好": "hello",
+    "您好": "hello (polite)",
+    "你": "you (informal)",
+    "您": "you (polite/formal)",
+    "好": "good / fine",
+    "你们": "you (plural)",
+    "你们好": "hello (to a group)",
+    "老师": "teacher",
+    "再见": "goodbye",
+    "同学": "classmate",
+    "谢谢": "thank you",
+    "一": "one",
+    "二": "two",
+    "三": "three"
+  },
+  "usage_contexts": {
+    "你好": "for friends or classmates",
+    "您好": "for teachers or elders / formal situations",
+    "你": "with friends and peers",
+    "您": "with teachers and elders to show respect",
+    "你们": "for a group of people",
+    "好": "good / fine",
+    "老师": "a person who teaches you",
+    "再见": "when saying goodbye"
+  }
+}

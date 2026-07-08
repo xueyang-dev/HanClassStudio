@@ -72,6 +72,151 @@ An external Agent may edit:
 
 HanClassStudio then validates the output, renders `courseware/lesson.html`, runs quality, and exports.
 
+## Teaching Candidate Extraction
+
+Before blueprint generation, HanClassStudio runs a Teaching Candidate Extraction step that analyses the source material and produces `analysis/teaching_candidates.json` with the following fields:
+
+| Field | Purpose |
+|-------|---------|
+| `route_hint` | Lesson type classification (`greeting_lesson`, `vocabulary_lesson`, `dialogue_lesson`, `character_lesson`, `grammar_pattern_lesson`, `mixed_lesson`) |
+| `core_vocabulary` | High-confidence target words — based on frequency, position (dialogue/context), and pinyin proximity |
+| `secondary_vocabulary` | Medium-confidence words — present in source but with weaker evidence |
+| `noise_candidates` | Low-confidence or non-teaching strings (stroke names, framework noise, generic functional words) |
+| `grammar_candidates` | Detected grammar patterns ordered by confidence — sourced from structural patterns in the text |
+| `dialogue_candidates` | Extracted A/B dialogue lines from the source |
+| `character_candidates` | Candidate characters for writing practice |
+| `classroom_task_candidates` | Inferred classroom activity types |
+| `source_warnings` | Diagnostic warnings about source quality |
+
+The teaching candidates feed directly into the Lesson Strategist (blueprint generation). A greeting lesson produces a different slide structure than a character-writing lesson.
+
+The extraction logic in `analysis.py`:
+- Classifies characters into stroke noise vs. real vocabulary
+- Prioritises words that appear near pinyin annotations, example sentences, or English glosses
+- Detects dialogue structures from "A：" / "B：" patterns
+- Infers grammar patterns from source text (在+呢, 了, 喜欢, etc.) without hard-coding defaults
+- Scores route hints by checking title, content signals, and structural patterns
+
+## Learner Comprehension Core
+
+After teaching candidates are extracted, the Learner Comprehension Core (`learner_comprehension.py`) builds a structured understanding of what the learner knows and what they can handle:
+
+### Learner Model
+
+`analysis/learner_model.json` captures:
+- `target_language` / `scaffold_language`
+- `level`: zero_beginner, beginner, elementary, intermediate
+- `known_words`: words the learner already knows (functional words like 我, 的, 是 are pre-populated)
+- `new_word_limit_per_slide` (2 for zero_beginner) and `new_word_limit_per_lesson`
+- `max_sentence_length`
+- `require_scaffold_meaning` / `require_usage_scene`
+
+### Language Items
+
+`analysis/language_items.json` converts teaching candidates into structured `LanguageItem` objects:
+- Each item has `target_form`, `pronunciation`, `scaffold_meaning`, `usage_context`, `example`
+- Vocabulary items look up built-in gloss tables for supported scaffold languages (Arabic, English)
+- Grammar patterns (e.g., 你 vs 您) become LanguageItems with usage context
+
+### Input Sequence Plan
+
+`analysis/input_sequence_plan.json` plans the introduction order of new items:
+- Checks that prerequisites are met before introducing dependent items
+- Flags items missing scaffold meaning or usage context
+- Warns about example sentences containing unknown words
+
+### Comprehensibility Gate
+
+`quality/comprehensibility_report.json` runs during `render_and_check` and checks:
+- New word count per slide doesn't exceed the limit
+- All vocabulary items have scaffold meaning (blocked for zero_beginner)
+- Example sentences don't use "我会说" template unless 我/会/说 are known
+- No meta labels (生词卡, 词卡) are exposed to learners in classroom mode
+- Usage context is present for each item
+
+### Built-in Gloss Tables
+
+For greeting lessons, a minimal built-in gloss table provides real translations for supported languages:
+
+| Word | Arabic | English |
+|------|--------|---------|
+| 你好 | مرحبًا | hello |
+| 您好 | مرحبًا / تحية رسمية | hello (polite) |
+| 你 | أنتَ / أنتِ | you (informal) |
+| 您 | حضرتك | you (polite) |
+| 老师 | مُعَلِّم / مُعَلِّمَة | teacher |
+| 再见 | إلى اللقاء | goodbye |
+
+The table is extensible in `learner_comprehension.py` and does not require a real LLM provider.
+
+## Syllabus-Aware Comprehensible Input Engine
+
+After language items are built, the Syllabus Engine (`syllabus_engine.py`) adds a second layer of constraints based on the source material's actual scope and the learner's level:
+
+### Pipeline Flow
+
+```text
+source_material
+  -> SourceLessonProfile (extract dialogue/vocab/grammar/exercise/teacher/noise units)
+  -> DifficultyProfile (infer HSK level from content signals)
+  -> LearnerModel -> LanguageInventory (classify known/target/off-level/excluded)
+  -> AllowedTextPlan (per-slide allowed/forbidden text, max new items)
+  -> Blueprint generation (constrained by allowed text)
+  -> OffLevelReport (post-generation check for violations)
+  -> Exports
+```
+
+### Source Lesson Profile
+
+`analysis/source_lesson_profile.json` extracts structured units:
+- `dialogue_units`: lines matching A：/B： patterns
+- `vocabulary_units`: Chinese words with adjacent pinyin
+- `grammar_units`: pattern signals (语法, 在...呢, 了, etc.)
+- `exercise_units`: activity descriptions (读一读, 写一写, 听一听)
+- `teacher_instruction_units`: teacher-facing prompts
+- `noise_units`: irrelevant text
+
+### Difficulty Profile
+
+`analysis/difficulty_profile.json` infers lesson level from source:
+- Greeting signals + pinyin presence + unique character count → zero_beginner, beginner, etc.
+- Maps to standard schemes (HSK1-6, CEFR A1-C2, JLPT N5-N1)
+- Includes evidence list and confidence score
+
+### Language Inventory
+
+`analysis/language_inventory.json` classifies every lexical item:
+- `known_items`: from learner model + standard profile
+- `lesson_target_items`: from source, will enter learner-facing text
+- `off_level_items`: complex items filtered out for zero_beginner/beginner
+- `teacher_only_items`: instructions, meta labels
+- `excluded_items`: noise, functional words
+
+### Allowed Text Plan
+
+`analysis/allowed_text_plan.json` defines per-slide constraints:
+- `allowed_target_text`: words that may appear on this slide
+- `forbidden_target_text`: never show these (meta labels, "我会说", "朋友之间")
+- `max_new_items`: 1 for zero_beginner
+- `teacher_only_text`: never reaches student view
+
+### Off-Level Report
+
+`quality/off_level_report.json` validates the final output:
+- `unknown_target_items`: words in learner-facing text not in known or target list
+- `teacher_text_leaks`: meta labels or teacher instructions visible to students
+- `unsupported_new_items`: slides with too many new items
+- State is `blocked` for zero_beginner with violations, otherwise `warning`
+
+### i+1 Constraints
+
+For zero_beginner:
+- Maximum 1 new core target item per slide
+- First exposure must include audio/image/scaffold meaning
+- No "我会说", "朋友之间", "同学之间" in target text
+- No output tasks before input is established
+- Teacher instructions only in scaffold language, not target language
+
 ## Quality Gate
 
 The quality gate writes:
@@ -104,3 +249,27 @@ The exported ZIP includes `lesson.html`, media assets, canonical data artifacts,
 
 The runtime is slide-based, local-only, and does not depend on external CDNs. Its CSS and JavaScript come from the fixed runtime renderer/template, not from generated Agent content.
 
+## Editable PPTX Export
+
+Editable PPTX is the second export target. It reads the same canonical artifacts:
+
+```text
+specs/spec_lock.json
+blueprints/lesson_blueprint.json
+blueprints/interaction_plan.json
+blueprints/media_plan.json
+assets/data/asset_manifest.json
+quality/quality_report.json
+```
+
+The exporter writes:
+
+```text
+exports/HanClassStudio_Editable_<timestamp>.pptx
+exports/pptx_export_manifest.json
+quality/pptx_quality_report.json
+```
+
+The PPTX exporter is deterministic and uses `python-pptx` to generate native editable PowerPoint shapes, text boxes, and image placeholders. It does not convert HTML or SVG snapshots. Interactive components are downgraded into static classroom activity pages so teachers can edit and present them in PowerPoint.
+
+The same quality policy applies: blocked quality prevents normal PPTX export unless `force=true` is explicit and recorded in the manifest.

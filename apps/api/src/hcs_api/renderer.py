@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from html import escape
 from pathlib import Path
 
@@ -13,20 +14,14 @@ def render_lesson(
     blueprint: LessonBlueprint,
     manifest: AssetManifest,
     report: QualityReport,
+    render_mode: str = "debug",
 ) -> Path:
     image_by_id = {asset.id: f"../{asset.path}" for asset in manifest.images}
     audio_by_id = {asset.id: f"../{asset.path}" for asset in manifest.audio}
-    slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id) for slide in blueprint.slides)
-    data_blob = (
-        json.dumps(
-            {
-                "profile": profile.model_dump(mode="json"),
-                "blueprint": blueprint.model_dump(mode="json"),
-                "quality": report.model_dump(mode="json"),
-            },
-            ensure_ascii=False,
-        ).replace("</", "<\\/")
-    )
+    slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id, render_mode) for slide in blueprint.slides)
+    is_classroom = render_mode == "classroom"
+    data_blob = _build_lesson_data_blob(profile, blueprint, report, is_classroom)
+    title_label = escape(profile.scaffolding_language) if not is_classroom else "辅助语言"
     html = f"""<!doctype html>
 <html lang="zh-Hans">
 <head>
@@ -49,7 +44,7 @@ def render_lesson(
       <header class="player-bar">
         <div>
           <strong>{escape(profile.lesson_title)}</strong>
-          <span>{escape(profile.scaffolding_language)} scaffold</span>
+          <span>{title_label}</span>
         </div>
         <div class="toolbar" role="group" aria-label="辅助语言显示">
           <button type="button" data-mode="zh">中文</button>
@@ -72,10 +67,12 @@ def render_lesson(
   <script>{_js()}</script>
 </body>
 </html>"""
-    output = project_root / "courseware" / "lesson.html"
+    filename = "lesson_classroom.html" if is_classroom else "lesson.html"
+    output = project_root / "courseware" / filename
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")
-    (project_root / "courseware" / "render_manifest.json").write_text(
+    manifest_filename = "render_manifest_classroom.json" if is_classroom else "render_manifest.json"
+    (project_root / "courseware" / manifest_filename).write_text(
         json.dumps(
             {
                 "schema": "hanclassstudio.render_manifest.v1",
@@ -90,36 +87,135 @@ def render_lesson(
     return output
 
 
-def _render_slide(slide, image_by_id: dict[str, str], audio_by_id: dict[str, str]) -> str:
+PROVIDER_REQUIRED = re.compile(r"provider_required|\[Arabic\]|\[.*?\].*?provider_required")
+SAFE_ALT = "课堂插图"
+
+# Arabic Unicode ranges
+ARABIC_RANGE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+")
+
+
+def _build_lesson_data_blob(
+    profile: LessonProfile,
+    blueprint: LessonBlueprint,
+    report: QualityReport,
+    is_classroom: bool,
+) -> str:
+    if not is_classroom:
+        return json.dumps(
+            {"profile": profile.model_dump(mode="json"), "blueprint": blueprint.model_dump(mode="json"), "quality": report.model_dump(mode="json")},
+            ensure_ascii=False,
+        ).replace("</", "<\\/")
+
+    # Classroom: redact debug info
+    safe_profile = {"lesson_title": profile.lesson_title, "scaffolding_language": profile.scaffolding_language}
+    safe_slides = []
+    for s in blueprint.slides:
+        safe_blocks = []
+        for b in s.content_blocks:
+            safe_blocks.append({
+                "text": _clean_arabic_from_zh(b.text),
+                "scaffolding_text": "" if PROVIDER_REQUIRED.search(b.scaffolding_text) else b.scaffolding_text,
+            })
+        safe_comps = []
+        for c in s.components:
+            data = {k: v for k, v in c.data.items() if k not in ("image_prompt",)}
+            # Clean provider_required hints
+            for key in ("hint",):
+                if key in data and isinstance(data[key], str) and PROVIDER_REQUIRED.search(data[key]):
+                    data[key] = ""
+            # Clean Arabic from text fields
+            for key in ("audio_text", "choices", "answer"):
+                if key in data and isinstance(data[key], str):
+                    data[key] = _clean_arabic_from_zh(data[key])
+                elif key in data and isinstance(data[key], list):
+                    data[key] = [_clean_arabic_from_zh(str(item)) for item in data[key]]
+            safe_comps.append({"component_type": c.component_type, "title": c.title, "data": data})
+        safe_slides.append({
+            "id": s.id,
+            "title": s.title,
+            "content_blocks": safe_blocks,
+            "components": safe_comps,
+        })
+    safe_blueprint = {
+        "lesson_title": blueprint.lesson_title,
+        "objectives": blueprint.objectives,
+        "key_vocabulary": [{"word": v["word"], "pinyin": v.get("pinyin", "")} for v in blueprint.key_vocabulary],
+        "slides": safe_slides,
+    }
+    safe_quality = {"state": report.state}
+    return json.dumps(
+        {"profile": safe_profile, "blueprint": safe_blueprint, "quality": safe_quality},
+        ensure_ascii=False,
+    ).replace("</", "<\\/")
+
+
+def _clean_arabic_from_zh(text: str) -> str:
+    """Remove Arabic text from a mixed Chinese-Arabic string, preserving Chinese, pinyin, and punctuation."""
+    # Remove Arabic ranges
+    cleaned = ARABIC_RANGE.sub("", text)
+    # Clean up double spaces and leading/trailing spaces
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Remove trailing Arabic punctuation artifacts
+    cleaned = re.sub(r"[！?؟!]+$", "", cleaned).strip()
+    return cleaned
+
+
+def _render_slide(slide, image_by_id: dict[str, str], audio_by_id: dict[str, str], render_mode: str = "debug") -> str:
     image_path = image_by_id.get(slide.media_requirements.image_key or "")
     audio_path = audio_by_id.get(slide.media_requirements.audio_key or "")
-    blocks = "".join(_render_block(block) for block in slide.content_blocks)
-    components = "".join(_render_component(component, audio_by_id) for component in slide.components)
-    image = _image_or_placeholder(image_path, slide.media_requirements.image_prompt or slide.title)
+    blocks = "".join(_render_block(block, render_mode) for block in slide.content_blocks)
+    components = "".join(_render_component(component, audio_by_id, render_mode) for component in slide.components)
+
+    is_classroom = render_mode == "classroom"
+    if is_classroom:
+        image = _image_classroom(image_path)
+        kicker = ""
+    else:
+        image = _image_or_placeholder(image_path, slide.media_requirements.image_prompt or slide.title)
+        kicker = f'<p class="slide-kicker">{escape(slide.slide_type)}</p>'
+
     audio = _audio_button(audio_path, slide.media_requirements.audio_text or "Demo audio", allow_unavailable=False) if slide.media_requirements.audio_key else ""
+
+    # Classroom mode: hide media zone entirely if no real image
+    media_zone = f'<div class="media-zone">{image}</div>'
+    if is_classroom and not image_path:
+        media_zone = ""
+
     return f"""
 <article class="slide {escape(slide.slide_type)}" data-slide="{slide.id - 1}" data-layout="{escape(slide.layout_variant)}">
   <div class="slide-content">
     <div class="text-zone">
-      <p class="slide-kicker">{escape(slide.slide_type)}</p>
+      {kicker}
       <h1>{escape(slide.title)}</h1>
       {blocks}
       {audio}
     </div>
-    <div class="media-zone">{image}</div>
+    {media_zone}
   </div>
   <div class="component-zone">{components}</div>
 </article>"""
 
 
-def _render_block(block) -> str:
-    scaffold = f'<p class="scaffold">{escape(block.scaffolding_text)}</p>' if block.scaffolding_text else ""
+def _render_block(block, render_mode: str = "debug") -> str:
+    scaffold_text = block.scaffolding_text
+    if render_mode == "classroom" and PROVIDER_REQUIRED.search(scaffold_text):
+        scaffold_text = ""
+    scaffold = f'<p class="scaffold">{escape(scaffold_text)}</p>' if scaffold_text else ""
     return f'<div class="content-block {escape(block.block_type)}"><p class="zh">{escape(block.text)}</p>{scaffold}</div>'
 
 
-def _render_component(component, audio_by_id: dict[str, str]) -> str:
+def _render_component(component, audio_by_id: dict[str, str], render_mode: str = "debug") -> str:
     data = component.data
     title = escape(component.title)
+    is_classroom = render_mode == "classroom"
+
+    def _scaffold_text(text: str) -> str:
+        if is_classroom and PROVIDER_REQUIRED.search(text):
+            return ""
+        return text
+
+    _hint = _scaffold_text(data.get("hint", ""))
+
     if component.component_type == "AudioButton":
         audio = _audio_button(audio_by_id.get(data.get("audio_key", ""), ""), data.get("label") or data.get("audio_text", "Demo audio"))
         return f'<section class="component component-container audio-component"><h2>{title}</h2>{audio}</section>'
@@ -127,14 +223,27 @@ def _render_component(component, audio_by_id: dict[str, str]) -> str:
         cards = []
         for item in _list(data.get("items")):
             audio = _audio_button(audio_by_id.get(item.get("audio_key", ""), ""), item.get("audio_text", item.get("word", "")))
+            meaning = _scaffold_text(item.get("meaning", ""))
+            context = item.get("usage_context", "")
+            example = _scaffold_text(item.get("example", ""))
+            # In classroom mode for zero_beginner, usage_context should be in scaffold language, not Chinese
+            context_html = ""
+            if context and is_classroom:
+                # Check it's not Chinese teacher text
+                chinese = re.compile(r"[\\u4e00-\\u9fff]{4,}")
+                if not chinese.search(context):
+                    context_html = f'<p class="scaffold">{escape(context)}</p>'
+            elif context and not is_classroom:
+                context_html = f'<p class="scaffold">{escape(context)}</p>'
             cards.append(
                 f"""<div class="flip-card" role="button" tabindex="0" aria-label="翻转生词卡 {escape(item.get('word', ''))}">
-  <span class="card-face front"><strong>{escape(item.get('word', ''))}</strong><em>{escape(item.get('pinyin', ''))}</em>{audio}</span>
-  <span class="card-face back"><span class="zh">{escape(item.get('example', ''))}</span><span class="scaffold">{escape(item.get('meaning', ''))}</span></span>
+  <span class="card-face front"><strong>{escape(item.get('word', ''))}</strong><em>{escape(item.get('pinyin', ''))}</em></span>
+  <span class="card-face back"><span class="zh">{escape(example)}</span><span class="scaffold">{escape(meaning)}</span>{context_html}</span>
 </div>"""
             )
+        title_html = "" if is_classroom else f"<h2>{title}</h2>"
         body = f'<div class="vocab-grid">{"".join(cards)}</div>' if cards else _component_empty("暂无生词卡数据")
-        return f'<section class="component component-container vocab-component"><h2>{title}</h2>{body}</section>'
+        return f'<section class="component component-container vocab-component">{title_html}{body}</section>'
     if component.component_type == "SentenceDragBuilder":
         word_list = [str(word) for word in _list(data.get("words"))]
         words = "".join(f'<button type="button" class="word-chip" draggable="true">{escape(word)}</button>' for word in word_list)
@@ -142,7 +251,7 @@ def _render_component(component, audio_by_id: dict[str, str]) -> str:
         empty = _component_empty("暂无可组句词语") if not word_list else ""
         return f"""<section class="component component-container drag-builder" data-answer='{escape(answer)}'>
   <h2>{title}</h2>
-  <p class="scaffold">{escape(data.get("hint", ""))}</p>
+  <p class="scaffold">{escape(_hint)}</p>
   {empty}<div class="word-bank">{words}</div>
   <div class="drop-zone" aria-label="组句区域"></div>
   <div class="component-actions"><button type="button" data-check="sentence">检查</button><button type="button" data-reset="sentence">重来</button></div>
@@ -155,7 +264,7 @@ def _render_component(component, audio_by_id: dict[str, str]) -> str:
         empty = _component_empty("暂无选择项") if not choices_list else ""
         return f"""<section class="component component-container listen-choose" data-answer="{escape(data.get('answer', ''))}">
   <h2>{title}</h2>
-  <p class="scaffold">{escape(data.get("hint", ""))}</p>
+  <p class="scaffold">{escape(_hint)}</p>
   {audio}
   {empty}<div class="choice-grid">{choices}</div>
   <p class="feedback" aria-live="polite"></p>
@@ -167,7 +276,7 @@ def _render_component(component, audio_by_id: dict[str, str]) -> str:
         body = f'<div class="match-columns"><div>{left}</div><div>{right}</div></div>' if pairs else _component_empty("暂无配对数据")
         return f"""<section class="component component-container match-game">
   <h2>{title}</h2>
-  <p class="scaffold">{escape(data.get("hint", ""))}</p>
+  <p class="scaffold">{escape(_hint)}</p>
   {body}
   <p class="feedback" aria-live="polite"></p>
 </section>"""
@@ -194,10 +303,17 @@ def _audio_button(path: str, label: str, allow_unavailable: bool = True) -> str:
     return f'<button type="button" class="audio-button" data-audio="{escape(path)}" aria-label="播放音频：{escape(label)}"><span class="audio-icon" aria-hidden="true"></span>播放</button>'
 
 
-def _image_or_placeholder(path: str, label: str) -> str:
+def _image_or_placeholder(path: str | None, label: str) -> str:
     if path:
         return f'<img class="slide-image" src="{escape(path)}" alt="{escape(label)}" />'
     return f'<div class="media-placeholder" role="img" aria-label="图片占位">{escape(label or "Demo image placeholder")}</div>'
+
+
+def _image_classroom(path: str | None) -> str:
+    """Classroom mode: show real image or empty placeholder without technical text."""
+    if path:
+        return f'<img class="slide-image" src="{escape(path)}" alt="{SAFE_ALT}" />'
+    return ""
 
 
 def _component_empty(message: str) -> str:

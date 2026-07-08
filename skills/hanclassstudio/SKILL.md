@@ -7,22 +7,73 @@ description: Agent-compatible workflow for editing HanClassStudio international 
 
 Use this skill to work on HanClassStudio as a file workflow. External agents may read source materials and edit specs or blueprints; HanClassStudio validates, renders, runs quality gates, and exports.
 
+## Architecture Paradigm
+
+HanClassStudio uses a **State-first** architecture documented in [docs/state-evidence-kernel-v0.2.2.md](../docs/state-evidence-kernel-v0.2.2.md):
+
+```text
+Source
+→ Learning State Plan
+→ Learning Goal
+→ Evidence Spec
+→ Learning Activity
+→ Presentation Plan
+→ Render
+```
+
+State / Goal / Evidence / Activity constitute the pedagogical kernel.
+HTML / PPTX / Teacher Observation are downstream presentation forms.
+The renderer is a backend compiler and must NOT make pedagogical judgments.
+
 ## Strict Pipeline
 
 Execute the workflow in order:
 
 ```text
 Source Intake
-  -> Project Workspace
-  -> Lesson Strategist
-  -> Spec Lock
-  -> Blueprint / Interaction / Media Plans
-  -> Runtime Render
-  -> Quality Gate
-  -> Export
+  → Source Lesson Profile
+  → Learner Model
+  → Language Items
+  → Learning State Plan (new - state-first kernel)
+  → Evidence Plan (new)
+  → Activity Plan (new)
+  → Blueprint / Interaction / Media Plans
+  → Courseware Review Agent
+  → Revision Application
+  → Runtime Render
+  → Quality Gate
+  → Export
 ```
 
-Do not skip forward. Each phase consumes artifacts from the previous phase.
+## Core Artifacts
+
+| Artifact | Status | Description |
+|---|---|---|
+| `learning/learning_state_plan.json` | Planned | State DAG & transitions |
+| `learning/evidence_plan.json` | Planned | Evidence specs per transition |
+| `learning/activity_plan.json` | Planned | Activity definitions |
+| `quality/evidence_alignment_report.json` | Planned | Goal-Evidence-Activity alignment |
+
+See [docs/state-evidence-kernel-v0.2.2.md](../docs/state-evidence-kernel-v0.2.2.md) for full model schemas and quality gate rules.
+
+## Current Implementation Status
+
+Existing pipeline (working):
+- Source intake → Learner Model → Language Items
+- Blueprint generation (existing `agents.py`)
+- Quality checks (classroom, off-level, comprehensibility, realization)
+- Courseware Review Agent
+- Revision Plan Application
+- HTML render (debug + classroom)
+- Traditional PPTX Deck render
+- Export (ZIP, diagnostic PPTX)
+
+Next phase (State-Evidence Kernel):
+- `learning_state_plan.json` generator
+- `evidence_plan.json` generator
+- `activity_plan.json` generator
+- `evidence_alignment_report.json` quality gate
+- Pipeline integration: state plan → evidence → activity → existing renderers
 
 ## Blocking Gates
 
@@ -42,6 +93,7 @@ If quality state is `blocked`, fix upstream artifacts or use the explicit forced
 - `blueprints/interaction_plan.json` is the interaction contract.
 - `blueprints/media_plan.json` is the media requirement list.
 - `courseware/lesson.html` is a derived artifact.
+- `exports/*.pptx` files are derived editable export artifacts.
 
 ## Required References
 
@@ -58,7 +110,7 @@ Read these files as needed:
 - Do not edit `uploads/`.
 - Do not edit `courseware/lesson.html` as source.
 - Do not edit `exports/`.
+- Do not directly edit generated `.pptx` files.
 - Do not use components outside `courseware/components/registry.json`.
 - Do not bypass quality gates.
 - Keep Chinese as the target language; use scaffolding language only as support.
-

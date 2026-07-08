@@ -3,6 +3,7 @@ import type {
   AgentValidation,
   ArtifactTree,
   ComponentRegistry,
+  EditablePptxExportResponse,
   LessonBlueprint,
   LessonProfile,
   ProjectState
@@ -96,6 +97,12 @@ export async function validateAgentOutput(projectId: string): Promise<AgentValid
 
 export async function forceExportProject(projectId: string): Promise<Blob> {
   return download(`/api/projects/${projectId}/export?force=true`, { method: "POST" });
+}
+
+export async function exportEditablePptx(projectId: string, force = false): Promise<EditablePptxExportResponse> {
+  return request<EditablePptxExportResponse>(`/api/projects/${projectId}/export/pptx-editable?force=${force ? "true" : "false"}`, {
+    method: "POST"
+  });
 }
 
 export function exportUrl(projectId: string): string {

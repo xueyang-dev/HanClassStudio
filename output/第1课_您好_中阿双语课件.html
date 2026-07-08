@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>第1课 您好 · HanClassStudio</title>
+  <style>
+:root {
+  color-scheme: light;
+  --bg: #f8faf7;
+  --surface: #ffffff;
+  --ink: #223236;
+  --muted: #5f7370;
+  --line: #dce8e2;
+  --teal: #087e8b;
+  --coral: #f25f5c;
+  --gold: #f7b32b;
+  --mint: #ddf7e5;
+  --shadow: 0 18px 45px rgba(22, 49, 54, 0.14);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; font-family: Inter, "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif; background: var(--bg); color: var(--ink); }
+button { font: inherit; cursor: pointer; min-height: 44px; }
+button:disabled { cursor: not-allowed; opacity: .62; }
+.loading-state { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: var(--bg); color: var(--teal); font-size: 22px; font-weight: 800; }
+.loading-state.hidden { display: none; }
+.skip-link { position: fixed; left: 12px; top: -60px; z-index: 5; background: var(--ink); color: #fff; padding: 10px 14px; border-radius: 8px; }
+.skip-link:focus { top: 12px; }
+.courseware-shell { min-height: 100dvh; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+.slide-rail { background: #edf5ef; border-right: 1px solid var(--line); padding: 18px 14px; overflow: auto; }
+.rail-brand { font-weight: 800; margin-bottom: 18px; color: var(--teal); }
+.thumb-list { display: grid; gap: 8px; }
+.thumb { text-align: left; border: 1px solid transparent; background: transparent; color: var(--ink); border-radius: 8px; padding: 10px; display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: center; }
+.thumb span { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface); color: var(--teal); font-weight: 800; }
+.thumb.active, .thumb:hover { background: var(--surface); border-color: var(--line); }
+.stage { min-height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 18px; gap: 14px; }
+.player-bar, .player-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.player-bar strong { display: block; font-size: 18px; }
+.player-bar span, .scaffold { color: var(--muted); }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.toolbar button, .player-nav button, .component-actions button, .audio-button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 9px 13px; }
+.toolbar button.active, .player-nav button:hover, .component-actions button:hover { border-color: var(--teal); color: var(--teal); }
+.slide-frame { position: relative; min-height: min(72vw, calc(100dvh - 150px)); aspect-ratio: 16 / 9; max-height: calc(100dvh - 150px); margin: 0 auto; width: min(100%, 1280px); }
+.slide { display: none; position: absolute; inset: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: clamp(28px, 4vw, 56px); }
+.slide.active { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 18px; }
+.slide-content { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr); gap: 32px; align-items: center; min-height: 0; }
+.text-zone { min-width: 0; }
+.slide-kicker { margin: 0 0 10px; color: var(--coral); font-weight: 800; font-size: 14px; }
+h1 { margin: 0 0 18px; font-size: clamp(34px, 5vw, 62px); line-height: 1.08; letter-spacing: 0; }
+h2 { margin: 0 0 12px; font-size: 22px; }
+.content-block { margin: 12px 0; font-size: clamp(20px, 2.1vw, 30px); line-height: 1.45; }
+.content-block p { margin: 0; }
+.media-zone { min-width: 0; }
+.slide-image, .media-placeholder { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; border: 1px solid var(--line); background: var(--mint); }
+.slide-image { object-fit: cover; }
+.media-placeholder { display: grid; place-items: center; padding: 20px; color: var(--teal); font-weight: 800; text-align: center; }
+.component-zone { min-height: 0; }
+.component { border-top: 1px solid var(--line); padding-top: 16px; }
+.component-empty { margin: 0; border: 1px dashed var(--line); border-radius: 8px; padding: 12px; color: var(--muted); background: #f8fbf8; }
+.vocab-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.flip-card { min-height: 145px; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fdfefe; color: var(--ink); padding: 0; perspective: 800px; position: relative; overflow: hidden; cursor: pointer; }
+.flip-card .card-face { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 8px; padding: 16px; transition: transform .22s ease, opacity .22s ease; backface-visibility: hidden; }
+.flip-card strong { font-size: 36px; }
+.flip-card em { font-style: normal; color: var(--teal); font-weight: 700; }
+.flip-card .back { transform: rotateY(180deg); background: var(--mint); }
+.flip-card.flipped .front { transform: rotateY(180deg); }
+.flip-card.flipped .back { transform: rotateY(0); }
+.audio-button { display: inline-flex; align-items: center; gap: 8px; color: var(--teal); font-weight: 700; }
+.audio-button.unavailable { color: var(--muted); background: #f8fbf8; }
+.audio-icon { width: 16px; height: 16px; border-left: 4px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.word-bank, .drop-zone, .choice-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.word-chip, .choice, .match-game button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 10px 14px; }
+.drop-zone { min-height: 58px; margin: 12px 0; padding: 10px; border: 2px dashed #9bc6c0; border-radius: 8px; background: #f5fcf8; }
+.feedback { min-height: 28px; font-weight: 800; color: var(--teal); }
+.match-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.match-columns > div { display: grid; gap: 10px; }
+.match-game button.selected { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(247, 179, 43, 0.22); }
+.match-game button.matched, .choice.correct { border-color: var(--teal); background: var(--mint); }
+.choice.incorrect { border-color: var(--coral); background: #fff0ef; }
+.character-focus { font-size: clamp(72px, 12vw, 140px); font-weight: 900; color: var(--teal); line-height: 1; }
+.formation-flow { display: inline-flex; align-items: center; gap: 14px; margin: 8px 0 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: #f8fbf8; font-size: 24px; font-weight: 800; }
+.character-formation ul { display: flex; flex-wrap: wrap; gap: 10px; padding: 0; margin: 12px 0; list-style: none; }
+.character-formation li { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: var(--mint); }
+[data-mode="zh"] .scaffold { display: none; }
+[data-mode="scaffold"] .zh { display: none; }
+@media (max-width: 900px) {
+  .courseware-shell { grid-template-columns: 1fr; }
+  .slide-rail { display: none; }
+  .stage { padding: 10px; }
+  .slide-frame { min-height: auto; max-height: none; }
+  .slide { position: relative; min-height: 640px; padding: 24px; }
+  .slide-content { grid-template-columns: 1fr; }
+  .vocab-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+  <div id="loadingState" class="loading-state">正在准备课件...</div>
+  <a class="skip-link" href="#slides">跳到课件</a>
+  <div class="courseware-shell" data-mode="bilingual">
+    <aside class="slide-rail" aria-label="页面目录">
+      <div class="rail-brand">HanClassStudio</div>
+      <div class="thumb-list">
+        <button class="thumb" data-jump="0" aria-label="前往第 1 页"><span>1</span>第1课 您好</button><button class="thumb" data-jump="1" aria-label="前往第 2 页"><span>2</span>学习目标</button><button class="thumb" data-jump="2" aria-label="前往第 3 页"><span>3</span>生词卡</button><button class="thumb" data-jump="3" aria-label="前往第 4 页"><span>4</span>生词卡</button><button class="thumb" data-jump="4" aria-label="前往第 5 页"><span>5</span>练一练</button><button class="thumb" data-jump="5" aria-label="前往第 6 页"><span>6</span>听一听，说一说</button><button class="thumb" data-jump="6" aria-label="前往第 7 页"><span>7</span>连一连：问候配对</button><button class="thumb" data-jump="7" aria-label="前往第 8 页"><span>8</span>课堂小结</button>
+      </div>
+    </aside>
+    <main id="slides" class="stage" tabindex="-1">
+      <header class="player-bar">
+        <div>
+          <strong>第1课 您好</strong>
+          <span>辅助语言</span>
+        </div>
+        <div class="toolbar" role="group" aria-label="辅助语言显示">
+          <button type="button" data-mode="zh">中文</button>
+          <button type="button" data-mode="scaffold">提示</button>
+          <button type="button" data-mode="bilingual" class="active">双语</button>
+          <button type="button" id="fullscreenBtn">全屏</button>
+        </div>
+      </header>
+      <section class="slide-frame" aria-live="polite">
+        
+<article class="slide CoverSlide" data-slide="0" data-layout="centered_title">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>第1课 您好</h1>
+      <div class="content-block subtitle"><p class="zh">第1课 您好</p></div>
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"></div>
+</article>
+
+<article class="slide ObjectiveSlide" data-slide="1" data-layout="three_goals">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>学习目标</h1>
+      <div class="content-block objective"><p class="zh">你好！</p></div><div class="content-block objective"><p class="zh">您好！</p></div><div class="content-block objective"><p class="zh">一、二、三</p></div>
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"></div>
+</article>
+
+<article class="slide VocabularySlide" data-slide="2" data-layout="card_grid">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>生词卡</h1>
+      
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"><section class="component component-container vocab-component"><div class="vocab-grid"><div class="flip-card" role="button" tabindex="0" aria-label="翻转生词卡 你好">
+  <span class="card-face front"><strong>你好</strong><em>nǐ hǎo</em></span>
+  <span class="card-face back"><span class="zh">你好！</span><span class="scaffold">مرحبًا</span><p class="scaffold">للأصدقاء أو الزملاء</p></span>
+</div></div></section></div>
+</article>
+
+<article class="slide VocabularySlide" data-slide="3" data-layout="card_grid">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>生词卡</h1>
+      
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"><section class="component component-container vocab-component"><div class="vocab-grid"><div class="flip-card" role="button" tabindex="0" aria-label="翻转生词卡 您好">
+  <span class="card-face front"><strong>您好</strong><em>nín hǎo</em></span>
+  <span class="card-face back"><span class="zh">您好！</span><span class="scaffold">مرحبًا / تحية رسمية</span><p class="scaffold">للمعلّم أو الكبار / في موقف رسمي</p></span>
+</div></div></section></div>
+</article>
+
+<article class="slide GrammarPatternSlide" data-slide="4" data-layout="drag_builder">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>练一练</h1>
+      <div class="content-block pattern"><p class="zh"></p></div>
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"><section class="component component-container drag-builder" data-answer='[]'>
+  <h2></h2>
+  <p class="scaffold"></p>
+  <div class="word-bank"><button type="button" class="word-chip" draggable="true">你好</button><button type="button" class="word-chip" draggable="true">您好</button><button type="button" class="word-chip" draggable="true">！</button></div>
+  <div class="drop-zone" aria-label="组句区域"></div>
+  <div class="component-actions"><button type="button" data-check="sentence">检查</button><button type="button" data-reset="sentence">重来</button></div>
+  <p class="feedback" aria-live="polite"></p>
+</section></div>
+</article>
+
+<article class="slide DialogueSlide" data-slide="5" data-layout="listen_and_choose">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>听一听，说一说</h1>
+      <div class="content-block dialogue_line"><p class="zh">A：你好！</p></div><div class="content-block dialogue_line"><p class="zh">B：你好！</p></div><div class="content-block dialogue_line"><p class="zh">A：您好，老师！</p></div>
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"><section class="component component-container listen-choose" data-answer="你好！">
+  <h2>听音选择</h2>
+  <p class="scaffold"></p>
+  <button type="button" class="audio-button" data-audio="../assets/audio/dialogue_1.wav" aria-label="播放音频：你好！"><span class="audio-icon" aria-hidden="true"></span>播放</button>
+  <div class="choice-grid"><button type="button" class="choice">你好！</button><button type="button" class="choice">您好！</button><button type="button" class="choice">再见！</button></div>
+  <p class="feedback" aria-live="polite"></p>
+</section></div>
+</article>
+
+<article class="slide PracticeSlide" data-slide="6" data-layout="match_game">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>连一连：问候配对</h1>
+      
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"><section class="component component-container match-game">
+  <h2>问候配对</h2>
+  <p class="scaffold"></p>
+  <div class="match-columns"><div><button type="button" data-value="你好">你好</button><button type="button" data-value="您好">您好</button></div><div><button type="button" data-value="您好">nín hǎo</button><button type="button" data-value="你好">nǐ hǎo</button></div></div>
+  <p class="feedback" aria-live="polite"></p>
+</section></div>
+</article>
+
+<article class="slide SummarySlide" data-slide="7" data-layout="review">
+  <div class="slide-content">
+    <div class="text-zone">
+      
+      <h1>课堂小结</h1>
+      <div class="content-block summary"><p class="zh">你好！</p></div><div class="content-block summary"><p class="zh">您好！</p></div>
+      
+    </div>
+    
+  </div>
+  <div class="component-zone"></div>
+</article>
+      </section>
+      <footer class="player-nav">
+        <button type="button" id="prevBtn" aria-label="上一页">上一页</button>
+        <span id="pageLabel">1 / 8</span>
+        <button type="button" id="nextBtn" aria-label="下一页">下一页</button>
+      </footer>
+    </main>
+  </div>
+  <script type="application/json" id="lesson-data">{"profile": {"lesson_title": "第1课 您好", "scaffolding_language": "Arabic"}, "blueprint": {"lesson_title": "第1课 您好", "objectives": ["理解并朗读与“第1课 您好”相关的核心词句。", "在课堂互动中使用中文完成听、说、读的操练。", "学会用中文向不同对象问好。", "借助Arabic支架理解礼貌用语的区别。"], "key_vocabulary": [{"word": "您", "pinyin": "nín"}, {"word": "你好", "pinyin": "nǐ hǎo"}, {"word": "您好", "pinyin": "nín hǎo"}, {"word": "你们好", "pinyin": "nǐ men hǎo"}, {"word": "你", "pinyin": "nǐ"}, {"word": "中文", "pinyin": "zhōng wén"}], "slides": [{"id": 1, "title": "第1课 您好", "content_blocks": [{"text": "第1课 您好", "scaffolding_text": ""}], "components": []}, {"id": 2, "title": "学习目标", "content_blocks": [{"text": "你好", "scaffolding_text": ""}, {"text": "您好", "scaffolding_text": ""}, {"text": "一、二、三", "scaffolding_text": ""}], "components": []}, {"id": 3, "title": "生词卡", "content_blocks": [], "components": [{"component_type": "VocabularyFlipCard", "title": "生词卡", "data": {"items": [{"word": "你好", "pinyin": "nǐ hǎo", "meaning": "مرحبًا", "usage_context": "للأصدقاء أو الزملاء", "example": "你好！"}]}}]}, {"id": 4, "title": "生词卡", "content_blocks": [], "components": [{"component_type": "VocabularyFlipCard", "title": "生词卡", "data": {"items": [{"word": "您好", "pinyin": "nín hǎo", "meaning": "مرحبًا / تحية رسمية", "usage_context": "للمعلّم أو الكبار / في موقف رسمي", "example": "您好！"}]}}]}, {"id": 5, "title": "练一练", "content_blocks": [{"text": "", "scaffolding_text": ""}], "components": [{"component_type": "SentenceDragBuilder", "title": "", "data": {"words": ["你好", "您好", "！"], "answer": "您好", "hint": "", "audio_key": "politeness_1", "audio_text": "您好"}}]}, {"id": 6, "title": "听一听，说一说", "content_blocks": [{"text": "A：你好", "scaffolding_text": ""}, {"text": "B：你好", "scaffolding_text": ""}, {"text": "A：您好，老师", "scaffolding_text": ""}], "components": [{"component_type": "ListenAndChoose", "title": "听音选择", "data": {"audio_key": "dialogue_1", "audio_text": "你好", "choices": ["你好", "您好", "再见"], "answer": "你好", "hint": ""}}]}, {"id": 7, "title": "连一连：问候配对", "content_blocks": [], "components": [{"component_type": "MatchGame", "title": "问候配对", "data": {"pairs": [{"left": "你好", "right": "nǐ hǎo"}, {"left": "您好", "right": "nín hǎo"}], "hint": ""}}]}, {"id": 8, "title": "课堂小结", "content_blocks": [{"text": "你好", "scaffolding_text": ""}, {"text": "您好", "scaffolding_text": ""}], "components": []}]}, "quality": {"state": "blocked"}}</script>
+  <script>
+const shell = document.querySelector('.courseware-shell');
+const loading = document.getElementById('loadingState');
+const slides = Array.from(document.querySelectorAll('.slide'));
+const thumbs = Array.from(document.querySelectorAll('.thumb'));
+const label = document.getElementById('pageLabel');
+let current = 0;
+
+function showSlide(index) {
+  current = Math.max(0, Math.min(slides.length - 1, index));
+  slides.forEach((slide, i) => slide.classList.toggle('active', i === current));
+  thumbs.forEach((thumb, i) => thumb.classList.toggle('active', i === current));
+  label.textContent = `${current + 1} / ${slides.length}`;
+}
+document.getElementById('prevBtn').addEventListener('click', () => showSlide(current - 1));
+document.getElementById('nextBtn').addEventListener('click', () => showSlide(current + 1));
+thumbs.forEach((thumb) => thumb.addEventListener('click', () => showSlide(Number(thumb.dataset.jump))));
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowLeft') showSlide(current - 1);
+  if (event.key === 'ArrowRight') showSlide(current + 1);
+});
+document.querySelectorAll('[data-mode]').forEach((button) => {
+  if (button.tagName === 'BUTTON') {
+    button.addEventListener('click', () => {
+      shell.dataset.mode = button.dataset.mode;
+      document.querySelectorAll('.toolbar button').forEach((item) => item.classList.toggle('active', item === button));
+    });
+  }
+});
+document.getElementById('fullscreenBtn').addEventListener('click', () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+});
+document.addEventListener('click', (event) => {
+  const audioButton = event.target.closest('.audio-button');
+  if (audioButton) {
+    if (!audioButton.dataset.audio) return;
+    const original = audioButton.textContent;
+    const audio = new Audio(audioButton.dataset.audio);
+    audio.play().then(() => {
+      audioButton.textContent = original;
+    }).catch(() => {
+      audioButton.textContent = '音频不可用';
+      audioButton.classList.add('unavailable');
+    });
+    return;
+  }
+  const flip = event.target.closest('.flip-card');
+  if (flip) flip.classList.toggle('flipped');
+  const chip = event.target.closest('.word-chip');
+  if (chip && !event.target.closest('.drop-zone')) {
+    const builder = chip.closest('.drag-builder');
+    builder.querySelector('.drop-zone').appendChild(chip);
+  }
+  const check = event.target.closest('[data-check="sentence"]');
+  if (check) {
+    const builder = check.closest('.drag-builder');
+    const actual = Array.from(builder.querySelectorAll('.drop-zone .word-chip')).map((item) => item.textContent.trim());
+    const expected = JSON.parse(builder.dataset.answer || '[]');
+    builder.querySelector('.feedback').textContent = actual.join('') === expected.join('') ? '很好，句子正确。' : '再试一次，注意词语顺序。';
+  }
+  const reset = event.target.closest('[data-reset="sentence"]');
+  if (reset) {
+    const builder = reset.closest('.drag-builder');
+    const bank = builder.querySelector('.word-bank');
+    Array.from(builder.querySelectorAll('.drop-zone .word-chip')).forEach((item) => bank.appendChild(item));
+    builder.querySelector('.feedback').textContent = '';
+  }
+  const choice = event.target.closest('.listen-choose .choice');
+  if (choice) {
+    const host = choice.closest('.listen-choose');
+    const correct = choice.textContent.trim() === host.dataset.answer;
+    choice.classList.toggle('correct', correct);
+    choice.classList.toggle('incorrect', !correct);
+    host.querySelector('.feedback').textContent = correct ? '回答正确。' : '再听一次。';
+  }
+  const matchButton = event.target.closest('.match-game button');
+  if (matchButton && !matchButton.classList.contains('matched')) {
+    const game = matchButton.closest('.match-game');
+    const selected = game.querySelector('button.selected');
+    if (!selected) {
+      matchButton.classList.add('selected');
+    } else if (selected !== matchButton) {
+      if (selected.dataset.value === matchButton.dataset.value) {
+        selected.classList.remove('selected');
+        selected.classList.add('matched');
+        matchButton.classList.add('matched');
+        game.querySelector('.feedback').textContent = '匹配成功。';
+      } else {
+        selected.classList.remove('selected');
+        game.querySelector('.feedback').textContent = '不匹配，请再试。';
+      }
+    }
+  }
+});
+document.addEventListener('dragstart', (event) => {
+  if (event.target.classList.contains('word-chip')) event.dataTransfer.setData('text/plain', event.target.textContent);
+});
+document.addEventListener('keydown', (event) => {
+  const flip = event.target.closest('.flip-card');
+  if (flip && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    flip.classList.toggle('flipped');
+  }
+});
+document.querySelectorAll('.drop-zone').forEach((zone) => {
+  zone.addEventListener('dragover', (event) => event.preventDefault());
+  zone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    const text = event.dataTransfer.getData('text/plain');
+    const chip = Array.from(document.querySelectorAll('.word-chip')).find((item) => item.textContent === text && item.closest('.word-bank'));
+    if (chip) zone.appendChild(chip);
+  });
+});
+document.querySelectorAll('.slide-image').forEach((image) => {
+  image.addEventListener('error', () => {
+    const fallback = document.createElement('div');
+    fallback.className = 'media-placeholder';
+    fallback.setAttribute('role', 'img');
+    fallback.textContent = image.alt || 'Demo image placeholder';
+    image.replaceWith(fallback);
+  });
+});
+showSlide(0);
+window.addEventListener('load', () => loading?.classList.add('hidden'));
+setTimeout(() => loading?.classList.add('hidden'), 600);
+</script>
+</body>
+</html>

@@ -16,6 +16,7 @@ from .models import (
     AgentValidation,
     AssetManifest,
     ArtifactTree,
+    EditablePptxExportResponse,
     LessonBlueprint,
     LessonProfile,
     ProjectState,
@@ -25,6 +26,7 @@ from .models import (
 from .parser import parse_source
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
+from .pptx_exporter import export_editable_pptx
 from .storage import (
     PROJECTS_DIR,
     RUNTIME_DIR,
@@ -493,6 +495,7 @@ def root() -> HTMLResponse:
         <div class="endpoint"><span class="method">POST</span><code>/api/projects/{project_id}/pipeline</code></div>
         <div class="endpoint"><span class="method">GET</span><code>/api/projects/{project_id}/export</code></div>
         <div class="endpoint"><span class="method">POST</span><code>/api/projects/{project_id}/export?force=true</code></div>
+        <div class="endpoint"><span class="method">POST</span><code>/api/projects/{project_id}/export/pptx-editable?force=false</code></div>
       </div>
     </section>
 
@@ -679,7 +682,7 @@ def generate_blueprint(project_id: str) -> ProjectState:
     if not source or not profile:
         raise HTTPException(status_code=400, detail="Project needs source material and lesson profile")
     write_spec_artifacts(project_id, source, profile)
-    blueprint = generate_lesson_blueprint(source, profile, read_provider_settings())
+    blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings())
     write_blueprint_artifacts(project_id, blueprint)
     return get_project_state(project_id)
 
@@ -754,6 +757,33 @@ def force_export_project(project_id: str, force: bool = Query(default=False)) ->
         export_path,
         filename=export_path.name,
         media_type="application/zip",
+    )
+
+
+@app.post("/api/projects/{project_id}/export/pptx-editable", response_model=EditablePptxExportResponse)
+def export_project_editable_pptx(project_id: str, force: bool = Query(default=False), export_mode: str = Query(default="debug")) -> EditablePptxExportResponse:
+    _assert_project(project_id)
+    try:
+        export_path = export_editable_pptx(project_id, force=force, export_mode=export_mode)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    state = get_project_state(project_id)
+    # Read classroom quality report for classroom mode
+    classroom_report = None
+    from .storage import read_model as _read
+    from .models import ClassroomQualityReport as _CQR
+    try:
+        cr = _read(project_id, "quality/classroom_quality_report.json", _CQR)
+        classroom_state = cr.state if cr else None
+    except Exception:
+        classroom_state = None
+    return EditablePptxExportResponse(
+        filename=export_path.name,
+        download_url=f"/runtime/projects/{project_id}/exports/{export_path.name}",
+        quality_state=state.quality_state,
+        classroom_quality_state=classroom_state,
     )
 
 

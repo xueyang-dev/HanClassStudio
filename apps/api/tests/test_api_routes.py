@@ -215,6 +215,104 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     assert refreshed_paths["agent/AGENT_TASK.md"]["exists"] is True
 
 
+def test_editable_pptx_export_after_pipeline_keeps_html_zip_intact(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    pptx_path = tmp_path / "editable_source.pptx"
+    _make_pptx(pptx_path)
+
+    client = TestClient(app)
+    with pptx_path.open("rb") as file:
+        upload_response = client.post(
+            "/api/projects/upload",
+            files={"file": ("editable_source.pptx", file, "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
+        )
+    assert upload_response.status_code == 200
+    project_id = upload_response.json()["project_id"]
+    pipeline_response = client.post(f"/api/projects/{project_id}/pipeline")
+    assert pipeline_response.status_code == 200
+
+    pptx_response = client.post(f"/api/projects/{project_id}/export/pptx-editable")
+    assert pptx_response.status_code == 200
+    body = pptx_response.json()
+    assert body["export_type"] == "pptx_editable"
+    assert body["editable"] is True
+    assert body["interaction_policy"] == "classroom_static_activity"
+    assert body["filename"].endswith(".pptx")
+    assert body["download_url"].endswith(body["filename"])
+
+    project_root = projects_dir / project_id
+    editable_path = project_root / "exports" / body["filename"]
+    assert editable_path.exists()
+    assert editable_path.stat().st_size > 0
+    prs = Presentation(editable_path)
+    assert len(prs.slides) >= 1
+    assert any(shape.has_text_frame and shape.text.strip() for slide in prs.slides for shape in slide.shapes)
+    assert (project_root / "quality" / "pptx_quality_report.json").exists()
+    manifest = json.loads((project_root / "exports" / "pptx_export_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["forced"] is False
+
+    artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
+    artifact_paths = {item["path"]: item for group in artifacts_response.json()["groups"] for item in group["items"]}
+    assert artifact_paths["quality/pptx_quality_report.json"]["exists"] is True
+    assert artifact_paths["exports/pptx_export_manifest.json"]["exists"] is True
+    assert artifact_paths[f"exports/{body['filename']}"]["exists"] is True
+
+    zip_response = client.get(f"/api/projects/{project_id}/export")
+    assert zip_response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(zip_response.content)) as zf:
+        names = set(zf.namelist())
+    assert "lesson.html" in names
+    assert "assets/data/quality_report.json" in names
+
+
+def test_editable_pptx_export_respects_blocked_quality_and_force(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "blockedpptx"
+    storage.ensure_project(project_id)
+    storage.write_model(
+        project_id,
+        "lesson_blueprint.json",
+        LessonBlueprint(
+            lesson_title="测试课",
+            objectives=["完成练习"],
+            key_vocabulary=[{"word": "学", "pinyin": "xue2", "meaning": "study"}],
+            grammar_points=[],
+            slides=[
+                LessonSlide(
+                    id=1,
+                    slide_type="PracticeSlide",
+                    layout_variant="basic",
+                    title="练习",
+                    content_blocks=[ContentBlock(id="c1", text="我学习中文。")],
+                    components=[],
+                )
+            ],
+        ),
+    )
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="blocked", blocking=["missing answer"]))
+
+    client = TestClient(app)
+    normal_response = client.post(f"/api/projects/{project_id}/export/pptx-editable")
+    assert normal_response.status_code == 409
+
+    forced_response = client.post(f"/api/projects/{project_id}/export/pptx-editable?force=true")
+    assert forced_response.status_code == 200
+    body = forced_response.json()
+    manifest = json.loads((projects_dir / project_id / "exports" / "pptx_export_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["forced"] is True
+    assert (projects_dir / project_id / "exports" / body["filename"]).exists()
+
+
 def test_agent_handoff_e2e_validates_then_render_exports(tmp_path, monkeypatch) -> None:
     runtime_dir = tmp_path / "runtime"
     projects_dir = runtime_dir / "projects"

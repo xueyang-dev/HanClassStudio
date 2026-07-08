@@ -1,0 +1,20 @@
+{
+  "language_code": "Korean",
+  "writing_system": "Korean",
+  "pronunciation_type": "romaja",
+  "default_font_stack": [
+    "Malgun Gothic",
+    "sans-serif"
+  ],
+  "text_direction": "ltr",
+  "beginner_instruction_policy": "scaffold_first",
+  "known_level_scheme": "TOPIK",
+  "minimal_glossary": {
+    "你好": "안녕하세요",
+    "您好": "안녕하십니까",
+    "你": "너 / 당신",
+    "您": "선생님 / 당신",
+    "好": "좋다",
+    "再见": "안녕히 계세요"
+  }
+}

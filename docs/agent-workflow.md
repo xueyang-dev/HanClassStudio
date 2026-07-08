@@ -34,9 +34,10 @@ runtime/projects/<project_id>/agent/AGENT_RULES.md
 - `courseware/lesson.html`
 - `exports/`
 - generated ZIP files
+- generated PPTX files
 - component names outside `courseware/components/registry.json`
 
-The Agent should not bypass quality gate, invent runtime CSS, or treat `lesson.html` as source.
+The Agent should not bypass quality gate, invent runtime CSS, treat `lesson.html` as source, or directly write `.pptx` exports.
 
 ## Validate Agent Output
 
@@ -66,7 +67,6 @@ Validation does not render, export, or mutate `courseware/` and `exports/`. It r
 8. If validation is blocked, the Agent fixes artifacts.
 9. If validation passes or only warns, HanClassStudio renders.
 10. HanClassStudio runs the quality gate.
-11. If quality is not blocked, HanClassStudio exports the offline ZIP.
+11. If quality is not blocked, HanClassStudio exports the offline ZIP or the derived Editable PPTX.
 
 This is the central demo point: HanClassStudio is not just a PPT-to-HTML converter. It is an agent-compatible interactive courseware pipeline with explicit artifacts and gates.
-

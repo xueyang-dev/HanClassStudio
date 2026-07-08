@@ -177,3 +177,12 @@ export interface AgentValidation {
   warnings: string[];
   passed: string[];
 }
+
+export interface EditablePptxExportResponse {
+  filename: string;
+  download_url: string;
+  export_type: "pptx_editable";
+  editable: true;
+  interaction_policy: "classroom_static_activity";
+  quality_state?: QualityState | null;
+}

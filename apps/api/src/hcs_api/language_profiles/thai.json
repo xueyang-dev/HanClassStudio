@@ -1,0 +1,21 @@
+{
+  "language_code": "Thai",
+  "writing_system": "Thai",
+  "pronunciation_type": "transliteration",
+  "default_font_stack": [
+    "Sarabun",
+    "Tahoma",
+    "sans-serif"
+  ],
+  "text_direction": "ltr",
+  "beginner_instruction_policy": "scaffold_first",
+  "known_level_scheme": "custom",
+  "minimal_glossary": {
+    "你好": "สวัสดี",
+    "您好": "สวัสดี (สุภาพ)",
+    "你": "คุณ",
+    "您": "ท่าน (สุภาพ)",
+    "好": "ดี",
+    "再见": "ลาก่อน"
+  }
+}

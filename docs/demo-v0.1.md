@@ -21,6 +21,7 @@ The v0.1 demo is local-first and portfolio-oriented. It proves the product workf
 - Switch runtime language display between Chinese, scaffolding hints, and bilingual mode.
 - Run a quality gate before export.
 - Export an offline ZIP package with HTML, assets, data artifacts, quality report, and export manifest.
+- Export an Editable PPTX classroom version where HTML interactions are converted into static editable activity pages.
 - Generate Agent Handoff files for Claude Code, Codex, Hermes, or Cursor Agent.
 - Validate external Agent artifact edits before render/export.
 
@@ -54,6 +55,22 @@ The v0.1 demo is local-first and portfolio-oriented. It proves the product workf
 10. Show `agent/AGENT_TASK.md` and `agent/AGENT_RULES.md`.
 11. Explain that an external Agent may edit canonical artifacts, then HanClassStudio validates, renders, runs quality, and exports.
 12. Download the ZIP and open `lesson.html` offline.
+13. Export Editable PPTX and show that it opens as editable classroom slides.
+
+## Export Targets
+
+HanClassStudio v0.1 has two export targets:
+
+- HTML ZIP: the main interactive output. It keeps the slide-based runtime, navigation, language mode toggle, and browser interactions.
+- Editable PPTX: a secondary classroom display output. It uses `python-pptx` to generate native PowerPoint text boxes, shapes, image placeholders, and activity pages from the same artifacts.
+
+Editable PPTX does not preserve HTML runtime interactions. Components are pedagogically downgraded:
+
+- flip cards become editable vocabulary cards
+- drag builders become word-order practice pages
+- listen-and-choose becomes a static choice activity with audio text prompt
+- matching games become pair-matching activity pages
+- character formation becomes a parts-to-character diagram
 
 ## Current Boundaries
 
@@ -62,6 +79,7 @@ The v0.1 demo is local-first and portfolio-oriented. It proves the product workf
 - Audio uses placeholder demo tones unless a TTS provider is added later.
 - Video is represented by planning/fallback only.
 - The runtime is a fixed template; Agents should not generate custom CSS or edit `courseware/lesson.html`.
+- Editable PPTX is a deterministic derived export; Agents should not edit generated `.pptx` files directly.
 - Existing projects under `runtime/projects` are development artifacts and are not migrated.
 - Quality gate is pragmatic v0.1 coverage, not a full pedagogical review engine.
 
@@ -75,4 +93,3 @@ The v0.1 demo is local-first and portfolio-oriented. It proves the product workf
 - Teacher review checkpoints for Agent changes.
 - Export variants for LMS packages or SCORM-like delivery.
 - Persistent project library and version history.
-
