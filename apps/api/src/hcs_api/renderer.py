@@ -16,7 +16,7 @@ def render_lesson(
     report: QualityReport,
     render_mode: str = "debug",
     evidence_map: dict[int, str] | None = None,
-) -> str:
+) -> Path:
     image_by_id = {asset.id: f"../{asset.path}" for asset in manifest.images}
     audio_by_id = {asset.id: f"../{asset.path}" for asset in manifest.audio}
     slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id, render_mode) for slide in blueprint.slides)
@@ -156,7 +156,7 @@ def _build_lesson_data_blob(
                 for item in data.get("items", []):
                     word = item.get("word", "")
                     break
-                ev_id = _lookup_evidence_for_word(word, evidence_map or {}) if not word else ""
+                ev_id = _lookup_evidence_for_word(word, evidence_map or {}) if word else ""
                 if not ev_id and c.component_type in ("ListenAndChoose", "MatchGame"):
                     pass  # leave empty if no mapping available
             data["evidence_id"] = ev_id
