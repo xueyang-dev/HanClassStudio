@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .blueprint_utils import duplicate_component_id_messages
 from .components import load_component_registry
 from .models import AgentPackage, AgentValidation, LessonBlueprint
 from .storage import ensure_project, read_json, write_text
@@ -154,13 +155,10 @@ def _validate_components(
     components_lock = spec_lock.get("components") if isinstance(spec_lock.get("components"), dict) else {}
     allowed = components_lock.get("allowed") if isinstance(components_lock, dict) else None
     allowed_components = set(allowed if isinstance(allowed, list) else registry.keys())
-    component_ids: set[str] = set()
     component_issue_count = len(blocking)
+    blocking.extend(duplicate_component_id_messages(blueprint))
     for slide in blueprint.slides:
         for component in slide.components:
-            if component.id in component_ids:
-                blocking.append(f"Duplicate component id {component.id}")
-            component_ids.add(component.id)
             if component.component_type not in registry:
                 blocking.append(f"Unsupported component {component.component_type}")
                 continue

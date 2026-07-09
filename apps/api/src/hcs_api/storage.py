@@ -38,6 +38,7 @@ PROJECT_GROUPS = [
     "sources",
     "analysis",
     "learning",
+    "presentation",
     "specs",
     "blueprints",
     "assets",
@@ -51,6 +52,8 @@ PROJECT_SUBDIRS = [
     "uploads",
     "sources",
     "analysis",
+    "learning",
+    "presentation",
     "specs",
     "blueprints",
     "assets/images",
@@ -67,6 +70,15 @@ PROJECT_SUBDIRS = [
 
 EXPECTED_ARTIFACTS = {
     "sources": ["sources/source_material.json"],
+    "learning": [
+        "learning/learning_state_plan.json",
+        "learning/evidence_plan.json",
+        "learning/activity_plan.json",
+    ],
+    "presentation": [
+        "presentation/activity_bindings.json",
+        "presentation/binding_quality_report.json",
+    ],
     "specs": ["specs/lesson_spec.md", "specs/spec_lock.json"],
     "blueprints": [
         "blueprints/lesson_blueprint.json",
@@ -308,6 +320,8 @@ def zip_output(project_id: str, force: bool = False, classroom: bool = False) ->
             "blueprints/lesson_blueprint.json": "assets/data/lesson_blueprint.json",
             "blueprints/interaction_plan.json": "assets/data/interaction_plan.json",
             "blueprints/media_plan.json": "assets/data/media_plan.json",
+            "presentation/activity_bindings.json": "assets/data/activity_bindings.json",
+            "presentation/binding_quality_report.json": "assets/data/binding_quality_report.json",
             "quality/quality_report.json": "assets/data/quality_report.json",
             "quality/quality_summary.md": "quality_summary.md",
             "exports/export_manifest.json": "export_manifest.json",

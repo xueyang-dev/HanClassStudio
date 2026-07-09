@@ -82,9 +82,9 @@ def test_project_pipeline_route_runs_full_generation(tmp_path, monkeypatch) -> N
     projects_dir = runtime_dir / "projects"
     monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
     monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
     monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
     monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
-    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
     pptx_path = tmp_path / "lesson.pptx"
     _make_pptx(pptx_path)
 
@@ -162,9 +162,14 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     assert pipeline_response.status_code == 200
 
     project_root = projects_dir / project_id
-    for directory in ["uploads", "sources", "analysis", "specs", "blueprints", "assets", "courseware", "quality", "exports", "agent"]:
+    for directory in ["uploads", "sources", "analysis", "learning", "presentation", "specs", "blueprints", "assets", "courseware", "quality", "exports", "agent"]:
         assert (project_root / directory).is_dir()
     for artifact in [
+        "learning/learning_state_plan.json",
+        "learning/evidence_plan.json",
+        "learning/activity_plan.json",
+        "presentation/activity_bindings.json",
+        "presentation/binding_quality_report.json",
         "specs/lesson_spec.md",
         "specs/spec_lock.json",
         "blueprints/lesson_blueprint.json",
@@ -177,6 +182,28 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
 
     quality_report = json.loads((project_root / "quality" / "quality_report.json").read_text(encoding="utf-8"))
     assert "state" in quality_report
+    bindings_json = json.loads((project_root / "presentation" / "activity_bindings.json").read_text(encoding="utf-8"))
+    binding_report_json = json.loads((project_root / "presentation" / "binding_quality_report.json").read_text(encoding="utf-8"))
+    blueprint_json = json.loads((project_root / "blueprints" / "lesson_blueprint.json").read_text(encoding="utf-8"))
+    component_ids = [
+        component["id"]
+        for slide in blueprint_json["slides"]
+        for component in slide.get("components", [])
+    ]
+    assert bindings_json["schema"] == "hanclassstudio.presentation_bindings.v1"
+    assert "schema_" not in bindings_json
+    assert binding_report_json["schema"] == "hanclassstudio.presentation_bindings.v1"
+    assert "schema_" not in binding_report_json
+    assert len(component_ids) == len(set(component_ids))
+    components = {
+        (slide["id"], component["id"])
+        for slide in blueprint_json["slides"]
+        for component in slide.get("components", [])
+    }
+    assert all(
+        not binding.get("component_id") or (binding["slide_id"], binding["component_id"]) in components
+        for binding in bindings_json["bindings"]
+    )
 
     export_path = storage.latest_export_path(project_id)
     assert export_path is not None
@@ -186,6 +213,8 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     assert "lesson.html" in names
     assert "assets/data/lesson_blueprint.json" in names
     assert "assets/data/asset_manifest.json" in names
+    assert "assets/data/activity_bindings.json" in names
+    assert "assets/data/binding_quality_report.json" in names
     assert "assets/data/quality_report.json" in names
 
     artifacts_response = client.get(f"/api/projects/{project_id}/artifacts")
@@ -194,6 +223,9 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     assert artifact_body["spec_lock"]["route"] == "main-generation"
     artifact_paths = {item["path"]: item for group in artifact_body["groups"] for item in group["items"]}
     assert artifact_paths["specs/spec_lock.json"]["exists"] is True
+    assert artifact_paths["presentation/activity_bindings.json"]["exists"] is True
+    assert artifact_paths["presentation/binding_quality_report.json"]["exists"] is True
+    assert artifact_paths["presentation/binding_quality_report.json"]["artifact_type"] == "presentation"
     assert artifact_paths["quality/quality_report.json"]["artifact_type"] == "quality"
 
     agent_response = client.post(f"/api/projects/{project_id}/agent/package")
@@ -209,10 +241,50 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
     validation_body = validation_response.json()
     assert validation_body["state"] == "pass"
     assert "All blueprint components are registry-compatible" in validation_body["passed"]
+    assert not any("Duplicate component id vocab_cards" in issue for issue in validation_body["blocking"])
 
     refreshed_artifacts = client.get(f"/api/projects/{project_id}/artifacts").json()
     refreshed_paths = {item["path"]: item for group in refreshed_artifacts["groups"] for item in group["items"]}
     assert refreshed_paths["agent/AGENT_TASK.md"]["exists"] is True
+
+
+def test_agent_validation_blocks_duplicate_component_ids_with_slide_ids(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "agentdupes"
+    project_root = storage.ensure_project(project_id)
+    storage.write_json(project_id, "specs/spec_lock.json", {
+        "schema": "hanclassstudio.spec_lock.v1",
+        "project_id": project_id,
+        "route": "main-generation",
+        "generation_mode": "guided_redesign",
+        "components": {"allowed": ["VocabularyFlipCard"]},
+        "quality": {},
+    })
+    (project_root / "specs" / "lesson_spec.md").write_text("# Lesson", encoding="utf-8")
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(
+        lesson_title="重复组件",
+        objectives=["x"],
+        slides=[
+            LessonSlide(id=3, slide_type="VocabularySlide", layout_variant="card_grid", title="你好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": [{"word": "你好", "pinyin": "nǐ hǎo"}]}),
+            ]),
+            LessonSlide(id=4, slide_type="VocabularySlide", layout_variant="card_grid", title="您好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": [{"word": "您好", "pinyin": "nín hǎo"}]}),
+            ]),
+        ],
+    ))
+    storage.write_json(project_id, "blueprints/interaction_plan.json", {"schema": "hanclassstudio.interaction_plan.v1", "interactions": []})
+    storage.write_json(project_id, "blueprints/media_plan.json", {"schema": "hanclassstudio.media_plan.v1", "images": [], "audio": []})
+
+    validation_response = TestClient(app).post(f"/api/projects/{project_id}/agent/validate")
+    assert validation_response.status_code == 200
+    validation = validation_response.json()
+    assert validation["state"] == "blocked"
+    assert any("Duplicate component id vocab_cards" in issue and "3, 4" in issue for issue in validation["blocking"])
 
 
 def test_editable_pptx_export_after_pipeline_keeps_html_zip_intact(tmp_path, monkeypatch) -> None:

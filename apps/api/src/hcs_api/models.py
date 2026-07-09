@@ -493,6 +493,8 @@ class PptxDeckSlide(BaseModel):
     visual_hint: str = ""
     audio_key: str = ""
     image_key: str = ""
+    binding_id: str = ""
+    activity_id: str = ""
     evidence_id: str = ""
     evidence_claim: str = ""
     expected_behavior: dict = Field(default_factory=dict)
@@ -591,6 +593,38 @@ class RenderedArtifactReview(BaseModel):
     blocking: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     passed: list[str] = Field(default_factory=list)
+
+
+# ── Presentation binding models ──
+
+PresentationMode = Literal[
+    "html_interactive",
+    "html_classroom",
+    "pptx_classroom",
+    "speaker_notes",
+    "teacher_observation",
+]
+
+
+class PresentationBinding(BaseModel):
+    binding_id: str = ""
+    activity_id: str = ""
+    evidence_id: str = ""
+    slide_id: int = 0
+    component_id: str | None = None
+    presentation_modes: list[PresentationMode] = Field(default_factory=list)
+    binding_confidence: float = 0.0
+    binding_reason: str = ""
+    teacher_note_policy: str = ""
+    created_by: str = "binding_builder"
+
+
+class PresentationBindingPlan(BaseModel):
+    schema_: str = Field(default="hanclassstudio.presentation_bindings.v1", alias="schema")
+    bindings: list[PresentationBinding] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blocking: list[str] = Field(default_factory=list)
+    state: QualityState = "pass"
 
 
 # ── State-Evidence Kernel models ──

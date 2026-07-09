@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from .models import AssetManifest, ClassroomQualityReport, LessonBlueprint, QualityReport, TeachingCandidates
+from .blueprint_utils import duplicate_component_id_messages
 from .components import load_component_registry
 
 
@@ -12,7 +13,9 @@ def check_quality(project_root: Path, blueprint: LessonBlueprint, manifest: Asse
     registry = load_component_registry()
     audio_by_id = {asset.id: asset for asset in manifest.audio}
     images_by_id = {asset.id: asset for asset in manifest.images}
-    component_ids: set[str] = set()
+    for msg in duplicate_component_id_messages(blueprint):
+        report.invalid_interactions.append(msg)
+        _block(report, msg)
 
     if not blueprint.lesson_title.strip():
         _block(report, "课程缺少标题")
@@ -56,12 +59,6 @@ def check_quality(project_root: Path, blueprint: LessonBlueprint, manifest: Asse
             _warn(report, msg)
 
         for component in slide.components:
-            if component.id in component_ids:
-                msg = f"{label} 组件 ID 重复：{component.id}"
-                report.invalid_interactions.append(msg)
-                _block(report, msg)
-            component_ids.add(component.id)
-
             component_config = registry.get(component.component_type)
             if component_config is None:
                 msg = f"{label} 不支持的互动组件：{component.component_type}"
