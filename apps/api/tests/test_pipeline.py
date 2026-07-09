@@ -10,6 +10,7 @@ import hcs_api.quality as quality_module
 import hcs_api.renderer as renderer_module
 from hcs_api.agents import build_blueprint, infer_profile
 from hcs_api.components import load_component_registry
+from hcs_api.blueprint_utils import normalize_component_ids
 from hcs_api.media import generate_placeholder_media
 from hcs_api.models import (
     AssetManifest,
@@ -31,6 +32,7 @@ from hcs_api.pipeline import (
     generate_project_media,
     render_and_check,
     write_blueprint_artifacts,
+    write_presentation_bindings,
     write_spec_artifacts,
 )
 from hcs_api.quality import check_classroom_quality, check_quality
@@ -349,6 +351,101 @@ def _parsed_source(tmp_path: Path, monkeypatch):
     source = parse_pptx(pptx_path, project_root, "lesson.pptx")
     profile = infer_profile(source)
     return project_root, source, profile
+
+
+def test_duplicate_component_id_is_detected(tmp_path: Path) -> None:
+    blueprint = LessonBlueprint(
+        lesson_title="重复组件",
+        objectives=["x"],
+        slides=[
+            LessonSlide(id=3, slide_type="VocabularySlide", layout_variant="card_grid", title="你好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": [{"word": "你好", "pinyin": "nǐ hǎo"}]}),
+            ]),
+            LessonSlide(id=4, slide_type="VocabularySlide", layout_variant="card_grid", title="您好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": [{"word": "您好", "pinyin": "nín hǎo"}]}),
+            ]),
+        ],
+    )
+    report = check_quality(tmp_path, blueprint, AssetManifest())
+    assert report.state == "blocked"
+    assert any("Duplicate component id vocab_cards" in item and "3, 4" in item for item in report.blocking)
+
+
+def test_duplicate_component_id_is_normalized_deterministically() -> None:
+    blueprint = LessonBlueprint(
+        lesson_title="重复组件",
+        slides=[
+            LessonSlide(id=3, slide_type="VocabularySlide", layout_variant="card_grid", title="你好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": []}),
+            ]),
+            LessonSlide(id=4, slide_type="VocabularySlide", layout_variant="card_grid", title="您好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": []}),
+            ]),
+        ],
+    )
+    normalize_component_ids(blueprint)
+    ids = [component.id for slide in blueprint.slides for component in slide.components]
+    assert ids == ["vocab_cards_s3_1", "vocab_cards_s4_1"]
+
+
+def test_component_id_normalizer_preserves_unique_ids() -> None:
+    blueprint = LessonBlueprint(
+        lesson_title="唯一组件",
+        slides=[
+            LessonSlide(id=1, slide_type="PracticeSlide", layout_variant="basic", title="练习", components=[
+                SlideComponent(id="listen_once", component_type="AudioButton", data={"audio_key": "a1", "audio_text": "你好", "label": "播放"}),
+                SlideComponent(id="match_once", component_type="MatchGame", data={"pairs": [{"left": "你", "right": "you"}]}),
+            ]),
+        ],
+    )
+    normalize_component_ids(blueprint)
+    ids = [component.id for slide in blueprint.slides for component in slide.components]
+    assert ids == ["listen_once", "match_once"]
+
+
+def test_activity_bindings_reference_existing_unique_component_ids(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("hcs_api.storage.RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setattr("hcs_api.storage.PROJECTS_DIR", tmp_path / "runtime" / "projects")
+    project_id = "uniquebindings"
+    ensure_project(project_id)
+    blueprint = LessonBlueprint(
+        lesson_title="第1课 您好",
+        route_hint="greeting_lesson",
+        objectives=["x"],
+        key_vocabulary=[{"word": "你好", "pinyin": "nǐ hǎo"}, {"word": "您好", "pinyin": "nín hǎo"}],
+        slides=[
+            LessonSlide(id=3, slide_type="VocabularySlide", layout_variant="card_grid", title="你好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": [{"word": "你好", "pinyin": "nǐ hǎo"}]}),
+            ]),
+            LessonSlide(id=4, slide_type="VocabularySlide", layout_variant="card_grid", title="您好", components=[
+                SlideComponent(id="vocab_cards", component_type="VocabularyFlipCard", data={"items": [{"word": "您好", "pinyin": "nín hǎo"}]}),
+            ]),
+            LessonSlide(id=5, slide_type="GrammarPatternSlide", layout_variant="basic", title="你 vs 您", components=[
+                SlideComponent(id="match_vocab", component_type="MatchGame", data={"pairs": [{"left": "你", "right": "informal"}, {"left": "您", "right": "polite"}]}),
+            ]),
+            LessonSlide(id=6, slide_type="PracticeSlide", layout_variant="basic", title="对话 你好 您好", components=[]),
+        ],
+    )
+    write_blueprint_artifacts(project_id, blueprint)
+    written = LessonBlueprint.model_validate_json((tmp_path / "runtime" / "projects" / project_id / "blueprints" / "lesson_blueprint.json").read_text(encoding="utf-8"))
+    component_ids = [component.id for slide in written.slides for component in slide.components]
+    assert len(component_ids) == len(set(component_ids))
+    assert {"vocab_cards_s3_1", "vocab_cards_s4_1"} <= set(component_ids)
+
+    from hcs_api.models import LessonProfile, TeachingCandidates
+    from hcs_api.state_evidence_kernel import build_activity_plan, build_evidence_plan, build_learning_state_plan
+
+    profile = LessonProfile(lesson_title="第1课 您好", scaffolding_language="English")
+    candidates = TeachingCandidates(route_hint="greeting_lesson", core_vocabulary=[
+        {"word": "你好", "pinyin": "nǐ hǎo"}, {"word": "您好", "pinyin": "nín hǎo"},
+    ])
+    state_plan = build_learning_state_plan(profile, candidates)
+    evidence_plan = build_evidence_plan(state_plan, "zero_beginner", "English")
+    activity_plan = build_activity_plan(evidence_plan, "zero_beginner", "English")
+    binding_plan = write_presentation_bindings(project_id, written, evidence_plan, activity_plan, state_plan, "zero_beginner")
+    components = {(slide.id, component.id) for slide in written.slides for component in slide.components}
+    assert binding_plan.state in ("pass", "warning")
+    assert all(not binding.component_id or (binding.slide_id, binding.component_id) in components for binding in binding_plan.bindings)
 
 
 # ---------------------------------------------------------------------------

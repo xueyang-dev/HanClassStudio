@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .agents import build_blueprint
 from .analysis import extract_candidates
+from .blueprint_utils import normalize_component_ids
 from .learner_comprehension import (
     build_language_items,
     build_learner_model,
@@ -69,6 +70,7 @@ def write_spec_artifacts(
 
 
 def write_blueprint_artifacts(project_id: str, blueprint: LessonBlueprint) -> None:
+    normalize_component_ids(blueprint)
     write_model(project_id, "lesson_blueprint.json", blueprint)
     write_json(project_id, "blueprints/interaction_plan.json", build_interaction_plan(blueprint))
     write_json(project_id, "blueprints/media_plan.json", build_media_plan(blueprint))
@@ -267,13 +269,14 @@ def run_full_pipeline(
         rev_plan = _RP(**rev_data) if rev_data else None
         zb = "zero_beginner" if profile.learner_level and "zero" in profile.learner_level.lower() else "beginner"
         revised_bp, rev_apply_report = apply_revision_plan(blueprint, rev_plan, learner_model, None, language_items)
+        normalize_component_ids(revised_bp)
         write_json(project_id, "blueprints/revised_blueprint.json", revised_bp.model_dump(mode="json"))
         write_json(project_id, "quality/revision_application_report.json", rev_apply_report)
         revised_review = _review_again(revised_bp, zb, profile.scaffolding_language or "English", language_items)
         write_json(project_id, "quality/revised_review_report.json", revised_review.model_dump(mode="json"))
         if revised_review.state != "blocked":
             blueprint = revised_bp
-            write_model(project_id, "lesson_blueprint.json", revised_bp)
+            write_blueprint_artifacts(project_id, revised_bp)
             binding_plan = write_presentation_bindings(project_id, blueprint, evidence_plan, activity_plan, state_plan, learner_level)
             if binding_plan.state == "blocked":
                 return get_project_state(project_id)
