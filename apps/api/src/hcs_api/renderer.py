@@ -162,10 +162,14 @@ def _build_lesson_data_blob(
 def _binding_lookup(activity_bindings: PresentationBindingPlan | None) -> dict[tuple[int, str], object]:
     if not activity_bindings:
         return {}
-    lookup = {}
-    for binding in activity_bindings.bindings:
+    by_target = {}
+    for binding in sorted(activity_bindings.bindings, key=lambda b: b.binding_id):
         if "html_classroom" in binding.presentation_modes or "html_interactive" in binding.presentation_modes:
-            lookup[(binding.slide_id, binding.component_id or "")] = binding
+            by_target.setdefault((binding.slide_id, binding.component_id or ""), []).append(binding)
+    lookup = {}
+    for key, bindings in by_target.items():
+        # Defensive path only: binding_quality_report blocks duplicate targets before export.
+        lookup[key] = bindings[0]
     return lookup
 
 

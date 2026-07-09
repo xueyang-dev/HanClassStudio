@@ -47,7 +47,7 @@ def build_pptx_deck_plan(
 def _apply_bindings_to_deck(plan: PptxDeckPlan, activity_bindings: PresentationBindingPlan, evidence_plan: Any | None) -> None:
     ev_map: dict[str, Any] = {ev.evidence_id: ev for ev in (evidence_plan.evidence_specs if evidence_plan else [])}
     bindings_by_slide = {}
-    for binding in activity_bindings.bindings:
+    for binding in sorted(activity_bindings.bindings, key=lambda b: b.binding_id):
         if "pptx_classroom" in binding.presentation_modes or "speaker_notes" in binding.presentation_modes:
             bindings_by_slide.setdefault(binding.slide_id, []).append(binding)
 
@@ -55,6 +55,7 @@ def _apply_bindings_to_deck(plan: PptxDeckPlan, activity_bindings: PresentationB
         bindings = bindings_by_slide.get(deck.slide_id, [])
         if not bindings:
             continue
+        # Defensive path only: binding_quality_report blocks duplicate targets before export.
         binding = bindings[0]
         ev = ev_map.get(binding.evidence_id)
         deck.binding_id = binding.binding_id

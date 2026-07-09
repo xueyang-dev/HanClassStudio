@@ -24,6 +24,7 @@ def _binding_fixture():
             SlideComponent(id="v1", component_type="VocabularyFlipCard", title="", data={"items": [{"word": "你好", "pinyin": "nǐ hǎo"}]}),
         ], content_blocks=[]),
         LessonSlide(id=5, slide_type="GrammarPatternSlide", layout_variant="basic", title="您好 / 你好", components=[], content_blocks=[]),
+        LessonSlide(id=6, slide_type="PracticeSlide", layout_variant="basic", title="你好 您好", components=[], content_blocks=[]),
         LessonSlide(id=7, slide_type="PracticeSlide", layout_variant="basic", title="你好 您好", components=[], content_blocks=[]),
     ])
     bindings = build_activity_bindings(bp, ep, ap, sp, "zero_beginner")
@@ -251,6 +252,66 @@ def test_binding_references_are_valid() -> None:
             assert (binding.slide_id, binding.component_id) in components
 
 
+def test_duplicate_presentation_target_binding_blocks() -> None:
+    from hcs_api.models import PresentationBinding, PresentationBindingPlan
+    from hcs_api.presentation_bindings import check_activity_bindings
+    _profile, bp, sp, ep, ap, bindings = _binding_fixture()
+    duplicate = PresentationBinding(**bindings.bindings[1].model_dump(mode="json"))
+    duplicate.slide_id = bindings.bindings[0].slide_id
+    duplicate.component_id = bindings.bindings[0].component_id
+    report = check_activity_bindings(bp, ep, ap, sp, PresentationBindingPlan(bindings=[bindings.bindings[0], duplicate, *bindings.bindings[2:]]), "zero_beginner")
+    assert report.state == "blocked"
+    assert any("Duplicate presentation target binding" in issue for issue in report.blocking)
+
+
+def test_duplicate_html_target_binding_blocks() -> None:
+    from hcs_api.models import PresentationBinding, PresentationBindingPlan
+    from hcs_api.presentation_bindings import check_activity_bindings
+    _profile, bp, sp, ep, ap, bindings = _binding_fixture()
+    first = PresentationBinding(**bindings.bindings[0].model_dump(mode="json"))
+    second = PresentationBinding(**bindings.bindings[1].model_dump(mode="json"))
+    first.presentation_modes = ["html_classroom"]
+    second.presentation_modes = ["html_interactive"]
+    second.slide_id = first.slide_id
+    second.component_id = first.component_id
+    report = check_activity_bindings(bp, ep, ap, sp, PresentationBindingPlan(bindings=[first, second, *bindings.bindings[2:]]), "zero_beginner")
+    assert report.state == "blocked"
+    assert any("mode=html" in issue for issue in report.blocking)
+
+
+def test_duplicate_pptx_target_binding_blocks() -> None:
+    from hcs_api.models import PresentationBinding, PresentationBindingPlan
+    from hcs_api.presentation_bindings import check_activity_bindings
+    _profile, bp, sp, ep, ap, bindings = _binding_fixture()
+    first = PresentationBinding(**bindings.bindings[0].model_dump(mode="json"))
+    second = PresentationBinding(**bindings.bindings[1].model_dump(mode="json"))
+    first.presentation_modes = ["pptx_classroom"]
+    second.presentation_modes = ["speaker_notes"]
+    second.slide_id = first.slide_id
+    second.component_id = first.component_id
+    report = check_activity_bindings(bp, ep, ap, sp, PresentationBindingPlan(bindings=[first, second, *bindings.bindings[2:]]), "zero_beginner")
+    assert report.state == "blocked"
+    assert any("mode=pptx" in issue for issue in report.blocking)
+
+
+def test_golden_activity_bindings_have_no_duplicate_target_keys() -> None:
+    _profile, _bp, _sp, _ep, _ap, bindings = _binding_fixture()
+    seen = set()
+    for binding in bindings.bindings:
+        component_id = binding.component_id or "__slide__"
+        modes = set(binding.presentation_modes)
+        keys = []
+        if {"html_classroom", "html_interactive"} & modes:
+            keys.append((binding.slide_id, component_id, "html"))
+        if {"pptx_classroom", "speaker_notes"} & modes:
+            keys.append((binding.slide_id, component_id, "pptx"))
+        if "teacher_observation" in modes:
+            keys.append((binding.slide_id, component_id, "teacher"))
+        for key in keys:
+            assert key not in seen
+            seen.add(key)
+
+
 def test_fake_binding_unknown_evidence_blocks() -> None:
     from hcs_api.models import PresentationBinding, PresentationBindingPlan
     from hcs_api.presentation_bindings import check_activity_bindings
@@ -304,6 +365,29 @@ def test_html_lesson_data_uses_binding_not_heuristic(tmp_path: Path) -> None:
     component_data = data["blueprint"]["slides"][1]["components"][0]["data"]
     assert component_data["evidence_id"] == "ev_binding_only"
     assert component_data["binding_id"] == binding.binding_id
+
+
+def test_html_and_pptx_consume_same_binding_for_shared_target(tmp_path: Path) -> None:
+    from hcs_api.models import AssetManifest, QualityReport
+    from hcs_api.pptx_deck import build_pptx_deck_plan
+    from hcs_api.renderer import render_lesson
+    profile, bp, sp, ep, ap, bindings = _binding_fixture()
+    binding = next(b for b in bindings.bindings if b.component_id)
+    html_path = render_lesson(tmp_path, profile, bp, AssetManifest(), QualityReport(), render_mode="classroom", activity_bindings=bindings)
+    html = html_path.read_text(encoding="utf-8")
+    data_json = html.split('id="lesson-data">', 1)[1].split("</script>", 1)[0]
+    data = json.loads(data_json)
+    html_binding = None
+    for slide in data["blueprint"]["slides"]:
+        if slide["id"] == binding.slide_id:
+            for component in slide["components"]:
+                if component["data"].get("binding_id") == binding.binding_id:
+                    html_binding = component["data"]
+    deck = build_pptx_deck_plan(bp, "Chinese", profile.scaffolding_language, "zero_beginner", None, ep, ap, sp, bindings)
+    deck_slide = next(slide for slide in deck.slides if slide.slide_id == binding.slide_id)
+    assert html_binding is not None
+    assert html_binding["binding_id"] == deck_slide.binding_id
+    assert html_binding["evidence_id"] == deck_slide.evidence_id
 
 
 def test_cover_slide_has_no_binding_by_default() -> None:

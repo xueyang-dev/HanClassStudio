@@ -50,6 +50,7 @@ def build_activity_bindings(
 ) -> PresentationBindingPlan:
     plan = PresentationBindingPlan()
     evidence_by_id = {ev.evidence_id: ev for ev in evidence_plan.evidence_specs}
+    used_targets: set[tuple[int, str, str]] = set()
 
     for activity in activity_plan.activities:
         for evidence_id in activity.collects_evidence:
@@ -57,9 +58,10 @@ def build_activity_bindings(
             if not evidence:
                 plan.blocking.append(f"Activity '{activity.activity_id}' collects missing evidence '{evidence_id}'")
                 continue
-            binding = _best_binding_for_activity(blueprint, state_plan, activity, evidence, learner_level)
+            binding = _best_binding_for_activity(blueprint, state_plan, activity, evidence, learner_level, used_targets)
             if binding:
                 plan.bindings.append(binding)
+                used_targets.update(_target_keys(binding))
                 if binding.binding_confidence < 0.5:
                     plan.warnings.append(
                         f"Low-confidence binding '{binding.binding_id}' ({binding.binding_confidence:.1f}): {binding.binding_reason}"
@@ -85,6 +87,19 @@ def check_activity_bindings(
     evidence = {ev.evidence_id: ev for ev in evidence_plan.evidence_specs}
     slides = {slide.id: slide for slide in blueprint.slides}
     bound_evidence = {binding.evidence_id for binding in report.bindings}
+    bindings_by_target: dict[tuple[int, str, str], list[PresentationBinding]] = {}
+
+    for binding in report.bindings:
+        for key in _target_keys(binding):
+            bindings_by_target.setdefault(key, []).append(binding)
+
+    for (slide_id, component_id, mode), bindings in bindings_by_target.items():
+        if len(bindings) > 1:
+            evs = ", ".join(sorted({b.evidence_id for b in bindings}))
+            report.blocking.append(
+                f"Duplicate presentation target binding: slide_id={slide_id} component_id={component_id} mode={mode} "
+                f"has evidence [{evs}]. Each presentation target may have only one primary binding in v0.2.2-alpha."
+            )
 
     for ev_id in evidence_ids:
         if ev_id not in bound_evidence:
@@ -132,9 +147,10 @@ def _best_binding_for_activity(
     activity: LearningActivity,
     evidence: EvidenceSpec,
     learner_level: str,
+    used_targets: set[tuple[int, str, str]] | None = None,
 ) -> PresentationBinding | None:
     explicit_cover_allowed = False
-    best: tuple[float, str, LessonSlide, SlideComponent | None] | None = None
+    candidates: list[tuple[float, str, LessonSlide, SlideComponent | None]] = []
     intent = _transition_intent_for_evidence(state_plan, evidence.evidence_id)
 
     for slide in blueprint.slides:
@@ -145,25 +161,44 @@ def _best_binding_for_activity(
         slide_text = _slide_text(slide)
         target_match = any(item and item in slide_text for item in evidence.target_items)
         slide_intent = _slide_intent_matches(slide, intent)
+        purpose_score = _purpose_score(slide, intent, evidence)
 
         for component in slide.components:
             score, reason = _score_component(component, activity, evidence, target_match)
-            best = _pick_best(best, score, reason, slide, component)
+            if score:
+                candidates.append((score + purpose_score, reason, slide, component))
 
         if not slide.components:
             if target_match:
-                best = _pick_best(best, 0.6, "matched_by_target_items", slide, None)
+                candidates.append((0.6 + purpose_score, "matched_by_target_items", slide, None))
             elif slide_intent:
-                best = _pick_best(best, 0.4, "matched_by_slide_intent", slide, None)
+                candidates.append((0.4 + purpose_score, "matched_by_slide_intent", slide, None))
         elif target_match:
-            # Use the first component as the presentation target when the slide is the match.
-            best = _pick_best(best, 0.6, "matched_by_target_items", slide, slide.components[0])
+            candidates.append((0.6 + purpose_score, "matched_by_target_items", slide, _preferred_component(slide, activity, evidence)))
         elif slide_intent:
-            best = _pick_best(best, 0.4, "matched_by_slide_intent", slide, slide.components[0])
+            candidates.append((0.4 + purpose_score, "matched_by_slide_intent", slide, _preferred_component(slide, activity, evidence)))
 
-    if not best:
+    if not candidates:
         return None
-    confidence, reason, slide, component = best
+    candidates.sort(key=lambda item: (-item[0], item[2].id, item[3].id if item[3] else ""))
+    confidence = 0.0
+    reason = ""
+    slide = None
+    component = None
+    for cand_confidence, cand_reason, cand_slide, cand_component in candidates:
+        provisional = PresentationBinding(
+            activity_id=activity.activity_id,
+            evidence_id=evidence.evidence_id,
+            slide_id=cand_slide.id,
+            component_id=cand_component.id if cand_component else None,
+            presentation_modes=_presentation_modes(activity, evidence),
+        )
+        if used_targets and any(key in used_targets for key in _target_keys(provisional)):
+            continue
+        confidence, reason, slide, component = cand_confidence, cand_reason, cand_slide, cand_component
+        break
+    if slide is None:
+        return None
     if _is_zero_beginner(learner_level) and component and component.component_type in UNSUITABLE_ZB_COMPONENTS:
         confidence = 0.0
         reason = "blocked_zero_beginner_unsuitable_component"
@@ -196,18 +231,27 @@ def _score_component(component: SlideComponent, activity: LearningActivity, evid
     return 0.0, ""
 
 
-def _pick_best(
-    best: tuple[float, str, LessonSlide, SlideComponent | None] | None,
-    score: float,
-    reason: str,
-    slide: LessonSlide,
-    component: SlideComponent | None,
-) -> tuple[float, str, LessonSlide, SlideComponent | None] | None:
-    if score <= 0:
-        return best
-    if best is None or score > best[0]:
-        return (score, reason, slide, component)
-    return best
+def _purpose_score(slide: LessonSlide, intent: str, evidence: EvidenceSpec) -> float:
+    intent_text = f"{intent} {evidence.evidence_id} {evidence.learning_claim}".lower()
+    if "recognize" in intent_text or "recognition" in intent_text or "vocabulary" in intent_text:
+        return 0.25 if slide.slide_type == "VocabularySlide" else 0.0
+    if "polite" in intent_text or "politeness" in intent_text or "contrast" in intent_text:
+        return 0.35 if slide.slide_type == "GrammarPatternSlide" else 0.0
+    if "dialogue" in intent_text or "production" in intent_text:
+        if slide.slide_type == "DialogueSlide":
+            return 0.35
+        if slide.slide_type == "PracticeSlide":
+            return 0.25
+        if slide.slide_type == "SummarySlide":
+            return 0.2
+    return 0.0
+
+
+def _preferred_component(slide: LessonSlide, activity: LearningActivity, evidence: EvidenceSpec) -> SlideComponent | None:
+    for component in slide.components:
+        if component.component_type in ACTIVITY_COMPONENT_HINTS.get(activity.activity_type, set()):
+            return component
+    return slide.components[0] if slide.components else None
 
 
 def _component_activity_id(component: SlideComponent) -> str:
@@ -224,6 +268,19 @@ def _presentation_modes(activity: LearningActivity, evidence: EvidenceSpec) -> l
     if evidence.evidence_type == "teacher_observation":
         modes.update({"speaker_notes", "teacher_observation"})
     return sorted(modes)
+
+
+def _target_keys(binding: PresentationBinding) -> list[tuple[int, str, str]]:
+    component_id = binding.component_id or "__slide__"
+    modes = set(binding.presentation_modes)
+    keys = []
+    if {"html_classroom", "html_interactive"} & modes:
+        keys.append((binding.slide_id, component_id, "html"))
+    if {"pptx_classroom", "speaker_notes"} & modes:
+        keys.append((binding.slide_id, component_id, "pptx"))
+    if "teacher_observation" in modes:
+        keys.append((binding.slide_id, component_id, "teacher"))
+    return keys
 
 
 def _transition_intent_for_evidence(state_plan: LearningStatePlan, evidence_id: str) -> str:
