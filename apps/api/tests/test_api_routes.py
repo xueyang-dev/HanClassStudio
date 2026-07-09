@@ -182,6 +182,12 @@ def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monke
 
     quality_report = json.loads((project_root / "quality" / "quality_report.json").read_text(encoding="utf-8"))
     assert "state" in quality_report
+    bindings_json = json.loads((project_root / "presentation" / "activity_bindings.json").read_text(encoding="utf-8"))
+    binding_report_json = json.loads((project_root / "presentation" / "binding_quality_report.json").read_text(encoding="utf-8"))
+    assert bindings_json["schema"] == "hanclassstudio.presentation_bindings.v1"
+    assert "schema_" not in bindings_json
+    assert binding_report_json["schema"] == "hanclassstudio.presentation_bindings.v1"
+    assert "schema_" not in binding_report_json
 
     export_path = storage.latest_export_path(project_id)
     assert export_path is not None

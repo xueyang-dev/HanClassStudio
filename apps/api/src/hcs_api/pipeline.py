@@ -84,8 +84,9 @@ def write_presentation_bindings(
 ):
     from .presentation_bindings import build_activity_bindings
     binding_plan = build_activity_bindings(blueprint, evidence_plan, activity_plan, state_plan, learner_level)
-    write_json(project_id, "presentation/activity_bindings.json", binding_plan.model_dump(mode="json"))
-    write_json(project_id, "presentation/binding_quality_report.json", binding_plan.model_dump(mode="json"))
+    payload = binding_plan.model_dump(mode="json", by_alias=True)
+    write_json(project_id, "presentation/activity_bindings.json", payload)
+    write_json(project_id, "presentation/binding_quality_report.json", payload)
     if binding_plan.state == "blocked":
         write_json(project_id, "presentation/binding_revision_recommendation.json", {
             "schema": "hanclassstudio.binding_revision_recommendation.v1",
