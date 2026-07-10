@@ -4,6 +4,8 @@ Quality gates decide whether a generated lesson can be previewed, exported, or h
 
 The goal is not perfection. The goal is to catch failures that make courseware unusable, misleading, inaccessible, or impossible to run offline.
 
+Quality reports do not own pedagogy and do not mutate upstream artifacts. A downstream warning or pass cannot override an upstream blocked state.
+
 ## Quality States
 
 | State | Meaning | Export |
@@ -11,6 +13,45 @@ The goal is not perfection. The goal is to catch failures that make courseware u
 | `pass` | No blocking issues | allowed |
 | `warning` | Usable, but has quality concerns | allowed with report |
 | `blocked` | Broken or unsafe for delivery | blocked unless forced |
+
+## Gate Layers
+
+| Layer | Representative report | Responsibility |
+|---|---|---|
+| Pedagogical | `quality/evidence_alignment_report.json` | Goal-Evidence-Activity validity |
+| Presentation content | `quality/presentation_content_report.json` | mode-required content completeness and learner safety |
+| Media trace | media request, projection, and reconciliation reports | deterministic request-to-asset trace |
+| Presentation compilation | shadow, adapter assessment, parity, readiness reports | canonical-to-legacy compatibility and trace |
+| Internal cutover | `quality/v2_cutover_readiness_report.json` | whole-lesson allowlist and current-artifact eligibility |
+| Rendered output | `quality/v2_rendered_output_review.json` | actual internal HTML structure, interaction, trace, and safety |
+| Production aggregate | `quality/quality_report.json` and production review reports | current public render/export gate |
+
+Most v2 reports are diagnostic-only while the v2 route remains shadow/internal. They must not be interpreted as public export authorization.
+
+## Dependency Order
+
+```text
+Evidence Alignment
+→ Presentation Content
+→ Media Request when required
+→ Media Projection / Asset Reconciliation when required
+→ Abstract Binding / Canonical Blueprint
+→ Adapter Assessment
+→ Structural Parity
+→ Presentation Readiness
+→ internal cutover readiness
+→ rendered-output review
+→ future aggregate export decision
+```
+
+Rules:
+
+- blocked evidence alignment prevents successful downstream presentation status;
+- unresolved required listening audio keeps listening content blocked;
+- approximate projection cannot become authoritative asset trace;
+- a blocked rendered-output review makes the internal experiment unhealthy;
+- missing v2 reports may be acceptable before an opt-in experiment starts, but not when claiming that an experiment run succeeded;
+- visual parity remains unverified unless a meaningful human or automated visual review actually occurred.
 
 ## Gate Categories
 
@@ -119,7 +160,7 @@ Warnings:
 - mixed simplified/traditional Chinese without explicit policy
 - vocabulary examples do not include target words
 
-## Report Shape
+## Production Aggregate Report Shape
 
 Target file:
 
@@ -159,10 +200,15 @@ quality/quality_summary.md
 | Pipeline phase | Gate |
 |---|---|
 | after source intake | source sanity checks |
-| after strategist | pedagogy and blueprint checks |
+| after State-Evidence planning | evidence alignment |
+| after presentation content/media planning | content and media trace checks |
+| after canonical presentation compilation | adapter, parity, and readiness diagnostics |
+| after legacy strategist | current production blueprint checks |
 | after media generation | media checks |
 | after render | runtime and accessibility checks |
 | before export | full quality gate |
+
+The browser/runtime runner is supporting infrastructure for real-lesson pilots. It should improve confidence without postponing teacher-led review.
 
 ## Export Policy
 
@@ -184,3 +230,7 @@ Development/demo policy may allow forced export:
 ```
 
 Forced export must write the blocked report into the ZIP.
+
+## Practice Answer Policy
+
+Interactive practice and self-study components may include accepted answers client-side so they can provide immediate offline feedback. HanClassStudio does not currently claim exam security, answer secrecy, or anti-cheating capability. This is a documented product boundary, not a reason to add a separate security subsystem.

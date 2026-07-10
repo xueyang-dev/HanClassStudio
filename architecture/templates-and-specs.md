@@ -7,7 +7,7 @@ HanClassStudio should use four independent template kinds.
 | Kind | Directory | Owns | Does not own |
 |---|---|---|---|
 | `brand` | `templates/brands/<id>/` | colors, fonts, logo, visual tone | pedagogy, slide flow |
-| `pedagogy` | `templates/pedagogy/<id>/` | lesson method, activity sequence, scaffolding style | visual theme |
+| `pedagogy` | `templates/pedagogy/<id>/` | method constraints, sequencing policy, scaffolding style | lesson-specific goals, evidence, or activities |
 | `runtime` | `templates/runtimes/<id>/` | HTML runtime, component renderer, layout shell | lesson content |
 | `courseware` | `templates/courseware/<id>/` | full lesson shell: brand + pedagogy + runtime | source material facts |
 
@@ -61,7 +61,7 @@ Recommended sections:
 ## Quality Policy
 ```
 
-`lesson_spec.md` explains why choices were made. It is not the execution contract.
+`lesson_spec.md` explains why choices were made. It is not the machine authority for lesson-specific goals, evidence, or activities; those belong in the State-Evidence learning artifacts.
 
 ## spec_lock.json
 
@@ -119,13 +119,13 @@ Example shape:
 }
 ```
 
-Executor, media generation, and quality checks read this file.
+Executor, media generation, and quality checks read this file for locked execution policy. `spec_lock.json` may constrain pedagogy but must not replace the lesson-specific learning state, evidence, and activity plans.
 
 ## Blueprint Artifacts
 
 ### lesson_blueprint.json
 
-Owns the lesson structure:
+Currently owns the legacy production renderer structure:
 
 - title
 - objectives
@@ -135,6 +135,8 @@ Owns the lesson structure:
 - content blocks
 - interaction components
 - media requirements
+
+It is a compatibility and authoring contract for the current production route. It must not become the authority for learner state, learning goals, evidence, or learning activities. The canonical v2 presentation structure lives in `presentation/presentation_blueprint.json` and remains shadow/internal during migration.
 
 ### interaction_plan.json
 
@@ -155,7 +157,7 @@ Optional extracted interaction contract:
 }
 ```
 
-This can be derived from `lesson_blueprint.json` at first. It becomes useful when interactions become richer.
+In the current legacy production route this can be derived from `lesson_blueprint.json`. The canonical v2 path instead derives renderer-neutral interaction requirements from approved activity, evidence, content, and abstract binding artifacts before the compatibility adapter projects legacy component shapes.
 
 ### media_plan.json
 
@@ -245,4 +247,3 @@ When multiple templates are selected:
 | courseware + override | Explicit brand/pedagogy/runtime overrides replace that segment |
 
 Fusion is segment-level, not field-level. If two templates own the same segment, ask the user to choose.
-

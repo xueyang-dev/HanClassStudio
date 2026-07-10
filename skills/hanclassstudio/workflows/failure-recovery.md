@@ -17,20 +17,21 @@ Use the smallest upstream fix that makes the pipeline valid again.
 
 ## Blocked Quality
 
-- Read `quality/quality_report.json`.
-- Fix `blocking` items in upstream artifacts, usually blueprints or asset manifests.
+- Read the earliest blocked report in dependency order, starting with `quality/evidence_alignment_report.json` when it exists.
+- Fix `blocking` items in the artifact owned by that layer: learning plan, presentation content/media contract, legacy compatibility blueprint, or asset manifest.
 - Re-render and rerun quality.
 - Do not export normally until state is not `blocked`.
 
-## Missing Interaction Answer
+## Missing Interaction Answer Or Accepted Response
 
-- Locate the component in `blueprints/lesson_blueprint.json`.
-- Add required answer fields according to `courseware/components/registry.json`.
+- In the v2 path, verify the EvidenceSpec acceptance contract and `presentation/presentation_content_plan.json`; do not invent an answer in the adapter or renderer.
+- In the legacy production path, locate the component in `blueprints/lesson_blueprint.json` and treat the repair as compatibility authoring.
+- Add required component fields according to `courseware/components/registry.json` only after the upstream answer semantics are valid.
 - Ensure answers match choices or word lists where required.
 
 ## Render Failure
 
-- Validate `specs/spec_lock.json`, `blueprints/lesson_blueprint.json`, and `assets/data/asset_manifest.json`.
+- Validate the active route inputs. For production, check `spec_lock.json`, legacy blueprint/bindings, and `AssetManifest`; for the internal v2 route, also check canonical presentation/content and cutover readiness.
 - Remove unsupported components or invalid asset paths.
 - Re-render through HanClassStudio.
 
@@ -39,4 +40,3 @@ Use the smallest upstream fix that makes the pipeline valid again.
 - Confirm `courseware/lesson.html` exists.
 - Confirm latest quality state is not `blocked`, unless the user explicitly requests forced demo export.
 - Re-run export through HanClassStudio.
-

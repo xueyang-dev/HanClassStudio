@@ -12,7 +12,8 @@ Route selection decides which workflow owns a request. A wrong route creates bad
 | Existing courseware HTML needs packaging | User has HTML and wants ZIP/offline check | `native-enhance` | Keep layout, add manifests, quality, package |
 | Existing courseware template plus new material | User wants to fill a reusable courseware shell | `template-fill` | Keep template runtime/layout, replace lesson content |
 | Create reusable template | User wants to reuse style, pedagogy, runtime, or whole lesson shape | `create-template` | Template package under `templates/` |
-| Revise generated lesson plan | User edits objectives, slides, language, or activities before media/render | `refine-blueprint` | Updated blueprints and spec lock |
+| Revise production presentation | User edits legacy slides/components before media/render | `refine-blueprint` | Updated compatibility blueprints and spec lock; no new pedagogical authority |
+| Revise learning design | User changes goals, evidence, activity sequence, learner constraints, or success criteria | `main-generation` / kernel regeneration | Updated learning artifacts and alignment before presentation recompilation |
 | Visual/runtime review | User asks to inspect UI or interaction behavior | `visual-review` | Findings and upstream fixes before export |
 | Add or regenerate media | User asks for images/audio/video only | `media-refresh` | Updated media assets and manifest |
 
@@ -132,6 +133,12 @@ For requests like "optimize this courseware" or "make this PPT into a better les
 
 Preserve means `faithful-enhance`. Redesign means `main-generation`.
 
+## Pedagogy Versus Presentation Rule
+
+If a requested change affects learning goals, acceptable evidence, activity logic, learner level, or cognitive sequence, route it through the State-Evidence kernel. Do not implement the change only by editing slide titles or component types.
+
+If a requested change affects only the current production arrangement or renderer-compatible component projection, `refine-blueprint` may edit legacy compatibility artifacts without changing pedagogical truth.
+
 ## Template Name Boundary
 
 | User input | Behavior |
@@ -140,4 +147,3 @@ Preserve means `faithful-enhance`. Redesign means `main-generation`.
 | Bare template name | Search only if template discovery UI/API exists |
 | Style description | Treat as strategist input, not template lock |
 | PPTX called a template | Route to `template-fill` or `create-template`, not direct runtime template use |
-

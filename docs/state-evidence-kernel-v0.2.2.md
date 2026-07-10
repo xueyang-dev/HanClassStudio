@@ -1,8 +1,11 @@
 # 智能体辅助语言教学课件生成：State-Evidence 核心架构白皮书
 
-**版本：v0.2.2**  
+**版本：v0.2.2，含 Phase 2B/2C 路线校正**
+
 **定位：HanClassStudio State-Evidence Kernel 架构文档**  
 **适用范围：语言教学课件生成、HTML 互动课件、Traditional PPTX 课件、教师备注与审校工作流**
+
+**当前阶段：Phase 2B 基本完成；Phase 2C 完成内部技术验证；真实教学验证与生产 v2 cutover 尚未开始。**
 
 ---
 
@@ -14,7 +17,7 @@
 
 传统 AIGC 幻灯片工具大多采用 **Slide-first** 思路：先从资料中抽取内容，再直接生成页面。这种方法容易造成内容堆砌、教学目标与活动脱节、视觉呈现与学习过程脱节、语言任务不适合学习者水平等问题。
 
-HanClassStudio 的下一阶段应采用 **State-first** 思路：先描述学习者的认知状态变化，再定义目标、证据、活动和呈现方式。课件不再被视作页面集合，而是被视作一套引导学习者发生认知状态转移的媒介。
+HanClassStudio 已确立 **State-first / Evidence-first** 思路：先描述学习者的认知状态变化，再定义目标、证据、活动和呈现方式。课件不再被视作页面集合，而是被视作一套引导学习者发生认知状态转移的媒介。
 
 本白皮书提出 **State-Evidence Kernel（状态-证据内核）** 架构。其核心原则是：
 
@@ -24,11 +27,13 @@ Source
 → Learning Goal
 → Evidence Spec
 → Learning Activity
-→ Presentation Plan
+→ Presentation Content Contract
+→ Abstract Presentation Binding
+→ Canonical Presentation Blueprint
 → Render
 ```
 
-其中，`State / Goal / Evidence / Activity` 构成教学内核，`HTML / PPTX / Web Game / Teacher Observation` 只是下游呈现形式。Renderer 是后端编译器，不应承担教学判断职责。
+其中，`State / Goal / Evidence / Activity` 构成教学内核；Presentation Content 只提供已批准呈现模式所需的学习者内容；Binding 与 Canonical Blueprint 只负责呈现映射和顺序；`HTML / PPTX / Web Game / Teacher Observation` 是下游形式。Renderer 是后端编译器，不应承担教学判断职责。
 
 ---
 
@@ -182,6 +187,18 @@ Unseen → Noticed → Recognized → Understood → Controlled Production → C
 | Activity Plan | `learning/activity_plan.json` | 活动定义、呈现模式 |
 | Evidence Alignment Report | `quality/evidence_alignment_report.json` | 对齐检查结果 |
 
+### 5.1 Artifact ownership
+
+| 类别 | Artifacts | 权威范围 |
+|---|---|---|
+| Pedagogical authoritative | `learning/learning_state_plan.json`, `learning/evidence_plan.json`, `learning/activity_plan.json` | 学习状态、目标、证据、活动 |
+| Pedagogical gate | `quality/evidence_alignment_report.json` | Goal-Evidence-Activity 对齐判断 |
+| Canonical presentation | `presentation/presentation_content_plan.json`, `presentation/presentation_media_request_plan.json`, `presentation/abstract_activity_bindings.json`, `presentation/presentation_blueprint.json` | 内容载荷、媒体需求、抽象映射、呈现顺序 |
+| Legacy production compatibility | `blueprints/lesson_blueprint.json`, `presentation/activity_bindings.json`, `blueprints/interaction_plan.json`, `blueprints/media_plan.json` | 当前生产 renderer 输入，不拥有未来教学真相 |
+| Diagnostic-only | readiness、parity、projection、reconciliation、assessment、cutover、rendered-output reports 与 shadow adapter 输出 | 解释和验证运行，不创建教学决策 |
+
+Canonical presentation artifacts 可以携带 `goal_id`、`evidence_id`、`activity_id`、`content_item_id` 和 `presentation_unit_id` 作为追踪引用，但不得复制完整教学对象、加入布局坐标或重新选择教学活动。
+
 ---
 
 ## 6. Quality Gate Rules
@@ -202,20 +219,39 @@ Unseen → Noticed → Recognized → Understood → Controlled Production → C
 ### Pipeline 演进
 
 ```text
-source_material.json
-→ source_lesson_profile.json
-→ learner_model.json
-→ language_items.json
-→ learning_state_plan.json (new)
-→ evidence_plan.json (new)
-→ activity_plan.json (new)
-→ presentation_plan.json
-→ pptx_deck_plan.json / html_realization.json
-→ render
-→ quality reports
+Source / learner / language analysis
+→ learning/learning_state_plan.json
+→ learning/evidence_plan.json
+→ learning/activity_plan.json
+→ quality/evidence_alignment_report.json
+→ presentation/presentation_content_plan.json
+→ presentation/presentation_media_request_plan.json
+→ presentation/abstract_activity_bindings.json
+→ presentation/presentation_blueprint.json
+→ Legacy LessonBlueprint Adapter
+→ renderer
+→ rendered-output quality
+→ export
 ```
 
-`lesson_blueprint.json` 保留为下游 presentation artifact，不再承担教学目标定义职责。
+`lesson_blueprint.json` 当前仍是生产 renderer 的 legacy compatibility contract，但不再承担教学目标、证据或活动定义职责。生产链路尚未切换；v2 canonical 路径仍是 shadow/internal-only。
+
+### 当前三条链路
+
+```text
+Production:
+Legacy LessonBlueprint → v1 Bindings → existing renderers → exports
+
+Shadow v2:
+Kernel → Content / Media Contracts → Abstract Bindings
+→ Canonical Blueprint → shadow adapter → diagnostics
+
+Internal experiment:
+eligible whole lesson → v2 readiness allowlist
+→ lesson_v2_internal.html → rendered-output review
+```
+
+内部实验默认关闭，当前只允许全部 learner-facing units 均属于 `listening_choice` 或 `matching_response` 的课程。它不覆盖生产 HTML、PPTX、ZIP 或 production blueprint。
 
 ### Review Agent 扩展
 
@@ -256,6 +292,33 @@ TEST_CRITERIA:
   - Teacher observation evidence appears in speaker notes / teacher mode
   - quality/evidence_alignment_report.json generated for every compilation
 ```
+
+---
+
+## 9. 路线校正与下一阶段
+
+当前已经证明 v2 架构可以贯通、追踪和适配现有 renderer contract，但尚未证明教师愿意直接使用、学生能够独立完成、内容自然准确或课件达到高质量课堂标准。因此：
+
+```text
+Phase 2B：基本完成
+Phase 2C：内部技术验证完成
+真实教学验证：尚未开始
+生产 v2 cutover：尚未开始
+```
+
+下一阶段顺序固定为：
+
+```text
+文档收敛
+→ 三节真实中文微课 Pilot
+→ 根据教师和学生体验补产品能力
+→ 扩大明确支持的 presentation modes
+→ 再评估受控 cutover
+```
+
+Pilot 首批主题为问候与礼貌称呼、数字/时间/日期、餐厅点餐或购物。浏览器自动化和截图是并行支撑项，不应阻塞教师实际审课。客户端保存 accepted answer 是即时教学反馈的正常实现；系统当前不承诺考试防作弊或答案保密能力。
+
+不得继续用新增狭窄 shadow metadata/report 来代替真实教学验证。具体计划见 [roadmap.md](roadmap.md)。
 
 ---
 

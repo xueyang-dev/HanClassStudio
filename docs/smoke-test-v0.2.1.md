@@ -1,5 +1,7 @@
 # HanClassStudio v0.2.1-alpha — Smoke Test Report
 
+> Historical milestone report. Its “next step” section records the v0.2.1 decision at that time; current architecture and priorities are defined in [roadmap.md](roadmap.md).
+
 **Generated**: 2026-07-09  
 **Commit**: `7090b2d`  
 **Branch**: `main`  
