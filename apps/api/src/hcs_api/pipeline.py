@@ -30,16 +30,60 @@ from .syllabus_engine import (
 )
 
 
+SHADOW_PRESENTATION_ARTIFACTS = (
+    "presentation/presentation_blueprint.json",
+    "presentation/presentation_content_plan.json",
+    "presentation/presentation_content_plan.reconciled.json",
+    "presentation/presentation_media_request_plan.json",
+    "presentation/presentation_media_asset_links.shadow.json",
+    "presentation/presentation_media_projection_links.shadow.json",
+    "presentation/legacy_blueprint_from_v2.shadow.json",
+    "presentation/legacy_component_mapping.shadow.json",
+    "quality/presentation_content_report.json",
+    "quality/presentation_media_request_report.json",
+    "quality/presentation_media_projection_report.json",
+    "quality/presentation_asset_reconciliation_report.json",
+    "quality/presentation_parity_report.json",
+    "quality/presentation_adapter_assessment_report.json",
+)
+
+CONTENT_DOWNSTREAM_ARTIFACTS = SHADOW_PRESENTATION_ARTIFACTS[2:]
+V2_INTERNAL_CUTOVER_ARTIFACTS = (
+    "quality/v2_cutover_readiness_report.json",
+    "quality/v2_rendered_output_review.json",
+    "courseware/lesson_v2_internal.html",
+    "courseware/render_manifest_v2_internal.json",
+    "diagnostics/v2_rendered_output",
+)
+
+
+def _remove_project_artifacts(project_id: str, relative_paths: tuple[str, ...]) -> None:
+    import shutil
+
+    from .storage import project_dir
+
+    root = project_dir(project_id)
+    for relative_path in relative_paths:
+        path = root / relative_path
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+
+
 def generate_lesson_blueprint(
     source: SourceMaterial,
     profile: LessonProfile,
     settings: ProviderSettings,
+    candidates: TeachingCandidates | None = None,
+    language_items: list | None = None,
 ) -> tuple[LessonBlueprint, TeachingCandidates]:
     # Always extract teaching candidates from source
-    candidates = extract_candidates(source)
+    candidates = candidates or extract_candidates(source)
     from .learner_comprehension import build_language_items, build_learner_model
-    learner_model = build_learner_model(profile)
-    language_items = build_language_items(candidates, learner_model)
+    if language_items is None:
+        learner_model = build_learner_model(profile)
+        language_items = build_language_items(candidates, learner_model)
     try:
         blueprint = generate_blueprint_with_llm(source, profile, settings.llm)
     except ProviderError:
@@ -53,8 +97,9 @@ def generate_project_media(
     project_root: Path,
     blueprint: LessonBlueprint,
     settings: ProviderSettings,
+    preserve_media_origin_trace: bool = False,
 ) -> AssetManifest:
-    return generate_configured_media(project_root, blueprint, settings)
+    return generate_configured_media(project_root, blueprint, settings, preserve_media_origin_trace)
 
 
 def write_spec_artifacts(
@@ -70,6 +115,8 @@ def write_spec_artifacts(
 
 
 def write_blueprint_artifacts(project_id: str, blueprint: LessonBlueprint) -> None:
+    # Manual legacy edits must never retain a prior v2 route decision or output.
+    _remove_project_artifacts(project_id, V2_INTERNAL_CUTOVER_ARTIFACTS)
     normalize_component_ids(blueprint)
     write_model(project_id, "lesson_blueprint.json", blueprint)
     write_json(project_id, "blueprints/interaction_plan.json", build_interaction_plan(blueprint))
@@ -97,6 +144,92 @@ def write_presentation_bindings(
             "message": "Presentation binding blocked. Classroom-ready render/export stopped.",
         })
     return binding_plan
+
+
+def write_presentation_readiness(
+    project_id: str,
+    blueprint: LessonBlueprint,
+    evidence_plan,
+    activity_plan,
+    binding_plan,
+    alignment_report,
+):
+    from .presentation_readiness import check_presentation_readiness
+
+    report = check_presentation_readiness(
+        blueprint,
+        evidence_plan,
+        activity_plan,
+        binding_plan,
+        alignment_report,
+    )
+    write_json(project_id, "quality/presentation_readiness_report.json", report.model_dump(mode="json", by_alias=True))
+    return report
+
+
+def write_presentation_shadow_artifacts(
+    project_id: str,
+    state_plan,
+    evidence_plan,
+    activity_plan,
+    alignment_report,
+):
+    """Dual-write v2 presentation artifacts without touching the production blueprint."""
+    _remove_project_artifacts(project_id, SHADOW_PRESENTATION_ARTIFACTS)
+    from .blueprint_compatibility import adapt_canonical_presentation_blueprint
+    from .presentation_blueprint import (
+        ABSTRACT_BINDING_PATH,
+        CANONICAL_BLUEPRINT_PATH,
+        SHADOW_REPORT_PATH,
+        compile_shadow_presentation,
+    )
+
+    bindings, canonical, report = compile_shadow_presentation(
+        state_plan, evidence_plan, activity_plan, alignment_report,
+    )
+    write_json(project_id, ABSTRACT_BINDING_PATH, bindings.model_dump(mode="json", by_alias=True))
+    if canonical is not None:
+        try:
+            # Validate the adapter seam in memory only.  The production legacy
+            # blueprint is neither read nor written by this shadow path.
+            adapt_canonical_presentation_blueprint(canonical)
+            report.compatibility_contract_valid = True
+            write_json(project_id, CANONICAL_BLUEPRINT_PATH, canonical.model_dump(mode="json", by_alias=True))
+        except Exception as exc:  # pragma: no cover - defensive shadow isolation
+            report.state = "blocked"
+            report.blocking.append(f"Legacy compatibility adapter rejected canonical shadow blueprint: {exc}")
+            report.compatibility_contract_valid = False
+    write_json(project_id, SHADOW_REPORT_PATH, report.model_dump(mode="json", by_alias=True))
+    return bindings, canonical, report
+
+
+def write_presentation_content_shadow_artifacts(
+    project_id: str,
+    state_plan,
+    evidence_plan,
+    activity_plan,
+    binding_plan,
+    canonical_blueprint,
+    language_items,
+    asset_manifest=None,
+):
+    """Write v2 content artifacts and update only the shadow canonical reference graph."""
+    _remove_project_artifacts(project_id, CONTENT_DOWNSTREAM_ARTIFACTS)
+    from .presentation_content import (
+        CONTENT_PLAN_PATH,
+        CONTENT_REPORT_PATH,
+        attach_content_references,
+        build_presentation_content_plan,
+    )
+
+    plan, report = build_presentation_content_plan(
+        state_plan, evidence_plan, activity_plan, binding_plan, None, language_items, asset_manifest,
+    )
+    enriched = attach_content_references(canonical_blueprint, plan)
+    write_json(project_id, CONTENT_PLAN_PATH, plan.model_dump(mode="json", by_alias=True))
+    write_json(project_id, CONTENT_REPORT_PATH, report.model_dump(mode="json", by_alias=True))
+    write_json(project_id, "presentation/presentation_blueprint.json", enriched.model_dump(mode="json", by_alias=True))
+    return plan, report, enriched
 
 
 def render_and_check(
@@ -170,15 +303,30 @@ def run_full_pipeline(
     project_root: Path,
     settings: ProviderSettings,
     force_export: bool = False,
+    enable_presentation_parity_shadow: bool = False,
+    enable_presentation_adapter_assessment: bool = False,
+    enable_presentation_content_shadow: bool = False,
+    enable_presentation_asset_reconciliation_shadow: bool = False,
+    enable_presentation_media_request_shadow: bool = False,
+    enable_presentation_media_projection_shadow: bool = False,
+    enable_v2_internal_html_cutover: bool = False,
 ) -> ProjectState:
     source = read_model(project_id, "source_material.json", SourceMaterial)
     profile = read_model(project_id, "lesson_profile.json", LessonProfile)
     if not source or not profile:
         raise ValueError("Project needs source material and lesson profile")
 
+    shadow_content_enabled = enable_presentation_content_shadow or enable_v2_internal_html_cutover
+    media_request_enabled = enable_presentation_media_request_shadow or enable_v2_internal_html_cutover
+    media_projection_enabled = enable_presentation_media_projection_shadow or enable_v2_internal_html_cutover
+    reconciliation_enabled = (
+        enable_presentation_asset_reconciliation_shadow
+        or media_request_enabled
+        or media_projection_enabled
+    )
+
     write_spec_artifacts(project_id, source, profile)
-    blueprint, candidates = generate_lesson_blueprint(source, profile, settings)
-    write_blueprint_artifacts(project_id, blueprint)
+    candidates = extract_candidates(source)
     write_json(project_id, "analysis/teaching_candidates.json", candidates.model_dump(mode="json"))
 
     # Learner model
@@ -204,13 +352,32 @@ def run_full_pipeline(
         str(difficulty.estimated_level) if hasattr(difficulty, "estimated_level") else "zero_beginner",
         profile.scaffolding_language or "English",
     )
-    write_json(project_id, "learning/learning_state_plan.json", state_plan.model_dump(mode="json"))
-    write_json(project_id, "learning/evidence_plan.json", evidence_plan.model_dump(mode="json"))
-    write_json(project_id, "learning/activity_plan.json", activity_plan.model_dump(mode="json"))
-    write_json(project_id, "quality/evidence_alignment_report.json", alignment.model_dump(mode="json"))
+    write_json(project_id, "learning/learning_state_plan.json", state_plan.model_dump(mode="json", by_alias=True))
+    write_json(project_id, "learning/evidence_plan.json", evidence_plan.model_dump(mode="json", by_alias=True))
+    write_json(project_id, "learning/activity_plan.json", activity_plan.model_dump(mode="json", by_alias=True))
+    write_json(project_id, "quality/evidence_alignment_report.json", alignment.model_dump(mode="json", by_alias=True))
+    shadow_bindings, canonical_shadow, _ = write_presentation_shadow_artifacts(
+        project_id, state_plan, evidence_plan, activity_plan, alignment,
+    )
+    if shadow_content_enabled and canonical_shadow is not None:
+        _, _, canonical_shadow = write_presentation_content_shadow_artifacts(
+            project_id, state_plan, evidence_plan, activity_plan, shadow_bindings, canonical_shadow, language_items,
+        )
+    if media_request_enabled:
+        from .presentation_media_requests import run_presentation_media_request_shadow
+
+        run_presentation_media_request_shadow(project_id)
 
     # Pipeline gate: blocked alignment stops classroom render/export, writes diagnostic artifact
     if alignment.state == "blocked":
+        if enable_presentation_parity_shadow:
+            from .presentation_parity import run_presentation_parity_harness
+
+            run_presentation_parity_harness(project_id)
+        if enable_presentation_adapter_assessment:
+            from .presentation_adapter_assessment import run_presentation_adapter_assessment
+
+            run_presentation_adapter_assessment(project_id)
         from .storage import write_json as _wj, ensure_project as _ep
         _wj(project_id, "quality/kernel_revision_plan.json", {
             "schema": "hanclassstudio.kernel_revision_plan.v1",
@@ -230,6 +397,8 @@ def run_full_pipeline(
                 ("learning/evidence_plan.json", "learning/evidence_plan.json"),
                 ("learning/activity_plan.json", "learning/activity_plan.json"),
                 ("quality/evidence_alignment_report.json", "quality/evidence_alignment_report.json"),
+                ("presentation/abstract_activity_bindings.json", "presentation/abstract_activity_bindings.json"),
+                ("quality/presentation_shadow_report.json", "quality/presentation_shadow_report.json"),
                 ("quality/kernel_revision_plan.json", "kernel_revision_plan.json"),
                 ("sources/source_material.json", "source_material.json"),
             ]:
@@ -243,20 +412,70 @@ def run_full_pipeline(
             "diagnostic": True,
             "kernel_alignment_state": "blocked",
         })
-        # Return project state without classroom render
-        manifest = generate_project_media(project_root, blueprint, settings)
-        write_model(project_id, "asset_manifest.json", manifest)
+        if enable_v2_internal_html_cutover:
+            from .v2_cutover_readiness import run_v2_internal_html_cutover
+
+            run_v2_internal_html_cutover(
+                project_id, project_root, profile, AssetManifest(), QualityReport(),
+                enabled=True, require_courseware_review=False,
+            )
+        # Return project state without generating presentation or rendered artifacts.
         return get_project_state(project_id)
 
+    # Presentation remains downstream from the State-Evidence alignment gate.
+    blueprint, _ = generate_lesson_blueprint(source, profile, settings, candidates, language_items)
+    write_blueprint_artifacts(project_id, blueprint)
+    if enable_presentation_parity_shadow:
+        from .presentation_parity import run_presentation_parity_harness
+
+        run_presentation_parity_harness(project_id)
+    if enable_presentation_adapter_assessment:
+        from .presentation_adapter_assessment import run_presentation_adapter_assessment
+
+        run_presentation_adapter_assessment(project_id)
     learner_level = str(difficulty.estimated_level) if hasattr(difficulty, "estimated_level") else "zero_beginner"
     binding_plan = write_presentation_bindings(project_id, blueprint, evidence_plan, activity_plan, state_plan, learner_level)
-    if binding_plan.state == "blocked":
-        manifest = generate_project_media(project_root, blueprint, settings)
+    readiness = write_presentation_readiness(
+        project_id, blueprint, evidence_plan, activity_plan, binding_plan, alignment,
+    )
+    if binding_plan.state == "blocked" or readiness.state == "blocked":
+        manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled)
         write_model(project_id, "asset_manifest.json", manifest)
+        if media_projection_enabled:
+            from .presentation_media_projection import run_presentation_media_projection_audit
+
+            run_presentation_media_projection_audit(project_id, manifest)
+        if media_request_enabled:
+            from .presentation_media_requests import run_presentation_media_asset_linkage
+
+            run_presentation_media_asset_linkage(project_id, manifest)
+        if reconciliation_enabled:
+            from .presentation_asset_reconciliation import run_post_media_presentation_reconciliation
+
+            run_post_media_presentation_reconciliation(project_id, manifest)
+        if enable_v2_internal_html_cutover:
+            from .v2_cutover_readiness import run_v2_internal_html_cutover
+
+            run_v2_internal_html_cutover(
+                project_id, project_root, profile, manifest, QualityReport(),
+                enabled=True, require_courseware_review=False,
+            )
         return get_project_state(project_id)
 
-    manifest = generate_project_media(project_root, blueprint, settings)
+    manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled)
     write_model(project_id, "asset_manifest.json", manifest)
+    if media_projection_enabled:
+        from .presentation_media_projection import run_presentation_media_projection_audit
+
+        run_presentation_media_projection_audit(project_id, manifest)
+    if media_request_enabled:
+        from .presentation_media_requests import run_presentation_media_asset_linkage
+
+        run_presentation_media_asset_linkage(project_id, manifest)
+    if reconciliation_enabled:
+        from .presentation_asset_reconciliation import run_post_media_presentation_reconciliation
+
+        run_post_media_presentation_reconciliation(project_id, manifest)
     write_json(project_id, "assets/data/attribution.json", {"schema": "hanclassstudio.attribution.v1", "items": []})
     report = render_and_check(project_id, project_root, profile, blueprint, manifest, candidates, language_items, learner_model)
     # Revision application: if review was blocked, try auto-fix
@@ -278,12 +497,35 @@ def run_full_pipeline(
             blueprint = revised_bp
             write_blueprint_artifacts(project_id, revised_bp)
             binding_plan = write_presentation_bindings(project_id, blueprint, evidence_plan, activity_plan, state_plan, learner_level)
-            if binding_plan.state == "blocked":
+            readiness = write_presentation_readiness(
+                project_id, blueprint, evidence_plan, activity_plan, binding_plan, alignment,
+            )
+            if binding_plan.state == "blocked" or readiness.state == "blocked":
                 return get_project_state(project_id)
-            manifest = generate_project_media(project_root, blueprint, settings)
+            manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled)
             write_model(project_id, "asset_manifest.json", manifest)
+            if media_projection_enabled:
+                from .presentation_media_projection import run_presentation_media_projection_audit
+
+                run_presentation_media_projection_audit(project_id, manifest)
+            if media_request_enabled:
+                from .presentation_media_requests import run_presentation_media_asset_linkage
+
+                run_presentation_media_asset_linkage(project_id, manifest)
+            if reconciliation_enabled:
+                from .presentation_asset_reconciliation import run_post_media_presentation_reconciliation
+
+                run_post_media_presentation_reconciliation(project_id, manifest)
             report = render_and_check(project_id, project_root, profile, blueprint, manifest, candidates, language_items, learner_model)
     # End revision application
+
+    if enable_v2_internal_html_cutover:
+        from .v2_cutover_readiness import run_v2_internal_html_cutover
+
+        run_v2_internal_html_cutover(
+            project_id, project_root, profile, manifest, report,
+            enabled=True, require_courseware_review=True,
+        )
 
     if report.state != "blocked" or force_export:
         zip_output(project_id, force=force_export)

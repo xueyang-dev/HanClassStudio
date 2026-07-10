@@ -1,6 +1,7 @@
-import { type ChangeEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
+  Check,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
@@ -36,6 +37,7 @@ import {
   uploadProject,
   validateAgentOutput
 } from "./api";
+import { useI18n, UI_LANGUAGES, type UiLang } from "./i18n";
 import type {
   AgentPackage,
   AgentValidation,
@@ -55,32 +57,39 @@ import type {
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
-const modes: Array<{ value: GenerationMode; title: string; detail: string }> = [
-  { value: "faithful", title: "忠实原结构", detail: "保留原页序，轻量增强互动" },
-  { value: "guided_redesign", title: "参考原结构", detail: "重排为更完整的课堂活动链条" },
-  { value: "reimagined", title: "完全重构", detail: "把原材料作为知识来源重新设计" }
+const modes: Array<{ value: GenerationMode; titleKey: string; detailKey: string }> = [
+  { value: "faithful", titleKey: "mode.faithful", detailKey: "mode.faithful.detail" },
+  { value: "guided_redesign", titleKey: "mode.guided", detailKey: "mode.guided.detail" },
+  { value: "reimagined", titleKey: "mode.reimagined", detailKey: "mode.reimagined.detail" }
 ];
 
 const steps = [
-  { id: "upload", title: "上传解析", icon: FileUp },
-  { id: "profile", title: "课程确认", icon: Settings2 },
-  { id: "mode", title: "模式语言", icon: Sparkles },
-  { id: "outline", title: "大纲编辑", icon: Layers3 },
-  { id: "preview", title: "预览导出", icon: MonitorPlay }
+  { id: "upload", titleKey: "step.upload", icon: FileUp },
+  { id: "profile", titleKey: "step.profile", icon: Settings2 },
+  { id: "mode", titleKey: "step.mode", icon: Sparkles },
+  { id: "outline", titleKey: "step.outline", icon: Layers3 },
+  { id: "preview", titleKey: "step.preview", icon: MonitorPlay }
 ] as const;
 
 type StepId = (typeof steps)[number]["id"];
 type PipelineStepStatus = "pending" | "running" | "done" | "error";
 
 const providerStatuses = [
-  { label: "LLM 语言模型", name: "后端已配置", status: "模拟运行", mode: "Mock" },
-  { label: "图片生成", name: "占位 SVG", status: "模拟运行", mode: "Mock" },
-  { label: "语音合成 TTS", name: "占位音调", status: "模拟运行", mode: "Mock" },
-  { label: "视频生成", name: "未连接", status: "未配置", mode: "Mock" },
-  { label: "OCR 文字识别", name: "解析器回退", status: "模拟运行", mode: "Local" }
+  { labelKey: "provider.llm.label", nameKey: "provider.configured", statusKey: "provider.mock", mode: "Mock" },
+  { labelKey: "provider.image.label", nameKey: "provider.placeholderSvg", statusKey: "provider.mock", mode: "Mock" },
+  { labelKey: "provider.tts.label", nameKey: "provider.placeholderTone", statusKey: "provider.mock", mode: "Mock" },
+  { labelKey: "provider.video.label", nameKey: "provider.notConnected", statusKey: "provider.notConfigured", mode: "Mock" },
+  { labelKey: "provider.ocr.label", nameKey: "provider.parserFallback", statusKey: "provider.mock", mode: "Local" }
 ] as const;
 
-const pipelineStepLabels = ["执行契约", "课件蓝图", "媒体资源", "课件渲染", "质量门禁", "打包导出"] as const;
+const pipelineStepKeys = [
+  "pipeline.contract",
+  "pipeline.blueprint",
+  "pipeline.media",
+  "pipeline.render",
+  "pipeline.quality",
+  "pipeline.export"
+];
 
 const emptyProfile: LessonProfile = {
   lesson_title: "",
@@ -94,25 +103,26 @@ const emptyProfile: LessonProfile = {
 };
 
 function initialPipelineSteps(): Record<string, PipelineStepStatus> {
-  return Object.fromEntries(pipelineStepLabels.map((label) => [label, "pending"])) as Record<string, PipelineStepStatus>;
+  return Object.fromEntries(pipelineStepKeys.map((label) => [label, "pending"])) as Record<string, PipelineStepStatus>;
 }
 
 function markPipelineStep(label: string, status: PipelineStepStatus = "running") {
   return (current: Record<string, PipelineStepStatus>) => ({ ...current, [label]: status });
 }
 
-function readableError(err: unknown): string {
-  const message = err instanceof Error ? err.message : "操作失败，请稍后重试。";
+function readableError(err: unknown, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const message = err instanceof Error ? err.message : t("error.fallback");
   if (message.toLowerCase().includes("failed to fetch")) {
-    return "无法连接后端服务。请确认后端已经启动，然后重试。";
+    return t("error.fetch");
   }
   if (message.includes("Project needs")) {
-    return "课件项目信息还不完整。请先上传材料并保存课程信息。";
+    return t("error.incomplete");
   }
-  return message || "操作失败，请稍后重试。";
+  return message || t("error.fallback");
 }
 
 export function App() {
+  const { t } = useI18n();
   const [activeStep, setActiveStep] = useState<StepId>("upload");
   const [project, setProject] = useState<ProjectState | null>(null);
   const [profile, setProfile] = useState<LessonProfile>(emptyProfile);
@@ -131,6 +141,8 @@ export function App() {
   const [agentValidation, setAgentValidation] = useState<AgentValidation | null>(null);
   const [agentCopied, setAgentCopied] = useState(false);
   const [pptxExport, setPptxExport] = useState<EditablePptxExportResponse | null>(null);
+  const [autoFilledFields, setAutoFilledFields] = useState<Set<string>>(new Set());
+  const [userEditedFields, setUserEditedFields] = useState<Set<string>>(new Set());
 
   const progressIndex = useMemo(() => {
     if (project?.preview_url) return 4;
@@ -148,7 +160,7 @@ export function App() {
   useEffect(() => {
     getComponentRegistry()
       .then(setComponentRegistry)
-      .catch((err) => setError(readableError(err)));
+      .catch((err) => setError(readableError(err, t)));
   }, []);
 
   async function refreshArtifacts(projectId: string) {
@@ -159,9 +171,32 @@ export function App() {
     }
   }
 
+  function handleProfileChange(next: LessonProfile) {
+    setProfile(next);
+    // Track which fields the user has manually edited
+    const edited = new Set(userEditedFields);
+    for (const key of Object.keys(emptyProfile) as (keyof LessonProfile)[]) {
+      if (next[key] !== profile[key]) {
+        edited.add(key);
+      }
+    }
+    setUserEditedFields(edited);
+  }
+
   function updateProject(next: ProjectState) {
     setProject(next);
-    if (next.lesson_profile) setProfile(next.lesson_profile);
+    if (next.lesson_profile) {
+      setProfile(next.lesson_profile);
+      // Detect which fields differ from emptyProfile defaults → auto-filled by backend
+      const filled = new Set<string>();
+      for (const key of Object.keys(emptyProfile) as (keyof LessonProfile)[]) {
+        if (next.lesson_profile[key] !== emptyProfile[key] && String(next.lesson_profile[key]).trim() !== "") {
+          filled.add(key);
+        }
+      }
+      setAutoFilledFields(filled);
+      setUserEditedFields(new Set()); // reset user edits on new upload
+    }
     if (next.lesson_blueprint) setBlueprint(next.lesson_blueprint);
     void refreshArtifacts(next.project_id);
     if (next.preview_url) {
@@ -179,7 +214,7 @@ export function App() {
       updateProject(next);
       if (nextStep) setActiveStep(nextStep);
     } catch (err) {
-      setError(readableError(err));
+      setError(readableError(err, t));
     } finally {
       setBusy("");
     }
@@ -197,13 +232,13 @@ export function App() {
     setPptxExport(null);
     setPreviewError("");
     setPreviewLoading(false);
-    await run("正在解析课件", () => uploadProject(file), "profile");
+    await run(t("busy.parsing"), () => uploadProject(file), "profile");
   }
 
   async function handleSaveProfile(nextStep?: StepId) {
     if (!project) return;
     await run(
-      "正在保存课程信息",
+      t("busy.savingProfile"),
       async () => {
         const next = await saveProfile(project.project_id, profile);
         setConfirmedProfileProjectId(next.project_id);
@@ -215,31 +250,31 @@ export function App() {
 
   async function handleRunFullPipeline() {
     if (!project) return;
-    setBusy("正在一键生成课件");
+    setBusy(t("busy.generating"));
     setError("");
-    setPipelineSteps(markPipelineStep("执行契约"));
+    setPipelineSteps(markPipelineStep("pipeline.contract"));
     try {
       const saved = await saveProfile(project.project_id, profile);
       setConfirmedProfileProjectId(saved.project_id);
       updateProject(saved);
-      setPipelineSteps(markPipelineStep("执行契约", "done"));
-      setPipelineSteps(markPipelineStep("Blueprint"));
+      setPipelineSteps(markPipelineStep("pipeline.contract", "done"));
+      setPipelineSteps(markPipelineStep("pipeline.blueprint"));
       const next = await runPipeline(project.project_id);
       const nextSteps = initialPipelineSteps();
-      for (const label of pipelineStepLabels) {
+      for (const label of pipelineStepKeys) {
         nextSteps[label] = "done";
       }
       if (next.quality_report?.state === "blocked") {
-        nextSteps.Export = "error";
+        nextSteps["pipeline.export"] = "error";
       }
       setPipelineSteps(nextSteps);
       updateProject(next);
       setActiveStep("preview");
     } catch (err) {
-      setError(readableError(err));
+      setError(readableError(err, t));
       setPipelineSteps((current) => {
         const next = { ...current };
-        const running = pipelineStepLabels.find((label) => next[label] === "running");
+        const running = pipelineStepKeys.find((label) => next[label] === "running");
         if (running) next[running] = "error";
         return next;
       });
@@ -250,14 +285,14 @@ export function App() {
 
   async function handleForceExport() {
     if (!project) return;
-    setBusy("正在强制导出课件");
+    setBusy(t("busy.exporting"));
     setError("");
     try {
       const blob = await forceExportProject(project.project_id);
       downloadBlob(blob, `HanClassStudio_Output_${project.project_id}.zip`);
       setProject({ ...project, export_url: project.export_url ?? `/api/projects/${project.project_id}/export` });
     } catch (err) {
-      setError(readableError(err));
+      setError(readableError(err, t));
     } finally {
       setBusy("");
     }
@@ -265,14 +300,14 @@ export function App() {
 
   async function handleEditablePptxExport(force = false) {
     if (!project) return;
-    setBusy(force ? "正在强制导出 Editable PPTX" : "正在导出 Editable PPTX");
+    setBusy(force ? t("busy.exportingPptxForce") : t("busy.exportingPptx"));
     setError("");
     try {
       const next = await exportEditablePptx(project.project_id, force);
       setPptxExport(next);
       await refreshArtifacts(project.project_id);
     } catch (err) {
-      setError(readableError(err));
+      setError(readableError(err, t));
     } finally {
       setBusy("");
     }
@@ -280,7 +315,7 @@ export function App() {
 
   async function handleGenerateAgentPackage() {
     if (!project) return;
-    setBusy("正在生成 Agent 任务");
+    setBusy(t("busy.agentPackage"));
     setError("");
     try {
       const next = await generateAgentPackage(project.project_id);
@@ -288,7 +323,7 @@ export function App() {
       setAgentValidation(null);
       await refreshArtifacts(project.project_id);
     } catch (err) {
-      setError(readableError(err));
+      setError(readableError(err, t));
     } finally {
       setBusy("");
     }
@@ -296,14 +331,14 @@ export function App() {
 
   async function handleValidateAgentOutput() {
     if (!project) return;
-    setBusy("正在校验 Agent 输出");
+    setBusy(t("busy.agentValidate"));
     setError("");
     try {
       const next = await validateAgentOutput(project.project_id);
       setAgentValidation(next);
       await refreshArtifacts(project.project_id);
     } catch (err) {
-      setError(readableError(err));
+      setError(readableError(err, t));
     } finally {
       setBusy("");
     }
@@ -317,7 +352,7 @@ export function App() {
       setAgentCopied(true);
       window.setTimeout(() => setAgentCopied(false), 1600);
     } catch (err) {
-      setError(readableError(err));
+      setError(readableError(err, t));
     }
   }
 
@@ -331,17 +366,17 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="HanClassStudio workflow">
+      <aside className="sidebar" aria-label={t("nav.workflow")}>
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
             H
           </div>
           <div>
             <strong>HanClassStudio</strong>
-            <span>v0.1 local demo</span>
+            <span>{t("app.version")}</span>
           </div>
         </div>
-        <nav className="step-list" aria-label="开发流程">
+        <nav className="step-list" aria-label={t("nav.workflow")}>
           {steps.map((step, index) => {
             const Icon = step.icon;
             const available = index <= progressIndex + 1;
@@ -354,7 +389,7 @@ export function App() {
                 onClick={() => setActiveStep(step.id)}
               >
                 <Icon size={18} aria-hidden="true" />
-                <span>{step.title}</span>
+                <span>{t(step.titleKey)}</span>
                 {index <= progressIndex && <CheckCircle2 size={16} aria-hidden="true" />}
               </button>
             );
@@ -365,33 +400,36 @@ export function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">AI 多语言支架式互动课件生成器</p>
-            <h1>{profile.lesson_title || "新建中文课件"}</h1>
+          <div className="topbar-title">
+            <p className="eyebrow">{t("topbar.eyebrow")}</p>
+            <h1>{profile.lesson_title || t("topbar.newLesson")}</h1>
           </div>
-          <div className="status-strip">
-            <span>{project?.project_id ? `项目 ${project.project_id}` : "无项目"}</span>
-            <span>{project?.status ?? "就绪"}</span>
-            <span>{project?.route ? `路线 ${project.route}` : "路线待定"}</span>
-            <span>{profileConfirmed ? "课程已确认" : "课程待确认"}</span>
-            <span>{qualityState ? `质量 ${qualityState}` : "质量待定"}</span>
-            <span>{issueCount === 0 ? "质量通过" : `${issueCount} 个问题`}</span>
-          </div>
-          <div className="top-actions">
-            <button type="button" className="secondary" onClick={() => setSettingsOpen(true)}>
-              <Settings2 size={18} aria-hidden="true" />
-              模型设置
-            </button>
-            <button
-              type="button"
-              className="primary"
-              disabled={!canRunPipeline}
-              onClick={handleRunFullPipeline}
-              title={profileConfirmed ? "Run the full generation pipeline" : "请先保存课程信息"}
-            >
-              <Sparkles size={18} aria-hidden="true" />
-              一键生成课件
-            </button>
+          <div className="topbar-aside">
+            <div className="status-strip">
+              <span>{project?.project_id ? t("status.project", { id: project.project_id }) : t("status.noProject")}</span>
+              <span>{project?.status ?? t("status.ready")}</span>
+              <span>{project?.route ? t("status.route", { route: project.route }) : t("status.routePending")}</span>
+              <span>{profileConfirmed ? t("status.profileConfirmed") : t("status.profilePending")}</span>
+              <span>{qualityState ? t("status.quality", { state: qualityState }) : t("status.qualityPending")}</span>
+              <span>{issueCount === 0 ? t("status.qualityPass") : t("status.issues", { n: issueCount })}</span>
+            </div>
+            <div className="top-actions">
+              <button type="button" className="secondary" onClick={() => setSettingsOpen(true)}>
+                <Settings2 size={18} aria-hidden="true" />
+                {t("btn.modelSettings")}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={!canRunPipeline}
+                onClick={handleRunFullPipeline}
+                title={profileConfirmed ? t("btn.generate.titleReady") : t("btn.generate.title")}
+              >
+                <Sparkles size={18} aria-hidden="true" />
+                {t("btn.generate")}
+              </button>
+            </div>
+            <LanguageSwitcher />
           </div>
         </header>
 
@@ -406,10 +444,10 @@ export function App() {
 
         {activeStep === "upload" && (
           <section className="panel">
-            <PanelHeader icon={<FileUp size={22} />} title="上传课件材料" action="PPTX / PDF" />
+            <PanelHeader icon={<FileUp size={22} />} title={t("panel.upload.title")} action={t("panel.upload.action")} />
             <label className="upload-zone">
               <FileUp size={34} aria-hidden="true" />
-              <span>选择 PPTX 或 PDF 文件</span>
+              <span>{t("upload.choose")}</span>
               <input type="file" accept=".pptx,.pdf" onChange={handleUpload} />
             </label>
             {project?.source_material && (
@@ -420,8 +458,8 @@ export function App() {
 
         {activeStep === "profile" && (
           <section className="panel">
-            <PanelHeader icon={<Settings2 size={22} />} title="课程信息确认" action="课程画像" />
-            <ProfileForm profile={profile} onChange={setProfile} />
+            <PanelHeader icon={<Settings2 size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} />
+            <ProfileForm profile={profile} onChange={handleProfileChange} autoFilledFields={autoFilledFields} userEditedFields={userEditedFields} />
             <div className="action-row">
               <button
                 type="button"
@@ -430,7 +468,7 @@ export function App() {
                 onClick={() => handleSaveProfile("mode")}
               >
                 <Save size={18} aria-hidden="true" />
-                保存课程信息
+                {t("btn.saveProfile")}
               </button>
             </div>
           </section>
@@ -438,9 +476,9 @@ export function App() {
 
         {activeStep === "mode" && (
           <section className="panel">
-            <PanelHeader icon={<Sparkles size={22} />} title="生成模式与辅助语言" action="Template-guided AI" />
+            <PanelHeader icon={<Sparkles size={22} />} title={t("panel.mode.title")} action={t("panel.mode.action")} />
             <fieldset className="field-group">
-              <legend>生成模式</legend>
+              <legend>{t("mode.legend")}</legend>
               <div className="segmented-grid">
                 {modes.map((mode) => (
                   <button
@@ -449,14 +487,14 @@ export function App() {
                     className={profile.generation_mode === mode.value ? "selected" : ""}
                     onClick={() => setProfile({ ...profile, generation_mode: mode.value })}
                   >
-                    <strong>{mode.title}</strong>
-                    <span>{mode.detail}</span>
+                    <strong>{t(mode.titleKey)}</strong>
+                    <span>{t(mode.detailKey)}</span>
                   </button>
                 ))}
               </div>
             </fieldset>
             <label className="field">
-              <span>辅助语言</span>
+              <span>{t("mode.scaffoldLabel")}</span>
               <select
                 value={profile.scaffolding_language}
                 onChange={(event) => setProfile({ ...profile, scaffolding_language: event.target.value })}
@@ -476,7 +514,7 @@ export function App() {
                 onClick={() =>
                   project &&
                   run(
-                    "正在生成课程大纲",
+                    t("busy.generatingOutline"),
                     async () => {
                       const saved = await saveProfile(project.project_id, profile);
                       setConfirmedProfileProjectId(saved.project_id);
@@ -487,7 +525,7 @@ export function App() {
                 }
               >
                 <Play size={18} aria-hidden="true" />
-                生成大纲
+                {t("btn.generateOutline")}
               </button>
             </div>
           </section>
@@ -495,21 +533,21 @@ export function App() {
 
         {activeStep === "outline" && (
           <section className="panel">
-            <PanelHeader icon={<Pencil size={22} />} title="可视化编辑大纲" action={`${blueprint?.slides.length ?? 0} slides`} />
+            <PanelHeader icon={<Pencil size={22} />} title={t("panel.outline.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} />
             {blueprint ? (
               <BlueprintEditor blueprint={blueprint} componentRegistry={componentRegistry} componentOptions={componentOptions} onChange={setBlueprint} />
             ) : (
-              <EmptyState text="生成大纲后会显示逐页课件结构。" />
+              <EmptyState text={t("outline.empty")} />
             )}
             <div className="action-row">
               <button
                 type="button"
                 className="secondary"
                 disabled={!project || !blueprint || !!busy}
-                onClick={() => project && blueprint && run("正在保存大纲", () => saveBlueprint(project.project_id, blueprint))}
+                onClick={() => project && blueprint && run(t("busy.savingOutline"), () => saveBlueprint(project.project_id, blueprint))}
               >
                 <Save size={18} aria-hidden="true" />
-                保存大纲
+                {t("btn.saveOutline")}
               </button>
               <button
                 type="button"
@@ -519,7 +557,7 @@ export function App() {
                   project &&
                   blueprint &&
                   run(
-                    "正在生成媒体资源",
+                    t("busy.generatingMedia"),
                     async () => {
                       await saveBlueprint(project.project_id, blueprint);
                       return generateMedia(project.project_id);
@@ -529,7 +567,7 @@ export function App() {
                 }
               >
                 <Image size={18} aria-hidden="true" />
-                生成媒体
+                {t("btn.generateMedia")}
               </button>
             </div>
           </section>
@@ -537,16 +575,16 @@ export function App() {
 
         {activeStep === "preview" && (
           <section className="panel preview-panel">
-            <PanelHeader icon={<MonitorPlay size={22} />} title="最终预览与导出" action={project?.preview_url ? "Rendered" : "Ready"} />
+            <PanelHeader icon={<MonitorPlay size={22} />} title={t("panel.preview.title")} action={project?.preview_url ? t("panel.preview.actionRendered") : t("panel.preview.actionReady")} />
             <div className="action-row">
               <button
                 type="button"
                 className="secondary"
                 disabled={!project || !!busy}
-                onClick={() => project && run("正在生成媒体", () => generateMedia(project.project_id))}
+                onClick={() => project && run(t("busy.generatingMedia"), () => generateMedia(project.project_id))}
               >
                 <Image size={18} aria-hidden="true" />
-                重新生成媒体
+                {t("btn.regenerateMedia")}
               </button>
               <button
                 type="button"
@@ -555,11 +593,11 @@ export function App() {
                 onClick={() => {
                   setPreviewError("");
                   setPreviewLoading(true);
-                  project && run("正在重新渲染课件", () => renderProject(project.project_id));
+                  project && run(t("busy.rendering"), () => renderProject(project.project_id));
                 }}
               >
                 <MonitorPlay size={18} aria-hidden="true" />
-                重新渲染
+                {t("btn.rerender")}
               </button>
               <a
                 className={project?.export_url && !qualityBlocked ? "download-link" : "download-link disabled"}
@@ -567,7 +605,7 @@ export function App() {
                 aria-disabled={!project?.export_url || qualityBlocked}
               >
                 <ArrowDownToLine size={18} aria-hidden="true" />
-                {qualityBlocked ? "质量阻断" : project?.export_url ? "下载 ZIP" : "等待导出"}
+                {qualityBlocked ? t("export.blocked") : project?.export_url ? t("btn.downloadZip") : t("export.waiting")}
               </a>
               <button
                 type="button"
@@ -576,7 +614,7 @@ export function App() {
                 onClick={handleForceExport}
               >
                 <ArrowDownToLine size={18} aria-hidden="true" />
-                强制导出
+                {t("btn.forceExport")}
               </button>
               <button
                 type="button"
@@ -585,7 +623,7 @@ export function App() {
                 onClick={() => handleEditablePptxExport(false)}
               >
                 <ArrowDownToLine size={18} aria-hidden="true" />
-                导出 Editable PPTX
+                {t("btn.exportPptx")}
               </button>
               <button
                 type="button"
@@ -594,11 +632,11 @@ export function App() {
                 onClick={() => handleEditablePptxExport(true)}
               >
                 <ArrowDownToLine size={18} aria-hidden="true" />
-                强制导出 PPTX
+                {t("btn.forceExportPptx")}
               </button>
             </div>
             <p className="export-note">
-              可编辑 PPTX 是课堂展示版本，HTML 互动组件已转为静态课堂活动页；HTML ZIP 仍是主交互输出。
+              {t("export.note")}
             </p>
             <QualityReportView project={project} />
             <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
@@ -616,14 +654,14 @@ export function App() {
             {project?.export_url && !qualityBlocked && (
               <div className="export-ready">
                 <CheckCircle2 size={18} aria-hidden="true" />
-                <span>导出包已生成：</span>
+                <span>{t("export.ready")}</span>
                 <a href={exportUrl(project.project_id)}>HanClassStudio_Output_*.zip</a>
               </div>
             )}
             {pptxExport && (
               <div className="export-ready">
                 <CheckCircle2 size={18} aria-hidden="true" />
-                <span>可编辑 PPTX 已生成：</span>
+                <span>{t("export.pptxReady")}</span>
                 <a href={previewUrl(pptxExport.download_url) ?? undefined}>{pptxExport.filename}</a>
               </div>
             )}
@@ -632,7 +670,7 @@ export function App() {
                 {previewLoading && (
                   <div className="preview-state">
                     <Loader2 size={18} aria-hidden="true" />
-                    正在加载课件预览...
+                    {t("preview.loading")}
                   </div>
                 )}
                 {previewError && <div className="preview-state error">{previewError}</div>}
@@ -647,12 +685,12 @@ export function App() {
                   }}
                   onError={() => {
                     setPreviewLoading(false);
-                    setPreviewError("课件预览加载失败。请重新渲染 HTML 后再试。");
+                    setPreviewError(t("preview.error"));
                   }}
                 />
               </div>
             ) : (
-              <EmptyState text="渲染后会显示离线 HTML 课件预览。" />
+              <EmptyState text={t("preview.empty")} />
             )}
           </section>
         )}
@@ -662,27 +700,102 @@ export function App() {
   );
 }
 
-function ProviderStatusPanel({ onOpenSettings }: { onOpenSettings: () => void }) {
+const LANG_FLAGS: Record<UiLang, string> = {
+  zh: "🇨🇳",
+  en: "🇺🇸",
+  ja: "🇯🇵",
+  ko: "🇰🇷",
+  ar: "🇸🇦",
+  ru: "🇷🇺",
+};
+
+function LanguageSwitcher() {
+  const { lang, setLang, t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const current = UI_LANGUAGES.find((item) => item.code === lang) ?? UI_LANGUAGES[0];
+
   return (
-    <section className="provider-status" aria-label="当前模型服务状态">
+    <div className="lang-dropdown" ref={ref}>
+      <button
+        type="button"
+        className="lang-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={t("lang.aria")}
+        title={t("lang.label")}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="lang-flag" aria-hidden="true">{LANG_FLAGS[current.code]}</span>
+        <span className="lang-current">{current.native}</span>
+        <ChevronDown size={16} className={`lang-chevron${open ? " is-open" : ""}`} aria-hidden="true" />
+      </button>
+      {open && (
+        <ul className="lang-menu" role="listbox" aria-label={t("lang.label")}>
+          {UI_LANGUAGES.map((item) => (
+            <li key={item.code} role="option" aria-selected={item.code === lang}>
+              <button
+                type="button"
+                className={`lang-option${item.code === lang ? " active" : ""}`}
+                onClick={() => {
+                  setLang(item.code);
+                  setOpen(false);
+                }}
+              >
+                <span className="lang-flag" aria-hidden="true">{LANG_FLAGS[item.code]}</span>
+                <span className="lang-option-text">
+                  <span className="lang-option-native">{item.native}</span>
+                  <span className="lang-option-english">{item.label}</span>
+                </span>
+                {item.code === lang && <Check size={16} className="lang-check" aria-hidden="true" />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ProviderStatusPanel({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { t } = useI18n();
+  return (
+    <section className="provider-status" aria-label={t("provider.title")}>
       <div className="provider-status-header">
         <div>
-          <strong>模型服务状态</strong>
-          <span>当前环境状态</span>
+          <strong>{t("provider.title")}</strong>
+          <span>{t("provider.subtitle")}</span>
         </div>
-        <button type="button" onClick={onOpenSettings} aria-label="打开模型设置">
+        <button type="button" onClick={onOpenSettings} aria-label={t("provider.open")}>
           <Settings2 size={17} aria-hidden="true" />
         </button>
       </div>
       <div className="provider-list">
         {providerStatuses.map((provider) => (
-          <article className="provider-row" key={provider.label}>
+          <article className="provider-row" key={provider.labelKey}>
             <div>
-              <strong>{provider.label}</strong>
-              <span>{provider.name}</span>
+              <strong>{t(provider.labelKey)}</strong>
+              <span>{t(provider.nameKey)}</span>
             </div>
             <div className="provider-meta">
-              <span>{provider.status}</span>
+              <span>{t(provider.statusKey)}</span>
               <span>{provider.mode}</span>
             </div>
           </article>
@@ -693,14 +806,15 @@ function ProviderStatusPanel({ onOpenSettings }: { onOpenSettings: () => void })
 }
 
 function PipelineStatus({ steps }: { steps: Record<string, PipelineStepStatus> }) {
-  const hasActivity = pipelineStepLabels.some((label) => steps[label] !== "pending");
+  const { t } = useI18n();
+  const hasActivity = pipelineStepKeys.some((label) => steps[label] !== "pending");
   if (!hasActivity) return null;
   return (
-    <section className="pipeline-status" aria-label="一键生成课件运行状态">
-      {pipelineStepLabels.map((label) => (
+    <section className="pipeline-status" aria-label={t("btn.generate")}>
+      {pipelineStepKeys.map((label) => (
         <div className={`pipeline-step ${steps[label]}`} key={label}>
           <span aria-hidden="true">{steps[label] === "done" ? <CheckCircle2 size={15} /> : steps[label] === "running" ? <Loader2 size={15} /> : steps[label] === "error" ? <X size={15} /> : null}</span>
-          <strong>{label}</strong>
+          <strong>{t(label)}</strong>
         </div>
       ))}
     </section>
@@ -708,40 +822,41 @@ function PipelineStatus({ steps }: { steps: Record<string, PipelineStepStatus> }
 }
 
 function ModelSettingsModal({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
   const fields = [
-    ["LLM 接口地址", "由后端控制台配置"],
-    ["LLM 模型名称", "由后端管理"],
-    ["图片生成接口", "后续版本开放"],
-    ["语音合成接口", "后续版本开放"],
-    ["OCR 引擎", "后续版本开放"],
-    ["视频生成接口", "后续版本开放"]
+    ["settings.llmAddr", "settings.backendConsole"],
+    ["settings.llmName", "settings.backendManaged"],
+    ["settings.imageApi", "settings.later"],
+    ["settings.ttsApi", "settings.later"],
+    ["settings.ocr", "settings.later"],
+    ["settings.videoApi", "settings.later"]
   ] as const;
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
         <header>
           <div>
-            <p className="eyebrow">环境配置</p>
-            <h2 id="modelSettingsTitle">模型设置</h2>
+            <p className="eyebrow">{t("settings.eyebrow")}</p>
+            <h2 id="modelSettingsTitle">{t("settings.title")}</h2>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭模型设置">
+          <button type="button" className="icon-button" onClick={onClose} aria-label={t("settings.close")}>
             <X size={20} aria-hidden="true" />
           </button>
         </header>
         <p className="settings-note">
-          当前版本由后端环境变量或后端控制台配置模型服务。前端设置将在后续版本开放，这里只预留产品入口。
+          {t("settings.note")}
         </p>
         <div className="settings-placeholder-grid">
           {fields.map(([label, placeholder]) => (
             <label className="field" key={label}>
-              <span>{label}</span>
-              <input disabled placeholder={placeholder} />
+              <span>{t(label)}</span>
+              <input disabled placeholder={t(placeholder)} />
             </label>
           ))}
         </div>
         <div className="action-row">
           <button type="button" className="primary" onClick={onClose}>
-            知道了
+            {t("settings.gotIt")}
           </button>
         </div>
       </section>
@@ -761,36 +876,65 @@ function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; 
   );
 }
 
-function ProfileForm({ profile, onChange }: { profile: LessonProfile; onChange: (profile: LessonProfile) => void }) {
+function ProfileForm({
+  profile,
+  onChange,
+  autoFilledFields = new Set(),
+  userEditedFields = new Set(),
+}: {
+  profile: LessonProfile;
+  onChange: (profile: LessonProfile) => void;
+  autoFilledFields?: Set<string>;
+  userEditedFields?: Set<string>;
+}) {
+  const { t } = useI18n();
   function set<K extends keyof LessonProfile>(key: K, value: LessonProfile[K]) {
     onChange({ ...profile, [key]: value });
   }
+
+  // Determine the badge for each field
+  function fieldBadge(fieldKey: string): "ai" | "edited" | null {
+    if (userEditedFields.has(fieldKey)) return "edited";
+    if (autoFilledFields.has(fieldKey)) return "ai";
+    return null;
+  }
+
+  const fields: Array<{ key: keyof LessonProfile; labelKey: string }> = [
+    { key: "lesson_title", labelKey: "profile.title.label" },
+    { key: "learner_level", labelKey: "profile.level" },
+    { key: "target_students", labelKey: "profile.audience" },
+    { key: "lesson_type", labelKey: "profile.type" },
+    { key: "estimated_duration", labelKey: "profile.duration" },
+    { key: "subject", labelKey: "profile.subject" },
+  ];
+
+  const filledCount = autoFilledFields.size;
+  const editedCount = userEditedFields.size;
+
   return (
-    <div className="form-grid">
-      <label className="field">
-        <span>课程标题</span>
-        <input value={profile.lesson_title} onChange={(event) => set("lesson_title", event.target.value)} />
-      </label>
-      <label className="field">
-        <span>学习者水平</span>
-        <input value={profile.learner_level} onChange={(event) => set("learner_level", event.target.value)} />
-      </label>
-      <label className="field">
-        <span>教学对象</span>
-        <input value={profile.target_students} onChange={(event) => set("target_students", event.target.value)} />
-      </label>
-      <label className="field">
-        <span>课型</span>
-        <input value={profile.lesson_type} onChange={(event) => set("lesson_type", event.target.value)} />
-      </label>
-      <label className="field">
-        <span>预计时长</span>
-        <input value={profile.estimated_duration} onChange={(event) => set("estimated_duration", event.target.value)} />
-      </label>
-      <label className="field">
-        <span>学科</span>
-        <input value={profile.subject} onChange={(event) => set("subject", event.target.value)} />
-      </label>
+    <div>
+      {filledCount > 0 && (
+        <div className="auto-fill-notice">
+          <Sparkles size={14} aria-hidden="true" />
+          {t("profile.autoFillNotice", { n: filledCount })}
+          {editedCount > 0 && <span className="auto-fill-edited"> · {t("profile.editedCount", { n: editedCount })}</span>}
+        </div>
+      )}
+      <div className="form-grid">
+        {fields.map(({ key, labelKey }) => {
+          const badge = fieldBadge(key);
+          return (
+            <label key={String(key)} className={`field ${badge ? `field--${badge}` : ""}`}>
+              <span>{t(labelKey)}</span>
+              <div className="field-input-wrap">
+                <input value={profile[key]} onChange={(event) => set(key, (event.target as HTMLInputElement).value as never)} />
+                {badge === "ai" && <span className="field-badge field-badge--ai" title={t("profile.badge.ai")}>{t("profile.badge.aiLabel")}</span>}
+                {badge === "edited" && <span className="field-badge field-badge--edited" title={t("profile.badge.edited")}>{t("profile.badge.editedLabel")}</span>}
+              </div>
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -825,6 +969,7 @@ function BlueprintEditor({
   componentOptions: string[];
   onChange: (blueprint: LessonBlueprint) => void;
 }) {
+  const { t } = useI18n();
   const [expandedSlides, setExpandedSlides] = useState<Set<number>>(() => new Set([blueprint.slides[0]?.id ?? 1]));
 
   function normalizedSlide(slide: LessonSlide): LessonSlide {
@@ -934,7 +1079,7 @@ function BlueprintEditor({
             <button type="button" className="slide-summary" onClick={() => toggleSlide(slide.id)} aria-expanded={isExpanded}>
               <span className="slide-number">{slide.id}</span>
               <span>
-                <strong>{slide.title || `第 ${slide.id} 页`}</strong>
+                <strong>{slide.title || t("editor.pageFallback", { id: slide.id })}</strong>
                 <small>{slide.slide_type || "页面"} · {slide.layout_variant || "布局"}</small>
               </span>
               {isExpanded ? <ChevronDown size={18} aria-hidden="true" /> : <ChevronRight size={18} aria-hidden="true" />}
@@ -942,46 +1087,46 @@ function BlueprintEditor({
             {isExpanded && (
               <div className="outline-fields">
                 <label className="field">
-                  <span>页面标题</span>
+                  <span>{t("editor.pageTitle")}</span>
                   <input value={slide.title} onChange={(event) => updateSlide(index, { title: event.target.value })} />
                 </label>
                 <div className="compact-grid">
                   <label className="field">
-                    <span>页面类型</span>
+                    <span>{t("editor.pageType")}</span>
                     <input value={slide.slide_type} onChange={(event) => updateSlide(index, { slide_type: event.target.value })} />
                   </label>
                   <label className="field">
-                    <span>布局变体</span>
+                    <span>{t("editor.layout")}</span>
                     <input value={slide.layout_variant} onChange={(event) => updateSlide(index, { layout_variant: event.target.value })} />
                   </label>
                 </div>
 
                 <section className="editor-section">
                   <div className="editor-section-header">
-                    <h3>内容区块</h3>
+                    <h3>{t("editor.contentBlocks")}</h3>
                     <button type="button" className="secondary small-button" onClick={() => addContentBlock(index)}>
                       <Plus size={16} aria-hidden="true" />
-                      添加内容
+                      {t("editor.addContent")}
                     </button>
                   </div>
                   {blocks.map((block, blockIndex) => (
                     <div className="content-block-editor" key={block.id || blockIndex}>
                       <div className="compact-grid">
                         <label className="field">
-                          <span>区块类型</span>
+                          <span>{t("editor.blockType")}</span>
                           <input value={block.block_type} onChange={(event) => updateContentBlock(index, blockIndex, { block_type: event.target.value })} />
                         </label>
                         <button type="button" className="icon-text danger" onClick={() => removeContentBlock(index, blockIndex)}>
                           <Trash2 size={16} aria-hidden="true" />
-                          删除内容
+                          {t("editor.deleteContent")}
                         </button>
                       </div>
                       <label className="field">
-                        <span>中文内容</span>
+                        <span>{t("editor.chineseContent")}</span>
                         <textarea value={block.text} onChange={(event) => updateContentBlock(index, blockIndex, { text: event.target.value })} />
                       </label>
                       <label className="field">
-                        <span>支架 / 双语说明</span>
+                        <span>{t("editor.scaffold")}</span>
                         <textarea
                           value={block.scaffolding_text}
                           onChange={(event) => updateContentBlock(index, blockIndex, { scaffolding_text: event.target.value })}
@@ -992,9 +1137,9 @@ function BlueprintEditor({
                 </section>
 
                 <section className="editor-section">
-                  <h3>媒体需求</h3>
+                  <h3>{t("editor.media")}</h3>
                   <label className="field">
-                    <span>媒体提示词</span>
+                    <span>{t("editor.imagePrompt")}</span>
                     <textarea
                       value={slide.media_requirements.image_prompt ?? ""}
                       onChange={(event) => updateMedia(index, "image_prompt", event.target.value)}
@@ -1002,11 +1147,11 @@ function BlueprintEditor({
                   </label>
                   <div className="compact-grid">
                     <label className="field">
-                      <span>音频文本</span>
+                      <span>{t("editor.audioText")}</span>
                       <input value={slide.media_requirements.audio_text ?? ""} onChange={(event) => updateMedia(index, "audio_text", event.target.value)} />
                     </label>
                     <label className="field">
-                      <span>视频场景提示</span>
+                      <span>{t("editor.videoPrompt")}</span>
                       <input
                         value={slide.media_requirements.video_scene_prompt ?? ""}
                         onChange={(event) => updateMedia(index, "video_scene_prompt", event.target.value)}
@@ -1017,9 +1162,9 @@ function BlueprintEditor({
 
                 <section className="editor-section">
                   <div className="editor-section-header">
-                    <h3>互动组件</h3>
+                    <h3>{t("editor.components")}</h3>
                     <select
-                      aria-label={`给第 ${slide.id} 页添加组件`}
+                      aria-label={t("editor.addComponent")}
                       defaultValue=""
                       onChange={(event) => {
                         if (!event.target.value) return;
@@ -1028,7 +1173,7 @@ function BlueprintEditor({
                       }}
                     >
                       <option value="" disabled>
-                        {componentOptions.length ? "选择组件" : "加载组件中"}
+                        {componentOptions.length ? t("editor.addComponent") : t("editor.loadingComponents")}
                       </option>
                       {componentOptions.map((type) => (
                         <option key={type} value={type}>
@@ -1043,7 +1188,7 @@ function BlueprintEditor({
                         <div className="component-editor" key={component.id || componentIndex}>
                           <div className="compact-grid">
                             <label className="field">
-                              <span>组件类型</span>
+                              <span>{t("editor.componentType")}</span>
                               <select
                                 value={component.component_type}
                                 onChange={(event) => updateComponent(index, componentIndex, { component_type: event.target.value })}
@@ -1056,19 +1201,19 @@ function BlueprintEditor({
                               </select>
                             </label>
                             <label className="field">
-                              <span>组件标题</span>
+                              <span>{t("editor.componentTitle")}</span>
                               <input value={component.title} onChange={(event) => updateComponent(index, componentIndex, { title: event.target.value })} />
                             </label>
                           </div>
                           <button type="button" className="icon-text danger" onClick={() => removeComponent(index, componentIndex)}>
                             <Trash2 size={16} aria-hidden="true" />
-                            删除组件
+                            {t("editor.deleteComponent")}
                           </button>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="muted-text">这一页暂未添加互动组件。</p>
+                    <p className="muted-text">{t("editor.noComponents")}</p>
                   )}
                 </section>
               </div>
@@ -1091,25 +1236,26 @@ function defaultComponentValue(key: string): unknown {
 }
 
 function SpecLockSummary({ specLock }: { specLock: Record<string, unknown> | null }) {
-  if (!specLock) return <EmptyState text="生成大纲或一键生成后会显示执行契约摘要。" />;
+  const { t } = useI18n();
+  if (!specLock) return <EmptyState text={t("spec.empty")} />;
   const lesson = objectValue(specLock.lesson);
   const templates = objectValue(specLock.templates);
   const components = objectValue(specLock.components);
   const quality = objectValue(specLock.quality);
-  const allowed = arrayValue(components.allowed).join(", ") || "无";
+  const allowed = arrayValue(components.allowed).join(", ") || "—";
   return (
     <section className="dev-panel">
       <div className="dev-panel-header">
-        <h3>执行契约摘要</h3>
+        <h3>{t("spec.title")}</h3>
         <span>{stringValue(specLock.schema)}</span>
       </div>
       <div className="spec-grid">
-        <SpecItem label="课件路线" value={stringValue(specLock.route)} />
-        <SpecItem label="生成模式" value={stringValue(specLock.generation_mode)} />
-        <SpecItem label="支架语言" value={stringValue(lesson.scaffolding_language)} />
-        <SpecItem label="运行时模板" value={stringValue(templates.runtime)} />
-        <SpecItem label="可用组件" value={allowed} />
-        <SpecItem label="质量策略" value={qualityPolicySummary(quality)} />
+        <SpecItem label={t("spec.route")} value={stringValue(specLock.route)} />
+        <SpecItem label={t("spec.mode")} value={stringValue(specLock.generation_mode)} />
+        <SpecItem label={t("spec.scaffold")} value={stringValue(lesson.scaffolding_language)} />
+        <SpecItem label={t("spec.runtime")} value={stringValue(templates.runtime)} />
+        <SpecItem label={t("spec.components")} value={allowed} />
+        <SpecItem label={t("spec.quality")} value={qualityPolicySummary(quality)} />
       </div>
     </section>
   );
@@ -1119,18 +1265,19 @@ function SpecItem({ label, value }: { label: string; value: string }) {
   return (
     <div className="spec-item">
       <span>{label}</span>
-      <strong>{value || "pending"}</strong>
+      <strong>{value || "—"}</strong>
     </div>
   );
 }
 
 function ArtifactInspector({ tree }: { tree: ArtifactTree | null }) {
-  if (!tree) return <EmptyState text="制品审查器会在项目创建后显示。" />;
+  const { t } = useI18n();
+  if (!tree) return <EmptyState text={t("artifact.empty")} />;
   return (
     <section className="dev-panel">
       <div className="dev-panel-header">
-        <h3>制品审查器</h3>
-        <span>Project {tree.project_id}</span>
+        <h3>{t("artifact.title")}</h3>
+        <span>{t("artifact.project", { id: tree.project_id })}</span>
       </div>
       <div className="artifact-grid">
         {tree.groups.map((group) => (
@@ -1171,30 +1318,31 @@ function AgentHandoffPanel({
   onCopy: () => void;
   onValidate: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <section className="dev-panel">
       <div className="dev-panel-header">
-        <h3>Agent 任务交接</h3>
-        <span>{agentPackage ? "可用于 Claude Code / Codex" : "生成任务包"}</span>
+        <h3>{t("agent.title")}</h3>
+        <span>{agentPackage ? t("agent.subtitle") : t("agent.generate")}</span>
       </div>
       <div className="agent-actions">
         <button type="button" className="secondary" disabled={!project || busy} onClick={onGenerate}>
           <FileUp size={16} aria-hidden="true" />
-          生成 Agent 任务
+          {t("agent.generate")}
         </button>
         <button type="button" className="secondary" disabled={!agentPackage || busy} onClick={onCopy}>
           <Clipboard size={16} aria-hidden="true" />
-          {copied ? "已复制" : "复制任务文本"}
+          {copied ? t("agent.copied") : t("agent.copy")}
         </button>
         <button type="button" className="primary" disabled={!project || busy} onClick={onValidate}>
           <CheckCircle2 size={16} aria-hidden="true" />
-          验证 Agent 输出
+          {t("agent.validate")}
         </button>
       </div>
       {agentPackage && (
         <div className="agent-copy">
           <div>
-            <span>Task</span>
+            <span>{t("agent.task")}</span>
             <code>{agentPackage.task_path}</code>
           </div>
           <textarea readOnly value={`${agentPackage.task_text}\n\n---\n\n${agentPackage.rules_text}`} />
@@ -1202,10 +1350,10 @@ function AgentHandoffPanel({
       )}
       {validation && (
         <div className={`agent-validation ${validation.state}`}>
-          <strong>验证结果：{validation.state}</strong>
-          <ValidationList title="阻断项" items={validation.blocking} empty="无阻断项" />
-          <ValidationList title="警告项" items={validation.warnings} empty="无警告" />
-          <ValidationList title="通过项" items={validation.passed} empty="暂无通过项" />
+          <strong>{t("agent.validation", { state: validation.state })}</strong>
+          <ValidationList title={t("agent.blocking")} items={validation.blocking} empty={t("agent.blocking.empty")} />
+          <ValidationList title={t("agent.warnings")} items={validation.warnings} empty={t("agent.warnings.empty")} />
+          <ValidationList title={t("agent.passed")} items={validation.passed} empty={t("agent.passed.empty")} />
         </div>
       )}
     </section>
@@ -1230,8 +1378,9 @@ function ValidationList({ title, items, empty }: { title: string; items: string[
 }
 
 function QualityReportView({ project }: { project: ProjectState | null }) {
+  const { t } = useI18n();
   const report = project?.quality_report;
-  if (!report) return <EmptyState text="质量检查会在渲染后生成。" />;
+  if (!report) return <EmptyState text={t("quality.emptyState")} />;
   const blocking = safeList(report.blocking).length
     ? safeList(report.blocking)
     : [...safeList(report.resource_errors), ...safeList(report.invalid_interactions)];
@@ -1242,16 +1391,16 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
     ? safeList(report.passed)
     : safeList(report.suggestions).length
       ? safeList(report.suggestions)
-      : ["标题、媒体引用和互动配置会在渲染后检查。"];
+      : [t("quality.pending")];
   const groups = [
-    ["阻断项", blocking, "需要先修复，否则普通导出会被阻止。"],
-    ["警告项", warnings, "建议检查，但不一定阻止导出。"],
-    ["通过项", passed, "当前已经通过或完成的检查。"]
+    [t("quality.blocking"), blocking, t("quality.blocking.detail")],
+    [t("quality.warnings"), warnings, t("quality.warnings.detail")],
+    [t("quality.passed"), passed, t("quality.passed.detail")]
   ] as const;
   return (
     <>
       <div className={`quality-state ${report.state}`}>
-        <strong>质量门禁：{report.state}</strong>
+        <strong>{t("quality.title", { state: report.state })}</strong>
         <span>{report.schema}</span>
       </div>
       <div className="quality-grid">
@@ -1266,7 +1415,7 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
                 ))}
               </ul>
             ) : (
-              <p>无</p>
+              <p>{t("quality.empty")}</p>
             )}
           </section>
         ))}

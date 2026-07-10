@@ -719,7 +719,12 @@ def render_project(project_id: str) -> ProjectState:
         manifest = generate_project_media(root, blueprint, read_provider_settings())
         write_model(project_id, "asset_manifest.json", manifest)
     report = render_and_check(project_id, root, profile, blueprint, manifest)
-    if report.state != "blocked" and not _binding_gate_blocked(project_id):
+    if (
+        report.state != "blocked"
+        and not _binding_gate_blocked(project_id)
+        and not _alignment_gate_blocked(project_id)
+        and not _presentation_readiness_blocked(project_id)
+    ):
         zip_output(project_id)
     return get_project_state(project_id)
 
@@ -739,6 +744,10 @@ def export_project(project_id: str) -> FileResponse:
     state = get_project_state(project_id)
     if state.quality_report and state.quality_report.state == "blocked":
         raise HTTPException(status_code=409, detail="Quality gate is blocked; use forced export for demo output")
+    if _alignment_gate_blocked(project_id):
+        raise HTTPException(status_code=409, detail="Evidence alignment gate is blocked; use forced export for demo output")
+    if _presentation_readiness_blocked(project_id):
+        raise HTTPException(status_code=409, detail="Presentation readiness gate is blocked; use forced export for demo output")
     if _binding_gate_blocked(project_id):
         raise HTTPException(status_code=409, detail="Presentation binding gate is blocked; use forced export for demo output")
     export_path = latest_export_path(project_id) or zip_output(project_id)
@@ -755,6 +764,10 @@ def force_export_project(project_id: str, force: bool = Query(default=False)) ->
     state = get_project_state(project_id)
     if state.quality_report and state.quality_report.state == "blocked" and not force:
         raise HTTPException(status_code=409, detail="Quality gate is blocked; pass force=true to export anyway")
+    if _alignment_gate_blocked(project_id) and not force:
+        raise HTTPException(status_code=409, detail="Evidence alignment gate is blocked; pass force=true to export anyway")
+    if _presentation_readiness_blocked(project_id) and not force:
+        raise HTTPException(status_code=409, detail="Presentation readiness gate is blocked; pass force=true to export anyway")
     if _binding_gate_blocked(project_id) and not force:
         raise HTTPException(status_code=409, detail="Presentation binding gate is blocked; pass force=true to export anyway")
     export_path = zip_output(project_id, force=force)
@@ -801,4 +814,14 @@ def _assert_project(project_id: str) -> Path:
 
 def _binding_gate_blocked(project_id: str) -> bool:
     report = read_json(project_id, "presentation/binding_quality_report.json") or {}
+    return isinstance(report, dict) and report.get("state") == "blocked"
+
+
+def _alignment_gate_blocked(project_id: str) -> bool:
+    report = read_json(project_id, "quality/evidence_alignment_report.json") or {}
+    return isinstance(report, dict) and report.get("state") == "blocked"
+
+
+def _presentation_readiness_blocked(project_id: str) -> bool:
+    report = read_json(project_id, "quality/presentation_readiness_report.json") or {}
     return isinstance(report, dict) and report.get("state") == "blocked"

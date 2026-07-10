@@ -105,6 +105,10 @@ Allowed edit targets:
 - `blueprints/media_plan.json`
 - `assets/data/asset_manifest.json` only when media references change
 
+`blueprints/lesson_blueprint.json` is a legacy presentation contract. Agents may edit display-safe
+presentation structure, but must not add or redefine learning goals, evidence specs, learning
+activities, learner-state assumptions, teacher-only evidence rules, or quality judgments there.
+
 After editing, ask HanClassStudio to validate agent output, then render, run the quality gate, and export only if quality allows it.
 """
 
@@ -119,6 +123,8 @@ def _build_rules_text() -> str:
 - Chinese is always the target language.
 - The scaffolding language supports comprehension only; it must not replace Chinese input or output.
 - Do not bypass the quality gate.
+- Treat `blueprints/lesson_blueprint.json` as presentation-only compatibility output, never pedagogical truth.
+- Do not add learning goals, evidence specs, activity selection policy, or teacher-only notes to learner-facing blueprint data.
 """
 
 

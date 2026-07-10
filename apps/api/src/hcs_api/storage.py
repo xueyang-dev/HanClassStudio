@@ -78,6 +78,15 @@ EXPECTED_ARTIFACTS = {
     "presentation": [
         "presentation/activity_bindings.json",
         "presentation/binding_quality_report.json",
+        "presentation/abstract_activity_bindings.json",
+        "presentation/presentation_blueprint.json",
+        "presentation/legacy_blueprint_from_v2.shadow.json",
+        "presentation/legacy_component_mapping.shadow.json",
+        "presentation/presentation_content_plan.json",
+        "presentation/presentation_content_plan.reconciled.json",
+        "presentation/presentation_media_request_plan.json",
+        "presentation/presentation_media_asset_links.shadow.json",
+        "presentation/presentation_media_projection_links.shadow.json",
     ],
     "specs": ["specs/lesson_spec.md", "specs/spec_lock.json"],
     "blueprints": [
@@ -91,7 +100,20 @@ EXPECTED_ARTIFACTS = {
         "assets/data/attribution.json",
     ],
     "courseware": ["courseware/lesson.html", "courseware/render_manifest.json"],
-    "quality": ["quality/quality_report.json", "quality/quality_summary.md", "quality/pptx_quality_report.json"],
+    "quality": [
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "quality/presentation_shadow_report.json",
+        "quality/presentation_parity_report.json",
+        "quality/presentation_adapter_assessment_report.json",
+        "quality/presentation_content_report.json",
+        "quality/presentation_asset_reconciliation_report.json",
+        "quality/presentation_media_request_report.json",
+        "quality/presentation_media_projection_report.json",
+        "quality/quality_report.json",
+        "quality/quality_summary.md",
+        "quality/pptx_quality_report.json",
+    ],
     "exports": ["exports/export_manifest.json", "exports/pptx_export_manifest.json"],
     "agent": ["agent/AGENT_TASK.md", "agent/AGENT_RULES.md"],
 }
@@ -286,6 +308,12 @@ def _artifact_type(relative: Path, path: Path) -> str:
 
 def zip_output(project_id: str, force: bool = False, classroom: bool = False) -> Path:
     root = ensure_project(project_id)
+    alignment_report = read_json(project_id, "quality/evidence_alignment_report.json") or {}
+    if isinstance(alignment_report, dict) and alignment_report.get("state") == "blocked" and not force:
+        raise PermissionError("Evidence alignment gate is blocked; pass force=true to export anyway")
+    readiness_report = read_json(project_id, "quality/presentation_readiness_report.json") or {}
+    if isinstance(readiness_report, dict) and readiness_report.get("state") == "blocked" and not force:
+        raise PermissionError("Presentation readiness gate is blocked; pass force=true to export anyway")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     prefix = "HanClassStudio_Classroom" if classroom else "HanClassStudio_Output"
     export_path = root / "exports" / f"{prefix}_{timestamp}.zip"
@@ -295,6 +323,8 @@ def zip_output(project_id: str, force: bool = False, classroom: bool = False) ->
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "forced": force,
         "classroom": classroom,
+        "evidence_alignment_state": alignment_report.get("state") if isinstance(alignment_report, dict) else None,
+        "presentation_readiness_state": readiness_report.get("state") if isinstance(readiness_report, dict) else None,
     }
     write_json(project_id, "exports/export_manifest.json", manifest)
 
@@ -322,6 +352,7 @@ def zip_output(project_id: str, force: bool = False, classroom: bool = False) ->
             "blueprints/media_plan.json": "assets/data/media_plan.json",
             "presentation/activity_bindings.json": "assets/data/activity_bindings.json",
             "presentation/binding_quality_report.json": "assets/data/binding_quality_report.json",
+            "quality/presentation_readiness_report.json": "assets/data/presentation_readiness_report.json",
             "quality/quality_report.json": "assets/data/quality_report.json",
             "quality/quality_summary.md": "quality_summary.md",
             "exports/export_manifest.json": "export_manifest.json",

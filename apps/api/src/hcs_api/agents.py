@@ -42,17 +42,106 @@ SCAFFOLDING_HINTS = {
 }
 
 
+# ── Route → human-readable lesson type map ──
+
+ROUTE_TYPE_LABELS: dict[str, str] = {
+    "greeting_lesson": "问候课（Greeting）",
+    "vocabulary_lesson": "词汇课（Vocabulary）",
+    "dialogue_lesson": "对话课（Dialogue）",
+    "character_lesson": "汉字课（Character Writing）",
+    "grammar_pattern_lesson": "语法课（Grammar Pattern）",
+    "mixed_lesson": "综合课（Mixed Content）",
+}
+
+LEVEL_THRESHOLDS = {
+    "Intermediate": (80, 200),   # (unique_chars, avg_chars_per_page)
+    "Elementary":   (40, 100),
+    "Beginner":     (0, 0),
+}
+
+
 def infer_profile(source: SourceMaterial) -> LessonProfile:
+    """Intelligently infer LessonProfile from parsed source material.
+
+    Uses content analysis (route hint, vocabulary density, page count, text
+    complexity) instead of hardcoded defaults. Only lesson_title was previously
+    inferred; all six other fields are now extracted heuristically.
+    """
+    from .analysis import extract_candidates
+
     title = _first_title(source)
+
+    # Run full content analysis — reuse existing extraction pipeline
+    candidates = extract_candidates(source)
+    route = candidates.route_hint
+
+    # Smart field inference
+    level = _infer_learner_level(source, candidates)
+    lesson_type = _infer_lesson_type(route)
+    duration = _estimate_duration(source)
+
     return LessonProfile(
         lesson_title=title,
-        learner_level="Beginner",
-        target_students="International Chinese learners",
+        subject="国际中文",
+        learner_level=level,
+        target_students="国际中文学习者",
         scaffolding_language="English",
-        lesson_type="New lesson",
+        lesson_type=lesson_type,
         generation_mode="guided_redesign",
-        estimated_duration="45 minutes",
+        estimated_duration=duration,
     )
+
+
+def _infer_learner_level(source: SourceMaterial, candidates: TeachingCandidates) -> str:
+    """Estimate learner level from text complexity signals."""
+    # Greeting lessons are universally beginner / zero-beginner
+    if candidates.route_hint == "greeting_lesson":
+        return "Beginner"
+
+    text = _source_text(source)
+    chinese_chars = re.findall(r"[\u4e00-\u9fff]", text)
+    unique_chars = set(chinese_chars)
+    pages = max(len(source.pages), 1)
+
+    avg_density = len(chinese_chars) / pages
+    unique_count = len(unique_chars)
+
+    # Grammar pattern count as difficulty signal
+    grammar_count = len(candidates.grammar_candidates)
+
+    # Character-focused lessons tend toward beginner (stroke practice)
+    if candidates.route_hint == "character_lesson":
+        return "Beginner"
+
+    # High unique vocabulary + dense text + multiple grammar points → intermediate+
+    if unique_count > 80 or (avg_density > 200 and grammar_count >= 3):
+        return "Intermediate"
+    if unique_count > 40 or (avg_density > 100 and grammar_count >= 2):
+        return "Elementary"
+
+    return "Beginner"
+
+
+def _infer_lesson_type(route: str) -> str:
+    """Map analysis route_hint to a human-readable lesson type label."""
+    return ROUTE_TYPE_LABELS.get(route, "新授课（New Lesson）")
+
+
+def _estimate_duration(source: SourceMaterial) -> str:
+    """Heuristic duration estimate from page/slide count."""
+    pages = len(source.pages)
+    if source.source_type == "pptx":
+        # Slides: cover (~2 min) + content slides (~5 min each)
+        estimated = 8 + max(0, pages - 1) * 5
+    else:
+        # PDF: denser per page, ~3-4 min each
+        estimated = pages * 4
+
+    # Clamp to sane teaching range
+    estimated = max(15, min(120, estimated))
+    # Round up to nearest 5
+    estimated = ((estimated + 4) // 5) * 5
+    return f"{estimated} minutes"
 
 
 def build_blueprint(
