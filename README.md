@@ -1,238 +1,228 @@
 # HanClassStudio
 
-**v0.2.2-alpha binding-layer MVP. Not production-ready.**
+> **AI-powered interactive courseware generator for language teaching / 面向语言教学的 AI 互动课件生成器**
 
-AI-powered interactive HTML courseware generator for international Chinese teaching.
+[![npm test](https://img.shields.io/badge/tests-70%20passed-brightgreen)](#)
+[![Phase](https://img.shields.io/badge/phase-2C%20internal%20validation-yellow)](#)
+[![License](https://img.shields.io/badge/license-MIT-blue)](#)
 
-专门用于国际中文教育课件制作的开源 skills、workflow 与互动课件生成 demo。
+**English** | [中文](#概要)
 
-This implementation is a local-first portfolio demo. It runs a teacher-facing web app and a FastAPI backend that can parse PPTX/PDF materials, generate structured lesson artifacts, build a State-Evidence teaching kernel, render offline-ready HTML courseware, run quality checks, export a ZIP package, and generate an editable PPTX classroom version.
+---
 
-## Screenshots And GIF
+## Overview / 概要
 
-Portfolio placeholders:
+**English** — HanClassStudio is an open-source, AI-assisted interactive courseware generation system purpose-built for language teaching. It turns source teaching materials (PPTX/PDF) into offline-ready HTML courseware and editable Traditional PPTX classroom decks — all through a **State-first, Evidence-first** pedagogical compiler.
 
-- Workbench upload/profile flow screenshot.
-- Pipeline + Quality + Artifact Inspector screenshot.
-- Slide-based `lesson.html` runtime GIF.
-- Agent Handoff panel screenshot.
-- Editable PPTX export screenshot.
+The system is not a slide designer. It is a **teaching-kernel compiler**: it builds a structured learning plan, defines verifiable evidence for each cognitive transition, plans activities, and then compiles those contracts into learner-facing HTML or teacher-facing PPTX.
 
-## Current Status
+**中文** — HanClassStudio 是一个开源、AI 辅助的互动课件生成系统，专为语言教学场景而设计。它可将源教材（PPTX/PDF）编译为可离线的 HTML 互动课件和可编辑的 Traditional PPTX 课堂课件，核心驱动是一个**状态优先、证据优先**的教学内核编译器。
 
-HanClassStudio has moved beyond the original v0.1 export demo into a **State-first courseware pipeline**.
+这不是一个幻灯片设计工具，而是一个**教学内核编译器**：构建结构化的学习计划，为每个认知状态转移定义可验证的证据，规划教学活动，然后将这些契约编译成面向学生的 HTML 课件或面向教师的 PPTX 课件。
 
-- **v0.1 demo loop**: verified local workbench, artifact pipeline, offline HTML export, editable PPTX export, Agent Handoff, and quality gates.
-- **v0.2.1-alpha**: State-Evidence Kernel smoke-tested and closed with `70 passed, 1 warning`.
-- **v0.2.2 white paper**: [State-Evidence Kernel architecture](docs/state-evidence-kernel-v0.2.2.md) defines the long-term teaching kernel model.
-- **v0.2.2-alpha**: `presentation/activity_bindings.json` adds a formal activity/evidence/presentation contract between the kernel and HTML/PPTX renderers.
+---
 
-## v0.1 Demo Status
+## Project Status / 项目状态
 
-HanClassStudio v0.1 engineering pipeline is verified. Classroom/debug separation is complete; current demo blockers are now lesson-content quality issues rather than export-pipeline failures.
-
-### Engineering Pipeline — Verified ✅
-
-- WebUI workbench loop is complete.
-- Agent Skill Layer and Agent Handoff are implemented.
-- Artifact Inspector exposes project outputs, including `agent/` and `exports/`.
-- `lesson.html` runtime is slide-based and offline-ready.
-- Editable PPTX export is available as a second export target.
-- Quality gate, export policy, and ZIP verification are covered by tests.
-- Current test target: `npm test`.
-
-### Classroom Mode Strictness — Completed ✅
-
-Classroom mode rendering and export are fully separated from debug mode with final artifact hardening:
-
-- **HTML classroom artifact**: dedicated `lesson_classroom.html` generated alongside debug `lesson.html` during pipeline. Embedded `lesson-data` JSON is sanitized — image_prompt, provider_required, and debug fields are redacted. Arabic text is separated from Chinese content. Slide-kicker DOM and debug footer are absent.
-- **ZIP export**: classroom HTML included alongside debug HTML in the export bundle.
-- **PPTX classroom mode**: `provider_required` text excluded; missing media shows lightweight decorator; classroom QA `blocked` prevents normal export (force export creates `Diagnostic` files).
-- **Scaffold separation**: Chinese text and Arabic scaffold are strictly separated. Arabic Unicode ranges are stripped from Chinese content blocks.
-- **Route-relevant filtering**: `greeting_lesson` grammar whitelisted; vocabulary filtered.
-- **Tests**: 44 tests covering HTML sanitization, lesson-data redaction, Arabic separation, PPTX classroom QA, and pipeline integration.
-
-### Lesson Strategist Upgrade — Completed ✅
-
-The Lesson Strategist now uses Teaching Candidate Extraction (`analysis/teaching_candidates.json`)
-to drive smarter blueprint generation:
-
-- **Route hints**: `greeting_lesson`, `vocabulary_lesson`, `dialogue_lesson`, `character_lesson`,
-  `grammar_pattern_lesson`, `mixed_lesson` — each produces a tailored slide structure.
-- **Vocabulary classification**: core vocabulary, secondary vocabulary, and noise candidates
-  based on frequency, position in dialogues, and pinyin proximity.
-- **Grammar detection**: recognises "在+V+呢", "V+了", "sb.+喜欢+n/v" etc. from source patterns
-  instead of hard-coded defaults.
-- **Dialogue extraction**: detects "A：... B：..." structures from source text.
-- **Content leak prevention**: vocabulary no longer contains noise words (stroke names, framework
-  terms) or placeholder text. Arabic scaffolds are marked `provider_required` rather than forged.
-
-See [architecture-overview.md](docs/architecture-overview.md) for details on the extraction
-pipeline and [test-report-v0.1.md](docs/test-report-v0.1.md) for test coverage.
-
-### Syllabus-Aware Comprehensible Input Engine — Completed ✅
-
-The Syllabus Engine puts textbook scope + learner level + i+1 at the center of generation:
-
-- **SourceLessonProfile**: extracts structured units (dialogue, vocabulary, grammar, exercise, teacher instruction, noise) from source material.
-- **DifficultyProfile**: infers lesson difficulty from source content (greeting signals, pinyin presence, character count) mapped to standard schemes (HSK1, etc.).
-- **LanguageInventory**: classifies items into known, target, support, off-level, teacher-only, excluded — only target items enter learner-facing text.
-- **AllowedTextPlan**: per-slide allowed/forbidden target text, max new items, teacher-only zones.
-- **OffLevelReport**: checks final HTML/PPTX for unknown items, off-level items, unsupported new items, teacher text leaks, and missing scaffolds.
-- **i+1 for zero_beginner**: max 1 new target item per slide, no "我会说"/"朋友之间" templates, no output before input.
-- **Tests**: 58 tests covering syllabus extraction, difficulty inference, allowed text planning, off-level detection, and pipeline integration.
-
-### State-Evidence Kernel — v0.2.1-alpha Verified ✅
-
-The State-Evidence Kernel makes the teaching logic explicit before presentation rendering:
-
-```text
-Source
-  -> Learning State Plan
-  -> Evidence Plan
-  -> Activity Plan
-  -> Evidence Alignment Report
-  -> Presentation / HTML / PPTX
+```
+Phase 2B: substantially complete           ✅
+Phase 2C: internal technical validation    ✅
+Real teaching pilot:                       ⏳ not started
+Production v2 cutover:                     ⏳ not started
 ```
 
-Current generated artifacts:
+| Milestone | Status |
+|-----------|--------|
+| v0.1 demo loop (Workbench, export, quality gates) | ✅ Verified |
+| v0.2.1-alpha State-Evidence Kernel | ✅ Smoke-tested, 70 tests |
+| Shadow v2 presentation path | ✅ Phase 2B complete |
+| Internal HTML route (phase 2C) | ✅ disabled-by-default, validated |
+| **Next: 3-lesson teacher-led pilot** | 🎯 **Immediate priority** |
 
-- `learning/learning_state_plan.json`: state DAG, learning goals, and transitions.
-- `learning/evidence_plan.json`: evidence specs for state transitions.
-- `learning/activity_plan.json`: learning activities that collect evidence.
-- `quality/evidence_alignment_report.json`: Goal-Evidence-Activity alignment gate.
+The authoritative roadmap is [docs/roadmap.md](docs/roadmap.md).
 
-Alignment `blocked` now stops classroom render/export and writes a kernel diagnostic ZIP. See [smoke-test-v0.2.1.md](docs/smoke-test-v0.2.1.md) for the latest validation report.
+权威路线图请参见 [docs/roadmap.md](docs/roadmap.md)。
 
-### What Works Today
+---
 
-- PPTX/PDF upload and parsing.
-- Course profile confirmation.
-- Artifact-first spec/blueprint/media/render pipeline.
-- Component registry-backed interactive runtime.
-- HTML ZIP export for offline interactive courseware.
-- Editable PPTX export for editable classroom display material.
-- State-Evidence Kernel artifacts and alignment gate.
-- Evidence-aware classroom HTML data and PPTX deck speaker notes.
-- Agent Handoff task/rules generation and validation.
-- Quality gate with `pass`, `warning`, and `blocked` states.
+## Features / 功能特性
 
-## What Is Placeholder Or In Progress
+| Feature | Description |
+|---------|-------------|
+| **State-Evidence Kernel** | Cognitive-state-first lesson compiler: goals → evidence → activities → presentation |
+| **Learner Comprehension Core** | i+1 constraint engine, word limits, scaffold separation, language-agnostic |
+| **Courseware Review Agent** | 4-dimension review (Suitable / Workable / Sustainable / Usable) + revision plan |
+| **Traditional PPTX Deck** | 8-layout classroom deck with speaker notes, no debug labels |
+| **HTML Interactive Courseware** | Offline-ready, slide-based, zero external dependencies |
+| **Language Profiles** | Built-in Arabic / Thai / Korean / Japanese / English glossaries |
+| **Scaffold Resolver** | Multi-language scaffold lookup with fallback chain |
+| **Presentation Bindings** | Activity-to-component binding contract (v0.2.2) |
+| **Quality Gates** | Evidence alignment, classroom safety, off-level detection, content leak checks |
+| **Bilingual UI** | Teacher workbench in Chinese, with six-language i18n |
 
-- LLM generation can fall back to deterministic local blueprint generation.
-- Images use local placeholder SVGs unless a provider is configured later.
-- Audio uses local demo tones unless a TTS provider is configured later.
-- Video is planning/fallback only.
-- Editable PPTX converts interactions into static classroom activity pages.
-- Evidence-to-slide fallback matching is centralized in `presentation/activity_bindings.json`; low-confidence bindings still need future teacher confirmation UX.
-- Real PPTX speaker-note XML inspection is not yet part of the smoke test.
+---
 
-## Quick Start
+## Architecture / 架构
+
+```text
+Source (PPTX/PDF)
+  → Source Lesson Profile
+  → Learner Model
+  → Language Items
+  → Learning State Plan          ← Pedagogical kernel
+  → Evidence Plan
+  → Activity Plan
+  → Evidence Alignment Gate
+  → Presentation Content & Media
+  → Presentation Bindings        ← v2 contract
+  → Canonical Presentation Blueprint
+  → Legacy Adapter
+  → HTML / PPTX Renderers
+  → Quality Gates
+  → Export
+```
+
+### Core Philosophy / 核心哲学
+
+> **State-first, not Slide-first.** The system first asks: "What cognitive state is the learner in? What state should they reach? What evidence proves the transition? What activity collects that evidence?" — only then does it decide how to present the lesson.
+
+Renderers are backend compilers. They never make pedagogical decisions — they only render pre-approved learner-facing and teacher-facing content.
+
+> **状态优先，而非页面优先。** 系统首先问："学习者当前处于什么认知状态？目标状态是什么？什么证据能证明状态转移？什么活动能采集这个证据？"——然后才决定如何呈现。
+
+Render 层是后端编译器，不做教学判断，只渲染已被审校通过的学生端和教师端内容。
+
+---
+
+## Quick Start / 快速开始
+
+### Prerequisites / 环境要求
+
+- Python 3.11+
+- Node.js 18+
+- uv (Python package manager)
+
+### Install / 安装
 
 ```bash
+# Clone
+git clone https://github.com/xueyang-dev/HanClassStudio.git
+cd HanClassStudio
+
+# Backend
+cd apps/api
+uv sync
+cd ../..
+
+# Frontend
+cd apps/web
 npm install
-npm run install:web
-uv sync --project apps/api
+cd ../..
+
+# Root scripts
+npm install
 ```
 
-Run the backend:
+### Run / 运行
 
 ```bash
+# Start API server (FastAPI)
 npm run dev:api
-```
 
-Run the frontend in another terminal:
-
-```bash
+# Start web workbench (Vite + React) — in another terminal
 npm run dev:web
-```
 
-Open the Vite URL, upload a PPTX, and follow the five-step workflow.
-
-## Local Commands
-
-Backend:
-
-```bash
-npm run dev:api
-```
-
-Frontend:
-
-```bash
-npm run dev:web
-```
-
-Tests and build:
-
-```bash
+# Run tests
 npm test
+
+# Build frontend
+npm run build:web
 ```
 
-## Scripts
+### Pipeline Demo / 流水线演示
 
-- `npm run dev:api` starts FastAPI at `http://localhost:8000`.
-- `npm run dev:web` starts the authoring app at `http://localhost:5173`.
-- `npm run test:api` runs backend tests.
-- `npm run build:web` type-checks and builds the React app.
-- `npm test` runs the backend test suite and frontend build.
+1. Open `http://localhost:5173` in browser
+2. Upload a PPTX or PDF source material
+3. Set lesson profile (level, scaffold language, title)
+4. Run pipeline
+5. Inspect artifacts in the Artifact Inspector panel
+6. Export ZIP or PPTX
 
-## Output Package
+---
 
-The main output is an interactive HTML ZIP. Each generated ZIP contains:
+## Documentation / 文档
 
-```text
-lesson.html
-assets/
-  images/
-  audio/
-  video/
-  fonts/
-  data/
-    lesson_profile.json
-    source_material.json
-    lesson_blueprint.json
-    interaction_plan.json
-    media_plan.json
-    asset_manifest.json
-    quality_report.json
-    attribution.json
-quality_summary.md
-export_manifest.json
+| Document | Description |
+|----------|-------------|
+| [Roadmap](docs/roadmap.md) | Authoritative project roadmap and phase planning |
+| [State-Evidence Kernel](docs/state-evidence-kernel-v0.2.2.md) | White paper: teaching kernel architecture |
+| [Presentation Bindings](docs/presentation-bindings-v0.2.2.md) | v2 presentation contract specification |
+| [Architecture Overview](docs/architecture-overview.md) | System design and component relationships |
+| [Smoke Test Report](docs/smoke-test-v0.2.1.md) | v0.2.1-alpha end-to-end verification |
+| [Agent Workflow](docs/agent-workflow.md) | Guide for AI agents working with this codebase |
+| [Demo Script](docs/demo-script.md) | 3-5 minute walkthrough script |
+
+---
+
+## Project Structure / 项目结构
+
+```
+HanClassStudio/
+├── apps/
+│   ├── api/                   # FastAPI backend
+│   │   └── src/hcs_api/       # Core engine
+│   │       ├── pipeline.py    # Main pipeline orchestrator
+│   │       ├── agents.py      # Blueprint generation
+│   │       ├── analysis.py    # Source material parser
+│   │       ├── renderer.py    # HTML renderer
+│   │       ├── pptx_exporter.py  # PPTX exporter
+│   │       ├── state_evidence_kernel.py  # SE kernel
+│   │       ├── review_agent.py  # Courseware review
+│   │       ├── content_contract.py  # Scaffold resolver
+│   │       ├── learner_comprehension.py  # i+1 engine
+│   │       ├── syllabus_engine.py  # Syllabus-aware planning
+│   │       ├── pptx_deck.py   # Traditional PPTX deck plan
+│   │       └── language_profiles/  # Multi-language glossaries
+│   └── web/                   # React workbench UI
+├── docs/                      # Documentation
+├── skills/                    # Agent skill definitions
+├── output/                    # Generated courseware
+└── runtime/                   # Runtime project data
 ```
 
-The exported `lesson.html` is designed to open offline after unzipping.
+---
 
-Editable PPTX export creates:
+## Tests / 测试
 
-```text
-exports/HanClassStudio_Editable_<timestamp>.pptx
-exports/pptx_export_manifest.json
-quality/pptx_quality_report.json
+```bash
+# Run all tests
+npm test
+
+# Run only backend tests
+npm run test:api
+
+# Build frontend
+npm run build:web
 ```
 
-The PPTX version is editable classroom display material. HTML interactions are converted into static classroom activity pages.
+Current: **70 passed, 1 warning** (backend tests + frontend build).
 
-## Demo Documentation
+---
 
-- [v0.1 demo guide](docs/demo-v0.1.md)
-- [Architecture overview](docs/architecture-overview.md)
-- [State-Evidence Kernel white paper](docs/state-evidence-kernel-v0.2.2.md)
-- [Presentation bindings v0.2.2](docs/presentation-bindings-v0.2.2.md)
-- [v0.2.1 smoke test report](docs/smoke-test-v0.2.1.md)
-- [Agent workflow](docs/agent-workflow.md)
-- [3-5 minute demo script](docs/demo-script.md)
-- [Portfolio copy](docs/portfolio-copy.md)
-- [Screenshot checklist](docs/screenshot-checklist.md)
-- [Demo recording checklist](docs/demo-recording-checklist.md)
-- [v0.1 release notes](docs/release-notes-v0.1.md)
-- [Release checklist](docs/release-checklist.md)
-- [GitHub Releases](https://github.com/xueyang-dev/HanClassStudio/releases)
+## License / 许可
 
-## Current Limitations
+MIT
 
-- Real LLM, image, TTS, OCR, and video providers are not connected by default.
-- Placeholder media is expected in the v0.1 demo.
-- Runtime themes are fixed templates, not user-authored CSS.
-- Quality checks now include State-Evidence alignment and presentation binding; low-confidence binding review is still being hardened.
-- Existing `runtime/projects` data is treated as disposable development output.
+---
+
+## Contributing / 贡献
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+This project is in active development. The immediate priority is a **three-lesson teacher-led pilot** — contributions that accelerate real teaching validation are especially welcome.
+
+---
+
+## Acknowledgments / 致谢
+
+Built with the help of Claude Code, Codex, Hermes Agent, and DeepSeek.
