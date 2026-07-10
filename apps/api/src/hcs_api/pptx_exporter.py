@@ -60,6 +60,12 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
         raise PermissionError("Run quality gate before editable PPTX export")
     if report and report.state == "blocked" and not force:
         raise PermissionError("Quality gate is blocked; pass force=true to export editable PPTX anyway")
+    alignment_report = read_json(project_id, "quality/evidence_alignment_report.json") or {}
+    if isinstance(alignment_report, dict) and alignment_report.get("state") == "blocked" and not force:
+        raise PermissionError("Evidence alignment gate is blocked; pass force=true to export editable PPTX anyway")
+    readiness_report = read_json(project_id, "quality/presentation_readiness_report.json") or {}
+    if isinstance(readiness_report, dict) and readiness_report.get("state") == "blocked" and not force:
+        raise PermissionError("Presentation readiness gate is blocked; pass force=true to export editable PPTX anyway")
     binding_report = read_json(project_id, "presentation/binding_quality_report.json") or {}
     if isinstance(binding_report, dict) and binding_report.get("state") == "blocked" and not force:
         raise PermissionError("Presentation binding gate is blocked; pass force=true to export editable PPTX anyway")
@@ -135,6 +141,8 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
             "forced": force,
             "diagnostic": is_diagnostic,
             "quality_state": quality_state,
+            "evidence_alignment_state": alignment_report.get("state") if isinstance(alignment_report, dict) else None,
+            "presentation_readiness_state": readiness_report.get("state") if isinstance(readiness_report, dict) else None,
             "interaction_policy": "classroom_static_activity",
             "source_artifacts": {
                 "spec_lock": bool(spec_lock),

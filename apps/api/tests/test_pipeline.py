@@ -4,6 +4,7 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
 from pptx import Presentation
 
 import hcs_api.quality as quality_module
@@ -38,6 +39,19 @@ from hcs_api.pipeline import (
 from hcs_api.quality import check_classroom_quality, check_quality
 from hcs_api.renderer import render_lesson
 from hcs_api.storage import ensure_project, write_json, write_model, zip_output
+
+
+def test_zip_output_respects_blocked_evidence_alignment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("hcs_api.storage.RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setattr("hcs_api.storage.PROJECTS_DIR", tmp_path / "runtime" / "projects")
+    project_id = "blocked_alignment"
+    ensure_project(project_id)
+    write_json(project_id, "quality/evidence_alignment_report.json", {"state": "blocked"})
+
+    with pytest.raises(PermissionError, match="Evidence alignment gate"):
+        zip_output(project_id)
+
+    assert zip_output(project_id, force=True).exists()
 
 
 def test_pptx_to_offline_zip(tmp_path: Path, monkeypatch) -> None:

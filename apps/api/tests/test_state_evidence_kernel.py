@@ -68,18 +68,18 @@ def test_production_goal_not_only_listen_choose() -> None:
     ], transitions=[
         LearningTransition(from_state="s1", to_state="s2", transition_intent="prod", required_evidence_ids=["ev"]),
     ])
-    ep = EvidencePlan(evidence_specs=[EvidenceSpec(evidence_id="ev", evidence_type="listen_choose", collector_refs=["act"])])
+    ep = EvidencePlan(evidence_specs=[EvidenceSpec(evidence_id="ev", goal_id="g", evidence_type="listen_choose", collector_refs=["act"])])
     ap = ActivityPlan(activities=[LearningActivity(activity_id="act", collects_evidence=["ev"])])
     r = check_evidence_alignment(sp, ep, ap, learner_level="beginner")
     assert any("production" in str(b) for b in r.blocking)
 
 
 def test_collector_refs_missing_blocks() -> None:
-    from hcs_api.models import (LearningStatePlan, LearningState, LearningTransition, EvidencePlan, EvidenceSpec, ActivityPlan)
+    from hcs_api.models import (LearningStatePlan, LearningState, LearningGoal, LearningTransition, EvidencePlan, EvidenceSpec, ActivityPlan)
     from hcs_api.state_evidence_kernel import check_evidence_alignment
-    sp = LearningStatePlan(lesson_title="test", states=[LearningState(state_id="s1"), LearningState(state_id="s2")],
+    sp = LearningStatePlan(lesson_title="test", states=[LearningState(state_id="s1"), LearningState(state_id="s2")], goals=[LearningGoal(goal_id="g", required_state_to_reach="s2")],
                            transitions=[LearningTransition(from_state="s1", to_state="s2", transition_intent="t", required_evidence_ids=["ev"])])
-    ep = EvidencePlan(evidence_specs=[EvidenceSpec(evidence_id="ev", evidence_type="deterministic_choice", collector_refs=["act_missing"])])
+    ep = EvidencePlan(evidence_specs=[EvidenceSpec(evidence_id="ev", goal_id="g", evidence_type="deterministic_choice", collector_refs=["act_missing"])])
     r = check_evidence_alignment(sp, ep, ActivityPlan())
     assert r.state == "blocked"
     assert any("no matching activity" in b for b in r.blocking)

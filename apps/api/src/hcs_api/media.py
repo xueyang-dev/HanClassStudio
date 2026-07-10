@@ -9,7 +9,7 @@ from .models import AssetFile, AssetManifest, LessonBlueprint, ProviderSettings
 from .providers import ProviderError, generate_openai_image, generate_openai_tts
 
 
-def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint) -> AssetManifest:
+def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint, preserve_media_origin_trace: bool = False) -> AssetManifest:
     images: list[AssetFile] = []
     audio: list[AssetFile] = []
     image_dir = project_root / "assets" / "images"
@@ -29,10 +29,11 @@ def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint) -
                     kind="image",
                     path=f"assets/images/{filename}",
                     prompt=slide.media_requirements.image_prompt,
+                    origin_media_requirement_ids=[slide.media_requirements.image_key] if preserve_media_origin_trace else [],
                 )
             )
         if slide.media_requirements.audio_key and slide.media_requirements.audio_text:
-            _add_audio(audio, audio_dir, slide.media_requirements.audio_key, slide.media_requirements.audio_text, seen_audio)
+            _add_audio(audio, audio_dir, slide.media_requirements.audio_key, slide.media_requirements.audio_text, seen_audio, slide.media_requirements.audio_key if preserve_media_origin_trace else None)
 
         for component in slide.components:
             data = component.data
@@ -41,17 +42,17 @@ def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint) -
                     key = item.get("audio_key")
                     text = item.get("audio_text") or item.get("word")
                     if key and text:
-                        _add_audio(audio, audio_dir, key, text, seen_audio)
+                        _add_audio(audio, audio_dir, key, text, seen_audio, key if preserve_media_origin_trace else None)
             if component.component_type == "ListenAndChoose":
                 key = data.get("audio_key")
                 text = data.get("audio_text")
                 if key and text:
-                    _add_audio(audio, audio_dir, key, text, seen_audio)
+                    _add_audio(audio, audio_dir, key, text, seen_audio, key if preserve_media_origin_trace else None)
             if component.component_type == "AudioButton":
                 key = data.get("audio_key")
                 text = data.get("audio_text") or data.get("label")
                 if key and text:
-                    _add_audio(audio, audio_dir, key, text, seen_audio)
+                    _add_audio(audio, audio_dir, key, text, seen_audio, key if preserve_media_origin_trace else None)
 
     return AssetManifest(images=images, audio=audio)
 
@@ -60,8 +61,9 @@ def generate_configured_media(
     project_root: Path,
     blueprint: LessonBlueprint,
     settings: ProviderSettings,
+    preserve_media_origin_trace: bool = False,
 ) -> AssetManifest:
-    manifest = generate_placeholder_media(project_root, blueprint)
+    manifest = generate_placeholder_media(project_root, blueprint, preserve_media_origin_trace)
     _replace_images_with_provider_assets(project_root, manifest, settings)
     _replace_audio_with_provider_assets(project_root, manifest, settings)
     return manifest
@@ -107,14 +109,20 @@ def _replace_audio_with_provider_assets(
         asset.path = f"assets/audio/{filename}"
 
 
-def _add_audio(audio: list[AssetFile], audio_dir: Path, key: str, text: str, seen: set[str]) -> None:
+def _add_audio(audio: list[AssetFile], audio_dir: Path, key: str, text: str, seen: set[str], origin_requirement_id: str | None) -> None:
     if key in seen:
+        existing = next(asset for asset in audio if asset.id == key)
+        if origin_requirement_id and origin_requirement_id not in existing.origin_media_requirement_ids:
+            existing.origin_media_requirement_ids.append(origin_requirement_id)
         return
     seen.add(key)
     filename = f"{key}.wav"
     path = audio_dir / filename
     _write_tone(path)
-    audio.append(AssetFile(id=key, kind="audio", path=f"assets/audio/{filename}", text=text))
+    audio.append(AssetFile(
+        id=key, kind="audio", path=f"assets/audio/{filename}", text=text,
+        origin_media_requirement_ids=[origin_requirement_id] if origin_requirement_id else [],
+    ))
 
 
 def _write_tone(path: Path) -> None:

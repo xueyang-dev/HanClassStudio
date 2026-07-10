@@ -16,11 +16,14 @@ def render_lesson(
     report: QualityReport,
     render_mode: str = "debug",
     activity_bindings: PresentationBindingPlan | None = None,
+    output_filename: str | None = None,
 ) -> Path:
     image_by_id = {asset.id: f"../{asset.path}" for asset in manifest.images}
     audio_by_id = {asset.id: f"../{asset.path}" for asset in manifest.audio}
     slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id, render_mode) for slide in blueprint.slides)
     is_classroom = render_mode == "classroom"
+    filename = output_filename or ("lesson_classroom.html" if is_classroom else "lesson.html")
+    body_class = ' class="v2-internal"' if filename == "lesson_v2_internal.html" else ""
     data_blob = _build_lesson_data_blob(profile, blueprint, report, is_classroom, activity_bindings)
     title_label = escape(profile.scaffolding_language) if not is_classroom else "辅助语言"
     html = f"""<!doctype html>
@@ -31,7 +34,7 @@ def render_lesson(
   <title>{escape(blueprint.lesson_title)} · HanClassStudio</title>
   <style>{_css()}</style>
 </head>
-<body>
+<body{body_class}>
   <div id="loadingState" class="loading-state">正在准备课件...</div>
   <a class="skip-link" href="#slides">跳到课件</a>
   <div class="courseware-shell" data-mode="bilingual">
@@ -68,16 +71,18 @@ def render_lesson(
   <script>{_js()}</script>
 </body>
 </html>"""
-    filename = "lesson_classroom.html" if is_classroom else "lesson.html"
     output = project_root / "courseware" / filename
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")
-    manifest_filename = "render_manifest_classroom.json" if is_classroom else "render_manifest.json"
+    manifest_filename = (
+        f"render_manifest_{Path(filename).stem.removeprefix('lesson_')}.json"
+        if output_filename else "render_manifest_classroom.json" if is_classroom else "render_manifest.json"
+    )
     (project_root / "courseware" / manifest_filename).write_text(
         json.dumps(
             {
                 "schema": "hanclassstudio.render_manifest.v1",
-                "entry": "courseware/lesson.html",
+                "entry": f"courseware/{filename}",
                 "slide_count": len(blueprint.slides),
             },
             ensure_ascii=False,
@@ -232,6 +237,7 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
     data = component.data
     title = escape(component.title)
     is_classroom = render_mode == "classroom"
+    trace_attrs = _shadow_trace_attrs(data)
 
     def _scaffold_text(text: str) -> str:
         if is_classroom and PROVIDER_REQUIRED.search(text):
@@ -242,7 +248,7 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
 
     if component.component_type == "AudioButton":
         audio = _audio_button(audio_by_id.get(data.get("audio_key", ""), ""), data.get("label") or data.get("audio_text", "Demo audio"))
-        return f'<section class="component component-container audio-component"><h2>{title}</h2>{audio}</section>'
+        return f'<section class="component component-container audio-component"{trace_attrs}><h2>{title}</h2>{audio}</section>'
     if component.component_type == "VocabularyFlipCard":
         cards = []
         for item in _list(data.get("items")):
@@ -267,13 +273,13 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
             )
         title_html = "" if is_classroom else f"<h2>{title}</h2>"
         body = f'<div class="vocab-grid">{"".join(cards)}</div>' if cards else _component_empty("暂无生词卡数据")
-        return f'<section class="component component-container vocab-component">{title_html}{body}</section>'
+        return f'<section class="component component-container vocab-component"{trace_attrs}>{title_html}{body}</section>'
     if component.component_type == "SentenceDragBuilder":
         word_list = [str(word) for word in _list(data.get("words"))]
         words = "".join(f'<button type="button" class="word-chip" draggable="true">{escape(word)}</button>' for word in word_list)
         answer = json.dumps(_list(data.get("answer")), ensure_ascii=False)
         empty = _component_empty("暂无可组句词语") if not word_list else ""
-        return f"""<section class="component component-container drag-builder" data-answer='{escape(answer)}'>
+        return f"""<section class="component component-container drag-builder" data-answer='{escape(answer)}'{trace_attrs}>
   <h2>{title}</h2>
   <p class="scaffold">{escape(_hint)}</p>
   {empty}<div class="word-bank">{words}</div>
@@ -286,7 +292,7 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
         choices = "".join(f'<button type="button" class="choice">{escape(choice)}</button>' for choice in choices_list)
         audio = _audio_button(audio_by_id.get(data.get("audio_key", ""), ""), data.get("audio_text", "播放音频"))
         empty = _component_empty("暂无选择项") if not choices_list else ""
-        return f"""<section class="component component-container listen-choose" data-answer="{escape(data.get('answer', ''))}">
+        return f"""<section class="component component-container listen-choose" data-answer="{escape(data.get('answer', ''))}"{trace_attrs}>
   <h2>{title}</h2>
   <p class="scaffold">{escape(_hint)}</p>
   {audio}
@@ -298,7 +304,7 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
         left = "".join(f'<button type="button" data-value="{escape(pair.get("left", ""))}">{escape(pair.get("left", ""))}</button>' for pair in pairs)
         right = "".join(f'<button type="button" data-value="{escape(pair.get("left", ""))}">{escape(pair.get("right", ""))}</button>' for pair in reversed(pairs))
         body = f'<div class="match-columns"><div>{left}</div><div>{right}</div></div>' if pairs else _component_empty("暂无配对数据")
-        return f"""<section class="component component-container match-game">
+        return f"""<section class="component component-container match-game"{trace_attrs}>
   <h2>{title}</h2>
   <p class="scaffold">{escape(_hint)}</p>
   {body}
@@ -310,14 +316,29 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
         parts = "".join(f"<li>{escape(str(part))}</li>" for part in parts_list)
         explanation = escape(data.get("explanation", ""))
         logic = f'<div class="formation-flow"><span>{" + ".join(escape(str(part)) for part in parts_list)}</span><strong>→</strong><span>{character}</span></div>' if parts_list else _component_empty("暂无汉字部件数据")
-        return f"""<section class="component component-container character-formation">
+        return f"""<section class="component component-container character-formation"{trace_attrs}>
   <h2>{title}</h2>
   <div class="character-focus">{character}</div>
   {logic}
   <ul>{parts}</ul>
   <p class="scaffold">{explanation}</p>
 </section>"""
-    return f'<section class="component component-container"><h2>{title}</h2>{_component_empty("此组件暂未支持渲染")}</section>'
+    return f'<section class="component component-container"{trace_attrs}><h2>{title}</h2>{_component_empty("此组件暂未支持渲染")}</section>'
+
+
+def _shadow_trace_attrs(data: dict) -> str:
+    """Expose only existing v2 trace IDs as inert DOM metadata for diagnostics."""
+    trace = data.get("_shadow_trace")
+    if not isinstance(trace, dict):
+        return ""
+    attrs = {
+        "data-shadow-unit": trace.get("presentation_unit_id", ""),
+        "data-shadow-binding": trace.get("binding_id", ""),
+        "data-shadow-activity": trace.get("activity_id", ""),
+        "data-shadow-content": trace.get("content_item_id", ""),
+        "data-shadow-evidence": ",".join(str(value) for value in trace.get("evidence_ids", [])),
+    }
+    return "".join(f' {name}="{escape(str(value))}"' for name, value in attrs.items() if value)
 
 
 def _audio_button(path: str, label: str, allow_unavailable: bool = True) -> str:
@@ -386,6 +407,7 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .toolbar button, .player-nav button, .component-actions button, .audio-button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 9px 13px; }
 .toolbar button.active, .player-nav button:hover, .component-actions button:hover { border-color: var(--teal); color: var(--teal); }
 .slide-frame { position: relative; min-height: min(72vw, calc(100dvh - 150px)); aspect-ratio: 16 / 9; max-height: calc(100dvh - 150px); margin: 0 auto; width: min(100%, 1280px); }
+.v2-internal .slide-frame { min-width: 0; }
 .slide { display: none; position: absolute; inset: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: clamp(28px, 4vw, 56px); }
 .slide.active { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 18px; }
 .slide-content { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr); gap: 32px; align-items: center; min-height: 0; }
