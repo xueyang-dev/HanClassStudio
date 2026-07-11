@@ -1,0 +1,245 @@
+<!doctype html><meta charset="utf-8"><title>Raster Provider A/B</title>
+<style>body{font:16px system-ui;margin:2rem;background:#f7f8fa;color:#182028}article{background:white;padding:1rem;margin:1rem 0;border-radius:10px}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:1rem}section{border:1px solid #d9dfe5;padding:.75rem}img{display:block;max-width:100%;background:#f3f5f7}.fallback{min-height:12rem;padding:1rem;background:#fff3cd}.notice{background:#fff3cd;padding:1rem;border-radius:8px}pre{white-space:pre-wrap}</style>
+<h1>Experimental raster provider A/B</h1><p class="notice">Diagnostic-only. Teacher visual review is required; this page does not assert visual superiority and is excluded from courseware/export.</p>
+<article><h2>睡觉</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/01-raster.png" alt="Raster: 睡觉"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/01-fallback.svg" alt="SVG fallback: 睡觉"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;睡觉&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-1&quot;,
+    &quot;concept&quot;: &quot;睡觉&quot;,
+    &quot;scene_description&quot;: &quot;Chinese language classroom illustration of 睡觉; clear action, no text.&quot;,
+    &quot;illustration_role&quot;: &quot;benchmark_primary_visual&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;no words&quot;,
+      &quot;no watermark&quot;,
+      &quot;no learner-facing metadata&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {},
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 13981.0,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/01-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Chinese language classroom illustration of 睡觉; clear action, no text.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;seed&quot;: 2500913,
+    &quot;content_hash&quot;: &quot;450c50eef5fb74933307880047d2ef14728539d5509353633cfcbddf154010d3&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T17:46:20.068635+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_6mzmcftcsrkbcc5be7&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1077653,
+  &quot;svg_fallback&quot;: &quot;assets/01-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null
+}</pre></details></article>
+
+<article><h2>吃饭</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/02-raster.png" alt="Raster: 吃饭"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/02-fallback.svg" alt="SVG fallback: 吃饭"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;吃饭&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-2&quot;,
+    &quot;concept&quot;: &quot;吃饭&quot;,
+    &quot;scene_description&quot;: &quot;Chinese language classroom illustration of 吃饭; clear action, no text.&quot;,
+    &quot;illustration_role&quot;: &quot;benchmark_primary_visual&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;no words&quot;,
+      &quot;no watermark&quot;,
+      &quot;no learner-facing metadata&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {},
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 14910.7,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/02-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Chinese language classroom illustration of 吃饭; clear action, no text.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;seed&quot;: 1343063265,
+    &quot;content_hash&quot;: &quot;25938d8c755b44d72616d7ce5128969466cd229a02a82521caf6bb554e4e2c37&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T17:46:34.979532+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_p4ayksli1m7qn5ruht&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1393838,
+  &quot;svg_fallback&quot;: &quot;assets/02-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null
+}</pre></details></article>
+
+<article><h2>喝水</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/03-raster.png" alt="Raster: 喝水"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/03-fallback.svg" alt="SVG fallback: 喝水"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;喝水&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-3&quot;,
+    &quot;concept&quot;: &quot;喝水&quot;,
+    &quot;scene_description&quot;: &quot;Chinese language classroom illustration of 喝水; clear action, no text.&quot;,
+    &quot;illustration_role&quot;: &quot;benchmark_primary_visual&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;no words&quot;,
+      &quot;no watermark&quot;,
+      &quot;no learner-facing metadata&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {},
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 20929.6,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/03-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Chinese language classroom illustration of 喝水; clear action, no text.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;seed&quot;: 1162643388,
+    &quot;content_hash&quot;: &quot;1f3a0a789e0c56c0cb88d28b69f27817b1ad1fe834263d4ca3affacab89bc1f3&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T17:46:55.909357+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_2narmxcj6xyfrs23y8&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1045993,
+  &quot;svg_fallback&quot;: &quot;assets/03-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null
+}</pre></details></article>
+
+<article><h2>学习</h2><div class="comparison">
+<section><h3>Experimental raster</h3><p class="fallback">Raster unavailable: network: Verified fallback request failed: curl: (56) The requested URL returned error: 451</p></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/04-fallback.svg" alt="SVG fallback: 学习"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;学习&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-4&quot;,
+    &quot;concept&quot;: &quot;学习&quot;,
+    &quot;scene_description&quot;: &quot;Chinese language classroom illustration of 学习; clear action, no text.&quot;,
+    &quot;illustration_role&quot;: &quot;benchmark_primary_visual&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;no words&quot;,
+      &quot;no watermark&quot;,
+      &quot;no learner-facing metadata&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {},
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 29982.3,
+  &quot;raster&quot;: null,
+  &quot;raster_file_size&quot;: 0,
+  &quot;svg_fallback&quot;: &quot;assets/04-fallback.svg&quot;,
+  &quot;fallback_used&quot;: true,
+  &quot;fallback_reason&quot;: &quot;network: Verified fallback request failed: curl: (56) The requested URL returned error: 451&quot;
+}</pre></details></article>
+
+<article><h2>学生向老师问好</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/05-raster.png" alt="Raster: 学生向老师问好"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/05-fallback.svg" alt="SVG fallback: 学生向老师问好"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;学生向老师问好&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-5&quot;,
+    &quot;concept&quot;: &quot;学生向老师问好&quot;,
+    &quot;scene_description&quot;: &quot;Chinese language classroom illustration of 学生向老师问好; clear action, no text.&quot;,
+    &quot;illustration_role&quot;: &quot;benchmark_primary_visual&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;no words&quot;,
+      &quot;no watermark&quot;,
+      &quot;no learner-facing metadata&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {},
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 15406.2,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/05-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Chinese language classroom illustration of 学生向老师问好; clear action, no text.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;seed&quot;: 1829810281,
+    &quot;content_hash&quot;: &quot;7ace511bc7a73b09771356f191362cb534f238f83424ef01c34944860fca9d65&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T17:47:41.298548+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_wh1smjw10krp1shjii&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_ab&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1116490,
+  &quot;svg_fallback&quot;: &quot;assets/05-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null
+}</pre></details></article>

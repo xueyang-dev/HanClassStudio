@@ -4,10 +4,17 @@ import html
 import json
 import math
 import wave
+from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 
-from .models import AssetFile, AssetManifest, LessonBlueprint, ProviderSettings
+from .models import AssetFile, AssetManifest, GeneratedImage, IllustrationRequest, LessonBlueprint, ProviderSettings
 from .providers import ProviderError, _llm_enabled, generate_openai_image, generate_openai_tts
+from .raster_provider import (
+    RasterProviderError,
+    generate_experimental_raster_image,
+    image_dimensions,
+)
 from .svg_illustration import (
     BRAND_ACCENT, SvgContract, generate_svg_illustration, placeholder_svg,
     build_scene_spec_for_concept, render_scene_spec,
@@ -169,6 +176,22 @@ def generate_raster_image(settings: ProviderSettings, prompt: str, aspect_ratio:
         aspect_ratio: requested aspect (e.g. ``"16:9"`` / ``"1:1"``); honour it
             when the chosen backend supports it.
     """
+    request = IllustrationRequest(
+        id="compatibility-raster-request",
+        concept=prompt,
+        scene_description=prompt,
+        aspect_ratio=aspect_ratio,
+        source_trace=["generate_raster_image compatibility facade"],
+    )
+    try:
+        return generate_experimental_raster_image(settings.image, request).image_bytes
+    except RasterProviderError as exc:
+        # The experimental adapter alone owns provider selection.  Retain the
+        # legacy backend only when no experimental provider was selected; an
+        # experimental failure must never silently fall through to a billable
+        # legacy provider.
+        if exc.kind != "disabled":
+            return None
     return generate_openai_image(settings.image, prompt)
 
 
@@ -181,9 +204,60 @@ def _replace_images_with_provider_assets(
     if settings.image.provider == "placeholder":
         return
     image_dir = project_root / "assets" / "images"
+    diagnostic_records: list[dict] = []
     for asset in manifest.images:
         if allowed_keys is not None and asset.id not in allowed_keys:
             continue
+        request = IllustrationRequest(
+            id=asset.id,
+            concept=asset.prompt,
+            scene_description=asset.prompt,
+            aspect_ratio="16:9",
+            source_trace=[f"legacy_media_requirement:{asset.id}"],
+        )
+        try:
+            payload = generate_experimental_raster_image(settings.image, request)
+        except RasterProviderError as exc:
+            if exc.kind != "disabled":
+                # The local deterministic SVG placeholder was created before
+                # this replacement pass. Preserve it as the raster fallback.
+                asset.fallback_used = True
+                asset.fallback_reason = f"{exc.kind}: {exc}"
+                asset.mime_type = "image/svg+xml"
+                diagnostic_records.append(_raster_diagnostic_record(asset, request, "fallback"))
+                continue
+        else:
+            suffix = _extension_for_mime(payload.mime_type)
+            filename = f"{asset.id}{suffix}"
+            local_path = image_dir / filename
+            local_path.write_bytes(payload.image_bytes)
+            relative_path = f"assets/images/{filename}"
+            content_hash = sha256(payload.image_bytes).hexdigest()
+            width, height = image_dimensions(payload.image_bytes, payload.mime_type)
+            asset.path = relative_path
+            asset.mime_type = payload.mime_type
+            asset.content_hash = content_hash
+            asset.fallback_used = False
+            asset.fallback_reason = None
+            asset.generation = GeneratedImage(
+                provider=settings.image.provider,
+                model=payload.model,
+                local_path=relative_path,
+                mime_type=payload.mime_type,
+                width=width,
+                height=height,
+                prompt=payload.prompt,
+                revised_prompt=payload.revised_prompt,
+                seed=payload.seed,
+                content_hash=content_hash,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+                provider_request_id=payload.provider_request_id,
+                source_trace=request.source_trace,
+                warnings=payload.warnings,
+            )
+            diagnostic_records.append(_raster_diagnostic_record(asset, request, "generated"))
+            continue
+
         try:
             image_bytes = generate_raster_image(settings, asset.prompt)
         except ProviderError:
@@ -193,6 +267,32 @@ def _replace_images_with_provider_assets(
         filename = f"{asset.id}.png"
         (image_dir / filename).write_bytes(image_bytes)
         asset.path = f"assets/images/{filename}"
+
+    if diagnostic_records:
+        diagnostics_path = project_root / "diagnostics" / "raster_provider_generation.json"
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        diagnostics_path.write_text(json.dumps({
+            "schema": "hanclassstudio.raster_provider_generation.v1",
+            "experimental": True,
+            "records": diagnostic_records,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _extension_for_mime(mime_type: str) -> str:
+    return {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[mime_type]
+
+
+def _raster_diagnostic_record(asset: AssetFile, request: IllustrationRequest, status: str) -> dict:
+    return {
+        "request": request.model_dump(mode="json"),
+        "status": status,
+        "asset_path": asset.path,
+        "mime_type": asset.mime_type,
+        "content_hash": asset.content_hash,
+        "fallback_used": asset.fallback_used,
+        "fallback_reason": asset.fallback_reason,
+        "generation": asset.generation.model_dump(mode="json") if asset.generation else None,
+    }
 
 
 def _replace_audio_with_provider_assets(

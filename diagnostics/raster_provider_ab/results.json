@@ -1,0 +1,230 @@
+{
+  "schema": "hanclassstudio.raster_provider_ab.v1",
+  "diagnostic_only": true,
+  "teacher_visual_review_required": true,
+  "records": [
+    {
+      "concept": "睡觉",
+      "request": {
+        "id": "raster-ab-1",
+        "concept": "睡觉",
+        "scene_description": "Chinese language classroom illustration of 睡觉; clear action, no text.",
+        "illustration_role": "benchmark_primary_visual",
+        "style_profile": "soft_flat_educational_v1",
+        "aspect_ratio": "16:9",
+        "width": null,
+        "height": null,
+        "negative_constraints": [
+          "no words",
+          "no watermark",
+          "no learner-facing metadata"
+        ],
+        "seed": null,
+        "candidate_count": 1,
+        "language_context": {},
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "latency_ms": 13981.0,
+      "raster": {
+        "provider": "experimental_openai_images",
+        "model": "Qwen/Qwen-Image",
+        "local_path": "assets/01-raster.png",
+        "mime_type": "image/png",
+        "width": 1536,
+        "height": 864,
+        "prompt": "Chinese language classroom illustration of 睡觉; clear action, no text.",
+        "revised_prompt": null,
+        "seed": 2500913,
+        "content_hash": "450c50eef5fb74933307880047d2ef14728539d5509353633cfcbddf154010d3",
+        "generated_at": "2026-07-11T17:46:20.068635+00:00",
+        "provider_request_id": "ti_6mzmcftcsrkbcc5be7",
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "raster_file_size": 1077653,
+      "svg_fallback": "assets/01-fallback.svg",
+      "fallback_used": false,
+      "fallback_reason": null
+    },
+    {
+      "concept": "吃饭",
+      "request": {
+        "id": "raster-ab-2",
+        "concept": "吃饭",
+        "scene_description": "Chinese language classroom illustration of 吃饭; clear action, no text.",
+        "illustration_role": "benchmark_primary_visual",
+        "style_profile": "soft_flat_educational_v1",
+        "aspect_ratio": "16:9",
+        "width": null,
+        "height": null,
+        "negative_constraints": [
+          "no words",
+          "no watermark",
+          "no learner-facing metadata"
+        ],
+        "seed": null,
+        "candidate_count": 1,
+        "language_context": {},
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "latency_ms": 14910.7,
+      "raster": {
+        "provider": "experimental_openai_images",
+        "model": "Qwen/Qwen-Image",
+        "local_path": "assets/02-raster.png",
+        "mime_type": "image/png",
+        "width": 1536,
+        "height": 864,
+        "prompt": "Chinese language classroom illustration of 吃饭; clear action, no text.",
+        "revised_prompt": null,
+        "seed": 1343063265,
+        "content_hash": "25938d8c755b44d72616d7ce5128969466cd229a02a82521caf6bb554e4e2c37",
+        "generated_at": "2026-07-11T17:46:34.979532+00:00",
+        "provider_request_id": "ti_p4ayksli1m7qn5ruht",
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "raster_file_size": 1393838,
+      "svg_fallback": "assets/02-fallback.svg",
+      "fallback_used": false,
+      "fallback_reason": null
+    },
+    {
+      "concept": "喝水",
+      "request": {
+        "id": "raster-ab-3",
+        "concept": "喝水",
+        "scene_description": "Chinese language classroom illustration of 喝水; clear action, no text.",
+        "illustration_role": "benchmark_primary_visual",
+        "style_profile": "soft_flat_educational_v1",
+        "aspect_ratio": "16:9",
+        "width": null,
+        "height": null,
+        "negative_constraints": [
+          "no words",
+          "no watermark",
+          "no learner-facing metadata"
+        ],
+        "seed": null,
+        "candidate_count": 1,
+        "language_context": {},
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "latency_ms": 20929.6,
+      "raster": {
+        "provider": "experimental_openai_images",
+        "model": "Qwen/Qwen-Image",
+        "local_path": "assets/03-raster.png",
+        "mime_type": "image/png",
+        "width": 1536,
+        "height": 864,
+        "prompt": "Chinese language classroom illustration of 喝水; clear action, no text.",
+        "revised_prompt": null,
+        "seed": 1162643388,
+        "content_hash": "1f3a0a789e0c56c0cb88d28b69f27817b1ad1fe834263d4ca3affacab89bc1f3",
+        "generated_at": "2026-07-11T17:46:55.909357+00:00",
+        "provider_request_id": "ti_2narmxcj6xyfrs23y8",
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "raster_file_size": 1045993,
+      "svg_fallback": "assets/03-fallback.svg",
+      "fallback_used": false,
+      "fallback_reason": null
+    },
+    {
+      "concept": "学习",
+      "request": {
+        "id": "raster-ab-4",
+        "concept": "学习",
+        "scene_description": "Chinese language classroom illustration of 学习; clear action, no text.",
+        "illustration_role": "benchmark_primary_visual",
+        "style_profile": "soft_flat_educational_v1",
+        "aspect_ratio": "16:9",
+        "width": null,
+        "height": null,
+        "negative_constraints": [
+          "no words",
+          "no watermark",
+          "no learner-facing metadata"
+        ],
+        "seed": null,
+        "candidate_count": 1,
+        "language_context": {},
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "latency_ms": 29982.3,
+      "raster": null,
+      "raster_file_size": 0,
+      "svg_fallback": "assets/04-fallback.svg",
+      "fallback_used": true,
+      "fallback_reason": "network: Verified fallback request failed: curl: (56) The requested URL returned error: 451"
+    },
+    {
+      "concept": "学生向老师问好",
+      "request": {
+        "id": "raster-ab-5",
+        "concept": "学生向老师问好",
+        "scene_description": "Chinese language classroom illustration of 学生向老师问好; clear action, no text.",
+        "illustration_role": "benchmark_primary_visual",
+        "style_profile": "soft_flat_educational_v1",
+        "aspect_ratio": "16:9",
+        "width": null,
+        "height": null,
+        "negative_constraints": [
+          "no words",
+          "no watermark",
+          "no learner-facing metadata"
+        ],
+        "seed": null,
+        "candidate_count": 1,
+        "language_context": {},
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "latency_ms": 15406.2,
+      "raster": {
+        "provider": "experimental_openai_images",
+        "model": "Qwen/Qwen-Image",
+        "local_path": "assets/05-raster.png",
+        "mime_type": "image/png",
+        "width": 1536,
+        "height": 864,
+        "prompt": "Chinese language classroom illustration of 学生向老师问好; clear action, no text.",
+        "revised_prompt": null,
+        "seed": 1829810281,
+        "content_hash": "7ace511bc7a73b09771356f191362cb534f238f83424ef01c34944860fca9d65",
+        "generated_at": "2026-07-11T17:47:41.298548+00:00",
+        "provider_request_id": "ti_wh1smjw10krp1shjii",
+        "source_trace": [
+          "diagnostics/raster_provider_ab"
+        ],
+        "warnings": []
+      },
+      "raster_file_size": 1116490,
+      "svg_fallback": "assets/05-fallback.svg",
+      "fallback_used": false,
+      "fallback_reason": null
+    }
+  ]
+}

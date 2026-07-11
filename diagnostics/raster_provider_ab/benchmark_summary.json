@@ -1,0 +1,67 @@
+{
+  "schema": "hanclassstudio.raster_provider_ab_summary.v1",
+  "diagnostic_only": true,
+  "human_review_required": true,
+  "records": [
+    {
+      "concept": "睡觉",
+      "latency_ms": 14891.9,
+      "provider": "experimental_openai_images",
+      "model": "Qwen/Qwen-Image",
+      "local_file_size": 1170925,
+      "fallback_used": false,
+      "human_review": {
+        "status": "pending",
+        "notes": ""
+      }
+    },
+    {
+      "concept": "吃饭",
+      "latency_ms": 14514.2,
+      "provider": "experimental_openai_images",
+      "model": "Qwen/Qwen-Image",
+      "local_file_size": 1361017,
+      "fallback_used": false,
+      "human_review": {
+        "status": "pending",
+        "notes": ""
+      }
+    },
+    {
+      "concept": "喝水",
+      "latency_ms": 14426.1,
+      "provider": "experimental_openai_images",
+      "model": "Qwen/Qwen-Image",
+      "local_file_size": 1169965,
+      "fallback_used": false,
+      "human_review": {
+        "status": "pending",
+        "notes": ""
+      }
+    },
+    {
+      "concept": "学习",
+      "latency_ms": 14656.5,
+      "provider": "experimental_openai_images",
+      "model": "Qwen/Qwen-Image",
+      "local_file_size": 1283261,
+      "fallback_used": false,
+      "human_review": {
+        "status": "pending",
+        "notes": ""
+      }
+    },
+    {
+      "concept": "学生向老师问好",
+      "latency_ms": 14118.6,
+      "provider": "experimental_openai_images",
+      "model": "Qwen/Qwen-Image",
+      "local_file_size": 1290065,
+      "fallback_used": false,
+      "human_review": {
+        "status": "pending",
+        "notes": ""
+      }
+    }
+  ]
+}
