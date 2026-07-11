@@ -78,6 +78,14 @@ class SlideComponent(BaseModel):
 class MediaRequirements(BaseModel):
     image_prompt: str | None = None
     image_key: str | None = None
+    # Discriminator between a raster image (placeholder or provider PNG) and a
+    # hand-written, offline-safe vector illustration driven by the locked contract.
+    media_kind: Literal["raster", "svg_illustration"] = "raster"
+    svg_style: str | None = None
+    # Illustration planning controls (consumed by the SVG illustration pipeline).
+    illustration_level: Literal["icon", "scene"] | None = None
+    text_policy: Literal["no_text", "semantic_symbols_only", "short_environment_label"] | None = None
+    scene_type: str | None = None
     audio_text: str | None = None
     audio_key: str | None = None
     video_scene_prompt: str | None = None

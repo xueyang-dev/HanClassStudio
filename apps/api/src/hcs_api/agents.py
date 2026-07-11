@@ -414,7 +414,7 @@ def _build_dialogue_lesson(
     slides.append(LessonSlide(id=slide_id, slide_type="CoverSlide", layout_variant="centered_title", title=topic,
         content_blocks=[ContentBlock(id="cover_intro", block_type="subtitle", text=f"{profile.learner_level} · {profile.estimated_duration}",
              scaffolding_text=_language_hint(profile))],
-        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"dialogue scene for {topic}", profile), image_key="slide_1_scene")))
+        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"dialogue scene for {topic}", profile), image_key="slide_1_scene", media_kind="svg_illustration")))
 
     slide_id += 1
     slides.append(LessonSlide(id=slide_id, slide_type="ObjectiveSlide", layout_variant="three_goals", title="学习目标",
@@ -467,7 +467,7 @@ def _build_character_lesson(
     slides.append(LessonSlide(id=slide_id, slide_type="CoverSlide", layout_variant="centered_title", title=topic,
         content_blocks=[ContentBlock(id="cover_intro", block_type="subtitle", text=f"{profile.learner_level} · {profile.estimated_duration}",
              scaffolding_text=_language_hint(profile))],
-        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"character writing scene for {topic}", profile), image_key="slide_1_scene")))
+        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"character writing scene for {topic}", profile), image_key="slide_1_scene", media_kind="svg_illustration")))
 
     slide_id += 1
     slides.append(LessonSlide(id=slide_id, slide_type="ObjectiveSlide", layout_variant="three_goals", title="学习目标",
@@ -506,7 +506,7 @@ def _build_mixed_lesson(
     slides.append(LessonSlide(id=slide_id, slide_type="CoverSlide", layout_variant="centered_title", title=topic,
         content_blocks=[ContentBlock(id="cover_intro", block_type="subtitle", text=f"{profile.learner_level} · {profile.estimated_duration}",
              scaffolding_text=_language_hint(profile))],
-        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"classroom scene for {topic}", profile), image_key="slide_1_scene")))
+        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"classroom scene for {topic}", profile), image_key="slide_1_scene", media_kind="svg_illustration")))
 
     slide_id += 1
     objectives = _build_objectives(topic, "mixed_lesson", profile)
@@ -518,7 +518,7 @@ def _build_mixed_lesson(
     slides.append(LessonSlide(id=slide_id, slide_type="WarmUpSlide", layout_variant="image_prompt", title="看图说一说",
         content_blocks=[ContentBlock(id="warmup_prompt", block_type="prompt", text="你看到了什么？用中文说一个词或一个句子。",
              scaffolding_text=_scaffold("Look and say one Chinese word or sentence.", profile))],
-        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"simple warm-up for {topic}", profile), image_key="slide_3_warmup")))
+        media_requirements=MediaRequirements(image_prompt=_image_prompt(f"simple warm-up for {topic}", profile), image_key="slide_3_warmup", media_kind="svg_illustration")))
 
     slide_id += 1
     slides.append(_vocab_slide(slide_id, vocabulary[:6], profile))

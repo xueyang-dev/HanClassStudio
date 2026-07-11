@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import html
+import json
 import math
 import wave
 from pathlib import Path
 
 from .models import AssetFile, AssetManifest, LessonBlueprint, ProviderSettings
-from .providers import ProviderError, generate_openai_image, generate_openai_tts
+from .providers import ProviderError, _llm_enabled, generate_openai_image, generate_openai_tts
+from .svg_illustration import (
+    BRAND_ACCENT, SvgContract, generate_svg_illustration, placeholder_svg,
+    build_scene_spec_for_concept, render_scene_spec,
+)
 
 
 def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint, preserve_media_origin_trace: bool = False) -> AssetManifest:
@@ -22,7 +27,14 @@ def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint, p
         if slide.media_requirements.image_key and slide.media_requirements.image_prompt:
             filename = f"{slide.media_requirements.image_key}.svg"
             path = image_dir / filename
-            path.write_text(_placeholder_svg(slide.media_requirements.image_prompt, slide.id), encoding="utf-8")
+            if slide.media_requirements.media_kind == "svg_illustration":
+                spec = build_scene_spec_for_concept(
+                    slide.media_requirements.image_prompt or "", blueprint.lesson_title
+                )
+                path.write_text(render_scene_spec(spec), encoding="utf-8")
+                path.with_suffix(".scene.json").write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+            else:
+                path.write_text(_placeholder_svg(slide.media_requirements.image_prompt, slide.id), encoding="utf-8")
             images.append(
                 AssetFile(
                     id=slide.media_requirements.image_key,
@@ -57,6 +69,55 @@ def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint, p
     return AssetManifest(images=images, audio=audio)
 
 
+def _read_spec_lock(project_root: Path) -> dict | None:
+    spec_path = project_root / "specs" / "spec_lock.json"
+    if spec_path.exists():
+        try:
+            return json.loads(spec_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def _upgrade_svg_illustrations(
+    project_root: Path,
+    manifest: AssetManifest,
+    blueprint: LessonBlueprint,
+    settings: ProviderSettings,
+    lesson_ctx: dict,
+    svg_keys: set[str],
+    offline_safe: bool,
+) -> None:
+    """Replace placeholder SVGs with locked-contract LLM illustrations where enabled."""
+    image_dir = project_root / "assets" / "images"
+    slide_by_key = {
+        s.media_requirements.image_key: s
+        for s in blueprint.slides
+        if s.media_requirements.image_key
+    }
+    for asset in manifest.images:
+        if asset.id not in svg_keys:
+            continue
+        slide = slide_by_key.get(asset.id)
+        if slide is None:
+            continue
+        contract = SvgContract(
+            asset_id=asset.id,
+            lesson_title=blueprint.lesson_title,
+            target_language="Chinese",
+            scaffold_language=lesson_ctx.get("scaffolding_language", "English"),
+            learner_level=lesson_ctx.get("learner_level", "zero_beginner"),
+            slide_id=slide.id,
+            brief=asset.prompt or slide.media_requirements.image_prompt or "",
+            style=slide.media_requirements.svg_style or "flat",
+            offline_safe=offline_safe,
+        )
+        svg, _report, spec = generate_svg_illustration(contract, settings.llm)
+        (image_dir / f"{asset.id}.svg").write_text(svg, encoding="utf-8")
+        (image_dir / f"{asset.id}.scene.json").write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+        asset.path = f"assets/images/{asset.id}.svg"
+
+
 def generate_configured_media(
     project_root: Path,
     blueprint: LessonBlueprint,
@@ -64,22 +125,67 @@ def generate_configured_media(
     preserve_media_origin_trace: bool = False,
 ) -> AssetManifest:
     manifest = generate_placeholder_media(project_root, blueprint, preserve_media_origin_trace)
-    _replace_images_with_provider_assets(project_root, manifest, settings)
+    spec_lock = _read_spec_lock(project_root)
+    media_cfg = (spec_lock or {}).get("media", {})
+    svg_policy = media_cfg.get("svg_illustration_policy", "llm-or-placeholder")
+    offline_safe = media_cfg.get("svg_offline_safe", True)
+    lesson_ctx = (spec_lock or {}).get("lesson", {})
+
+    raster_keys = {
+        s.media_requirements.image_key
+        for s in blueprint.slides
+        if s.media_requirements.image_key and s.media_requirements.media_kind != "svg_illustration"
+    }
+    _replace_images_with_provider_assets(project_root, manifest, settings, allowed_keys=raster_keys)
+
+    svg_keys = {
+        s.media_requirements.image_key
+        for s in blueprint.slides
+        if s.media_requirements.image_key and s.media_requirements.media_kind == "svg_illustration"
+    }
+    if svg_keys and svg_policy != "disabled" and _llm_enabled(settings.llm):
+        _upgrade_svg_illustrations(project_root, manifest, blueprint, settings, lesson_ctx, svg_keys, offline_safe)
+
     _replace_audio_with_provider_assets(project_root, manifest, settings)
     return manifest
+
+
+def generate_raster_image(settings: ProviderSettings, prompt: str, aspect_ratio: str = "16:9") -> bytes | None:
+    """Raster illustration provider seam.
+
+    Single integration point for the *raster* media lane (character poses,
+    scene/context art, classroom hero images). The deterministic SVG lane is
+    handled separately by the SVG illustration pipeline and never reaches here.
+
+    Currently backed by the OpenAI-compatible image API. To add a low-cost
+    raster provider, implement the backend in ``providers.py`` (mirror
+    ``generate_openai_image``) and point this function at it — the rest of the
+    pipeline is untouched. Returns PNG bytes, or ``None`` to fall back to a
+    deterministic placeholder.
+
+    Args:
+        settings: full provider settings (the image backend is ``settings.image``).
+        prompt: the illustration prompt from ``MediaRequirements.image_prompt``.
+        aspect_ratio: requested aspect (e.g. ``"16:9"`` / ``"1:1"``); honour it
+            when the chosen backend supports it.
+    """
+    return generate_openai_image(settings.image, prompt)
 
 
 def _replace_images_with_provider_assets(
     project_root: Path,
     manifest: AssetManifest,
     settings: ProviderSettings,
+    allowed_keys: set[str] | None = None,
 ) -> None:
     if settings.image.provider == "placeholder":
         return
     image_dir = project_root / "assets" / "images"
     for asset in manifest.images:
+        if allowed_keys is not None and asset.id not in allowed_keys:
+            continue
         try:
-            image_bytes = generate_openai_image(settings.image, asset.prompt)
+            image_bytes = generate_raster_image(settings, asset.prompt)
         except ProviderError:
             image_bytes = None
         if not image_bytes:

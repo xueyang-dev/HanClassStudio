@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 from .models import AssetManifest, ClassroomQualityReport, LessonBlueprint, QualityReport, TeachingCandidates
 from .blueprint_utils import duplicate_component_id_messages
 from .components import load_component_registry
+from .svg_illustration import check_svg_offline_safe, check_illustration_quality
 
 
 def check_quality(project_root: Path, blueprint: LessonBlueprint, manifest: AssetManifest) -> QualityReport:
@@ -137,8 +139,10 @@ def check_quality(project_root: Path, blueprint: LessonBlueprint, manifest: Asse
             msg = f"资源路径不存在：{asset.path}"
             report.resource_errors.append(msg)
             _block(report, msg)
-        if asset.path.endswith(".svg") or asset.path.endswith(".wav"):
+        if asset.path.endswith(".wav"):
             _warn(report, f"资源使用占位文件：{asset.path}")
+
+    _check_svg_illustrations(project_root, manifest, report)
 
     if not (project_root / "courseware" / "lesson.html").exists():
         _block(report, "courseware/lesson.html 缺失")
@@ -157,6 +161,62 @@ def check_quality(project_root: Path, blueprint: LessonBlueprint, manifest: Asse
     else:
         report.suggestions.append("质量检查通过：标题、互动答案、媒体路径和资源文件均完整。")
     return report
+
+
+def _check_svg_illustrations(project_root: Path, manifest: AssetManifest, report: QualityReport) -> None:
+    """Verify every SVG asset on disk: offline-safe + illustration-quality.
+
+    Offline-safety (can it load safely / is it well-formed) is kept separate from
+    illustration-quality (is it a good teaching picture). The SceneSpec persisted
+    next to each SVG drives the illustration-quality checks.
+    """
+    image_dir = project_root / "assets" / "images"
+    results: list[dict] = []
+    for asset in manifest.images:
+        if not asset.path.lower().endswith(".svg"):
+            continue
+        svg_path = project_root / asset.path
+        if not svg_path.exists():
+            results.append({"asset_id": asset.id, "state": "blocked", "blocking": ["SVG asset missing on disk"], "warnings": []})
+            continue
+        try:
+            svg = svg_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            results.append({"asset_id": asset.id, "state": "blocked", "blocking": ["SVG asset unreadable"], "warnings": []})
+            continue
+        entry = check_svg_offline_safe(svg, asset.id).to_dict()
+        # Merge illustration-quality (teaching-suitability) findings.
+        scene_path = image_dir / f"{asset.id}.scene.json"
+        if scene_path.exists():
+            try:
+                spec = json.loads(scene_path.read_text(encoding="utf-8"))
+                iq = check_illustration_quality(spec, svg)
+                entry["illustration_quality"] = iq
+                entry["scene_spec_valid"] = iq.get("scene_spec_valid", False)
+            except Exception:
+                entry["illustration_quality"] = {"state": "warning", "notes": ["scene spec unreadable"]}
+        results.append(entry)
+
+    if not results:
+        return
+
+    qdir = project_root / "quality"
+    qdir.mkdir(parents=True, exist_ok=True)
+    qdir.joinpath("svg_illustration_report.json").write_text(
+        json.dumps(
+            {"schema": "hanclassstudio.svg_illustration_report.v1", "assets": results},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    unsafe = [r for r in results if r["state"] != "pass"]
+    if unsafe:
+        ids = ", ".join(r["asset_id"] for r in unsafe)
+        _warn(report, f"{len(unsafe)} 个 SVG 插画需复核（离线安全）：{ids}")
+    weak = [r["asset_id"] for r in results if r.get("illustration_quality", {}).get("state") in ("blocked", "warning")]
+    if weak:
+        _warn(report, f"{len(weak)} 个 SVG 插画需人工视觉复核（教学适用性）：{', '.join(weak)}")
 
 
 def check_classroom_quality(blueprint: LessonBlueprint, candidates: TeachingCandidates | None = None) -> ClassroomQualityReport:

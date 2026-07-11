@@ -48,6 +48,8 @@ def build_spec_lock(project_id: str, source: SourceMaterial, profile: LessonProf
         },
         "media": {
             "image_policy": "placeholder-or-provider",
+            "svg_illustration_policy": "llm-or-placeholder",
+            "svg_offline_safe": True,
             "audio_policy": "placeholder-or-provider",
             "video_policy": "optional",
             "keep_source_images": True,
@@ -144,6 +146,8 @@ def build_media_plan(blueprint: LessonBlueprint) -> dict[str, Any]:
                     "id": media.image_key,
                     "slide_id": slide.id,
                     "prompt": media.image_prompt,
+                    "media_kind": media.media_kind,
+                    "svg_style": media.svg_style,
                     "aspect_ratio": "16:9",
                     "required": True,
                 }

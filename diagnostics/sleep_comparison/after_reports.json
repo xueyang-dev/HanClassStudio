@@ -1,0 +1,17 @@
+{
+ "16:9": {
+  "offline": "pass",
+  "iq": "pass",
+  "blocking": []
+ },
+ "1:1": {
+  "offline": "pass",
+  "iq": "pass",
+  "blocking": []
+ },
+ "thumb": {
+  "offline": "pass",
+  "iq": "pass",
+  "blocking": []
+ }
+}
