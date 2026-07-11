@@ -27,15 +27,15 @@ The core philosophy is **State-first, Evidence-first**: instead of asking "what 
 ## Project Status
 
 ```
-Phase 2B: substantially complete            ✅
-Phase 2C: internal technical validation     ✅
-Real teaching pilot:                        ⏳ not started
-Production v2 cutover:                      ⏳ not started
+Phase 2B: substantially complete
+Phase 2C: internal technical validation complete
+Real teaching validation: not started
+Production v2 cutover: not started
 ```
 
 The codebase now has a complete production pipeline — from material upload and AI analysis to teaching kernel generation, courseware review, auto-revision, dual HTML/PPTX export, and quality gates.
 
-**Next milestone**: a three-lesson teacher-led pilot. Contributions and feedback are welcome.
+**Next milestone**: a teacher-led pilot of three real Chinese micro-lessons. Browser automation supports the pilot but does not block it. Contributions and feedback are welcome.
 
 The authoritative roadmap is [docs/roadmap.md](docs/roadmap.md).
 
@@ -67,7 +67,7 @@ The authoritative roadmap is [docs/roadmap.md](docs/roadmap.md).
 
 - **Language Profiles** — Built-in Arabic, Thai, Korean, Japanese, and English glossaries for classroom scaffolding.
 - **i18n UI** — Teacher workbench supports 6 interface languages: Chinese, English, Japanese, Korean, Arabic, Russian.
-- **Presentation Bindings** — Formal activity-to-component binding contract (v0.2.2), replacing the current heuristic vocabulary-based evidence mapping.
+- **Presentation Contracts** — v2 uses content, media-request, abstract-binding, and canonical-blueprint contracts; the v1 slide/component binding remains a production renderer compatibility contract.
 
 ---
 

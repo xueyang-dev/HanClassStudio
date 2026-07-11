@@ -25,7 +25,7 @@ npm run build:web   # 前端 TypeScript 类型检查 + Vite 生产构建
 
 ```
 platform darwin -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0
-rootdir: /Users/xueyang/Dev/HanClassStudio/apps/api
+rootdir: <repository>/apps/api
 collected 18 items
 
 apps/api/tests/test_api_routes.py ...........                  [61%]

@@ -11,7 +11,8 @@ Choose one route before editing specs or blueprints.
 | `topic-research` | User provides only a topic, not source material | research notes for later source intake |
 | `template-fill` | Fill an existing courseware/template structure with new lesson content | template-bound artifacts |
 | `media-refresh` | Keep lesson structure but regenerate or replace media | updated media plan and assets |
-| `refine-blueprint` | Improve existing lesson structure or interactions after review | updated blueprints |
+| `refine-blueprint` | Improve legacy production slide/component projection without changing pedagogy | updated compatibility blueprints |
+| `main-generation` / kernel regeneration | Change learning goals, evidence, activity flow, learner constraints, or success criteria | updated learning artifacts before presentation recompilation |
 | `runtime-review` | Inspect rendered courseware, quality report, or export readiness | findings and upstream fixes |
 
 ## Ambiguous PPT Requests
@@ -24,3 +25,4 @@ Preserve original page order and wording -> `faithful-enhance`.
 
 Redesign the lesson flow -> `main-generation`.
 
+Do not implement a pedagogical change only by editing slide titles or component types. Route goal, evidence, activity, level, and cognitive-sequence changes through the State-Evidence kernel.
