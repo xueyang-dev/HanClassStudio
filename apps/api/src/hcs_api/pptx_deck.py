@@ -89,6 +89,8 @@ def _map_slide_to_deck(
 
     # Default: generic content
     deck = PptxDeckSlide(slide_id=slide.id, slide_purpose=st, traditional_layout="generic_content")
+    deck.image_key = slide.media_requirements.image_key or ""
+    deck.audio_key = slide.media_requirements.audio_key or ""
     deck.teacher_notes.append(f"Slide type: {st}")
     deck.teacher_notes.append(f"Teacher instruction: present {title}")
 
@@ -164,7 +166,7 @@ def _map_slide_to_deck(
         deck.visual_hint = "two_scene_contrast"
 
     elif st == "DialogueSlide":
-        deck.traditional_layout = "dialogue_bubbles"
+        deck.traditional_layout = "two_card_contrast" if "contrast" in slide.layout_variant else "dialogue_bubbles"
         texts = [b.text for b in slide.content_blocks[:4] if b.text]
         deck.main_focus = texts[0] if texts else "对话"
         deck.target_text = "\n".join(texts)
@@ -172,7 +174,8 @@ def _map_slide_to_deck(
         deck.speaker_notes = ["Listen to the dialogue, then practice with your classmate."]
 
     elif st == "PracticeSlide":
-        deck.traditional_layout = "match_pairs"
+        component_types = {component.component_type for component in slide.components}
+        deck.traditional_layout = "listen_choose" if "ListenAndChoose" in component_types else "match_pairs"
         pairs = []
         for c in slide.components:
             for p in c.data.get("pairs", []):

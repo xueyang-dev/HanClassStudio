@@ -13,6 +13,16 @@ HanClassStudio should use four independent template kinds.
 
 This splits "how it looks", "how it teaches", and "how it runs".
 
+## Editable PPTX design profile
+
+Editable PPTX export uses a compact profile extracted from the real 16:9 teacher reference deck at
+`runtime/projects/0bce727f8b6f/uploads/第1课 教学课件 中文 七年级 第一学期.pptx`.
+The profile owns presentation-only tokens and recipes: canvas, safe margins, typography hierarchy,
+palette, image cropping, corner decoration, and the limited slide archetypes required by current
+courseware. When the reference deck is locally available, its theme, layouts, and embedded fonts are
+retained in the exported PPTX container. Pedagogy remains owned by the learning and presentation
+contracts; the PPTX profile does not select goals, evidence, or activities.
+
 ## Template Package Shape
 
 ```text
