@@ -98,8 +98,11 @@ def generate_project_media(
     blueprint: LessonBlueprint,
     settings: ProviderSettings,
     preserve_media_origin_trace: bool = False,
+    force_regenerate: bool = False,
 ) -> AssetManifest:
-    return generate_configured_media(project_root, blueprint, settings, preserve_media_origin_trace)
+    return generate_configured_media(
+        project_root, blueprint, settings, preserve_media_origin_trace, force_regenerate,
+    )
 
 
 def write_spec_artifacts(

@@ -241,6 +241,35 @@ class GeneratedImageFailure(BaseModel):
     source_trace: list[str] = Field(default_factory=list)
 
 
+MediaReviewState = Literal[
+    "pending_review",
+    "accepted",
+    "rejected",
+    "regenerate_requested",
+    "replaced_by_teacher",
+    "fallback_accepted",
+]
+
+
+class AssetCandidate(BaseModel):
+    """One retained local candidate for a reviewable project asset."""
+
+    id: str
+    path: str
+    mime_type: str
+    content_hash: str
+    source: Literal["generated", "fallback", "teacher"]
+    generation: GeneratedImage | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
+class AssetReviewEvent(BaseModel):
+    state: MediaReviewState
+    candidate_id: str | None = None
+    notes: str = ""
+    occurred_at: str = Field(default_factory=utc_now_iso)
+
+
 class AssetFile(BaseModel):
     id: str
     kind: Literal["image", "audio", "video", "font", "data"]
@@ -256,6 +285,17 @@ class AssetFile(BaseModel):
     generation_failure: GeneratedImageFailure | None = None
     fallback_used: bool = False
     fallback_reason: str | None = None
+    review_state: MediaReviewState | None = None
+    selected_candidate_id: str | None = None
+    candidates: list[AssetCandidate] = Field(default_factory=list)
+    review_history: list[AssetReviewEvent] = Field(default_factory=list)
+    request_fingerprint: str | None = None
+
+
+class MediaReviewAction(BaseModel):
+    state: MediaReviewState
+    candidate_id: str | None = None
+    notes: str = ""
 
 
 class AssetManifest(BaseModel):

@@ -3,22 +3,25 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .agent import generate_agent_package, validate_agent_output
 from .agents import infer_profile
+from .asset_review import apply_review, render_review_page, replace_with_teacher_image
 from .components import load_component_registry
 from .models import (
     AgentPackage,
     AgentValidation,
+    AssetFile,
     AssetManifest,
     ArtifactTree,
     EditablePptxExportResponse,
     LessonBlueprint,
     LessonProfile,
+    MediaReviewAction,
     ProjectState,
     ProviderSettings,
     SourceMaterial,
@@ -696,15 +699,56 @@ def save_blueprint(project_id: str, blueprint: LessonBlueprint) -> ProjectState:
 
 
 @app.post("/api/projects/{project_id}/media", response_model=ProjectState)
-def generate_media(project_id: str) -> ProjectState:
+def generate_media(project_id: str, force_regenerate: bool = Query(False)) -> ProjectState:
     root = _assert_project(project_id)
     blueprint = read_model(project_id, "lesson_blueprint.json", LessonBlueprint)
     if not blueprint:
         raise HTTPException(status_code=400, detail="Generate a lesson blueprint first")
-    manifest = generate_project_media(root, blueprint, read_provider_settings())
+    manifest = generate_project_media(
+        root, blueprint, read_provider_settings(), force_regenerate=force_regenerate,
+    )
     write_model(project_id, "asset_manifest.json", manifest)
     write_json(project_id, "assets/data/attribution.json", {"schema": "hanclassstudio.attribution.v1", "items": []})
     return get_project_state(project_id)
+
+
+@app.get("/api/projects/{project_id}/media/review", response_class=HTMLResponse)
+def media_review_page(project_id: str) -> HTMLResponse:
+    _assert_project(project_id)
+    manifest = read_model(project_id, "asset_manifest.json", AssetManifest) or AssetManifest()
+    return HTMLResponse(render_review_page(project_id, manifest))
+
+
+@app.put("/api/projects/{project_id}/media/{asset_id}/review", response_model=AssetFile)
+def review_media(project_id: str, asset_id: str, action: MediaReviewAction) -> AssetFile:
+    root = _assert_project(project_id)
+    manifest = read_model(project_id, "asset_manifest.json", AssetManifest)
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Asset manifest not found")
+    try:
+        asset = apply_review(root, manifest, asset_id, action)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    write_model(project_id, "asset_manifest.json", manifest)
+    return asset
+
+
+@app.post("/api/projects/{project_id}/media/{asset_id}/replacement", response_model=AssetFile)
+async def replace_media(
+    project_id: str, asset_id: str, file: UploadFile = File(...), notes: str = Form(""),
+) -> AssetFile:
+    root = _assert_project(project_id)
+    manifest = read_model(project_id, "asset_manifest.json", AssetManifest)
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Asset manifest not found")
+    try:
+        asset = replace_with_teacher_image(
+            root, manifest, asset_id, await file.read(), file.content_type or "", notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    write_model(project_id, "asset_manifest.json", manifest)
+    return asset
 
 
 @app.post("/api/projects/{project_id}/render", response_model=ProjectState)
