@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-label="Chinese language classroom illustration of 睡觉; clear action, no text.">
+  <rect width="1200" height="675" fill="#F8FAF7"/>
+  <circle cx="260" cy="210" r="132" fill="hsl(41, 76%, 52%)" opacity="0.22"/>
+  <circle cx="930" cy="455" r="168" fill="hsl(161, 62%, 60%)" opacity="0.24"/>
+  <path d="M190 505 C330 360 440 430 560 332 C684 232 792 258 1010 140" fill="none" stroke="hsl(41, 76%, 52%)" stroke-width="24" stroke-linecap="round" opacity="0.82"/>
+  <rect x="252" y="188" width="504" height="324" rx="8" fill="#FFFFFF" stroke="#DCE8E2" stroke-width="4"/>
+  <rect x="312" y="248" width="168" height="24" rx="8" fill="hsl(41, 76%, 52%)" opacity="0.38"/>
+  <rect x="312" y="306" width="356" height="18" rx="8" fill="#6F8D88" opacity="0.32"/>
+  <rect x="312" y="356" width="292" height="18" rx="8" fill="#6F8D88" opacity="0.24"/>
+  <rect x="800" y="220" width="148" height="148" rx="8" fill="hsl(161, 62%, 60%)" opacity="0.48"/>
+  <path d="M820 366 L874 300 L916 342 L948 306 L948 366 Z" fill="#FFFFFF" opacity="0.82"/>
+  <circle cx="846" cy="260" r="20" fill="#FFFFFF" opacity="0.82"/>
+</svg>

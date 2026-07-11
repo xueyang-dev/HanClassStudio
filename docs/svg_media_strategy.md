@@ -142,13 +142,16 @@ def generate_raster_image(
     """Raster illustration provider seam.
 
     返回 PNG bytes；失败返回 None（上层回退占位图）。
-    当前委托 generate_openai_image；替换为低成本后端时只改这里 + providers 内实现。
+    向后兼容 façade：旧调用仍返回 bytes / None。内部将旧参数翻译为
+    IllustrationRequest 并交给 provider-neutral 的实验适配层。
     """
     return generate_openai_image(settings.image, prompt)
 ```
 
-这是栅格轨**唯一**的集成点。管道其余部分（媒体计划、质量门、PPTX 导出）都不
-感知具体后端。
+这是栅格轨**唯一**的兼容集成点。管道其余部分（媒体计划、质量门、PPTX 导出）都不
+感知具体后端。实验适配器位于 `raster_provider.py`；当前仅实现
+`experimental_openai_images` 一种 OpenAI Images-compatible 协议后端，默认配置仍为
+`placeholder`，因此不会自动调用任何计费服务。
 
 ### 4.2 契约（Contract）
 
@@ -156,29 +159,21 @@ def generate_raster_image(
 |----|------|
 | 输入 `prompt` | 来自 `MediaRequirements.image_prompt`（由 agents/strategist 生成） |
 | 输入 `aspect_ratio` | `"16:9"` / `"1:1"` 等；后端支持时务必遵守（课堂主图多为 16:9） |
-| 输入 `settings.image` | `ImageProviderSettings`：`provider` 选择后端，`api_key`、`model`、`base_url` |
+| 输入 `settings.image` | `ImageProviderSettings`：`provider`、`api_key`、`model`、`endpoint_url` |
 | 输出 | `bytes | None`：PNG 图像字节；**失败必须返回 `None` 而非抛异常**（或抛 `ProviderError`，调用方会捕获为 None） |
 | 选择机制 | `settings.image.provider`（当前示例值：`"openai_images"` / `"openai_compatible"` / `"placeholder"`） |
 | 失败回退 | 返回 None → 管道保留/生成占位图，不阻断课件 |
 
-### 4.3 推荐实现步骤（Codex 接手）
+### 4.3 实验适配器约束
 
-1. **后端实现**：在 `apps/api/src/hcs_api/providers.py` 新增
-   `generate_<provider>_image(settings.image, prompt, aspect_ratio) -> bytes | None`，
-   镜像 `generate_openai_image` 的签名与错误处理（`ProviderError`、超时、`None` 回退）。
-2. **接入选择**：在 `generate_raster_image`（media.py）按 `settings.image.provider`
-   分派到新后端（或直接改 `generate_raster_image` 内部委托）。**不要**改动
-   `_replace_images_with_provider_assets` 及更上层。
-3. **低成本约束**：
-   - 优先选用性价比模型 / 端点；
-   - 按 `prompt`（或 `image_key`）做结果缓存，避免重复计费；
-   - 尊重 `spec_lock.media.svg_offline_safe` 与整体预算；
-   - 不把栅格轨用于「图标 / 结构图 / 简单语义图 / 离线兜底」——那些是 SVG 轨的
-     固定职责（见 §2）。
-4. **不要做的事**：
-   - 不要试图用栅格替代 SVG 轨的离线兜底职责；
-   - 不要让 LLM 直接输出图像或 SVG；
-   - 不要改变 `MediaRequirements.media_kind` 的语义。
+- 仅当 `settings.image.provider == "experimental_openai_images"` 时调用；否则保留旧
+  façade 行为。`HCS_EXPERIMENTAL_RASTER_API_KEY` 可覆盖现有 `api_key` 设置。
+- 固定 30 秒超时、至多一次重试；超时、HTTP、网络、响应、MIME 和配置错误均会分类。
+- 短期 URL 会在写入 `assets/images/` 前立即下载；AssetManifest / diagnostics 不保留该
+  URL，改记录 MIME、内容 hash、provider/model/prompt、请求 ID 和本地路径。
+- 实验失败时保留先行生成的确定性本地 SVG placeholder，并写入 fallback reason；不会
+  静默转到另一计费 provider。
+- 不把栅格轨用于「图标 / 结构图 / 简单语义图 / 离线兜底」——那些仍是 SVG 轨的固定职责。
 
 ### 4.4 测试衔接
 
@@ -201,7 +196,8 @@ def generate_raster_image(
 - 栅格轨集成点 `generate_raster_image` 已留接口（当前委托 OpenAI 兼容端点）。
 
 ### 待办（非本次范围，留给后续）
-- 实现低成本栅格 Provider（见 §4，ChatGPT Codex 接手）。
+- 对 `experimental_openai_images` 完成低成本端点的教师视觉 A/B 验证；在未复核画廊前不
+  做生产切换。
 - 扩展示例概念（CONCEPT_RECIPES）覆盖更多词汇；复杂人物场景改走栅格轨。
 - 可选：cairosvg 加入依赖以便 PPTX 真实栅格化 SVG（当前为 best-effort 回退）。
 

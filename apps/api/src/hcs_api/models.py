@@ -111,6 +111,48 @@ class LessonBlueprint(BaseModel):
     slides: list[LessonSlide] = Field(default_factory=list)
 
 
+class IllustrationRequest(BaseModel):
+    """Provider-neutral request for experimental raster illustration generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    concept: str = ""
+    scene_description: str = ""
+    illustration_role: str = "classroom_visual"
+    style_profile: str = "soft_flat_educational_v1"
+    aspect_ratio: str = "16:9"
+    width: int | None = None
+    height: int | None = None
+    negative_constraints: list[str] = Field(default_factory=list)
+    seed: int | None = None
+    candidate_count: int = 1
+    language_context: dict[str, str] = Field(default_factory=dict)
+    source_trace: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GeneratedImage(BaseModel):
+    """Local-only provenance for one successfully persisted raster illustration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str
+    local_path: str
+    mime_type: str
+    width: int | None = None
+    height: int | None = None
+    prompt: str
+    revised_prompt: str | None = None
+    seed: int | None = None
+    content_hash: str
+    generated_at: str = Field(default_factory=utc_now_iso)
+    provider_request_id: str | None = None
+    source_trace: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class AssetFile(BaseModel):
     id: str
     kind: Literal["image", "audio", "video", "font", "data"]
@@ -120,6 +162,11 @@ class AssetFile(BaseModel):
     media_request_id: str | None = None
     # Explicit generation provenance; historical manifests deserialize empty.
     origin_media_requirement_ids: list[str] = Field(default_factory=list)
+    mime_type: str | None = None
+    content_hash: str | None = None
+    generation: GeneratedImage | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
 
 
 class AssetManifest(BaseModel):
