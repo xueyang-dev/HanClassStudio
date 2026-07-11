@@ -252,6 +252,11 @@ def _add_media_card(slide, root: Path, slide_model, manifest: AssetManifest, x: 
     if path and path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
         slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
         return
+    if path and path.suffix.lower() == ".svg":
+        png = _rasterize_svg(path)
+        if png is not None and png.exists():
+            slide.shapes.add_picture(str(png), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+            return
     if is_classroom:
         # Classroom: hide prompt text, use minimal placeholder or nothing
         shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
@@ -476,6 +481,24 @@ def _content_text(slide_model) -> str:
         if block.scaffolding_text and not PROVIDER_REQUIRED_PPTX.search(block.scaffolding_text):
             lines.append(block.scaffolding_text)
     return "\n".join(lines)
+
+
+def _rasterize_svg(svg_path: Path) -> Path | None:
+    """Best-effort rasterize an SVG to PNG for PPTX embedding.
+
+    python-pptx cannot embed SVG directly; if cairosvg is available we rasterize,
+    otherwise we return None and the caller falls back to a placeholder box.
+    """
+    try:
+        import cairosvg  # type: ignore
+    except Exception:
+        return None
+    out = svg_path.with_suffix(".png")
+    try:
+        cairosvg.svg2png(url=str(svg_path), write_to=str(out), output_width=1200, output_height=675)
+        return out
+    except Exception:
+        return None
 
 
 def _image_path(root: Path, image_key: str | None, manifest: AssetManifest) -> Path | None:
