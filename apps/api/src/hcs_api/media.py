@@ -8,7 +8,10 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
-from .models import AssetFile, AssetManifest, GeneratedImage, IllustrationRequest, LessonBlueprint, ProviderSettings
+from .models import (
+    AssetFile, AssetManifest, GeneratedImage, GeneratedImageFailure,
+    IllustrationRequest, LessonBlueprint, ProviderSettings,
+)
 from .providers import ProviderError, _llm_enabled, generate_openai_image, generate_openai_tts
 from .raster_provider import (
     RasterProviderError,
@@ -219,42 +222,16 @@ def _replace_images_with_provider_assets(
             payload = generate_experimental_raster_image(settings.image, request)
         except RasterProviderError as exc:
             if exc.kind != "disabled":
-                # The local deterministic SVG placeholder was created before
-                # this replacement pass. Preserve it as the raster fallback.
-                asset.fallback_used = True
-                asset.fallback_reason = f"{exc.kind}: {exc}"
-                asset.mime_type = "image/svg+xml"
+                _record_raster_fallback(asset, request, settings, exc)
                 diagnostic_records.append(_raster_diagnostic_record(asset, request, "fallback"))
                 continue
         else:
-            suffix = _extension_for_mime(payload.mime_type)
-            filename = f"{asset.id}{suffix}"
-            local_path = image_dir / filename
-            local_path.write_bytes(payload.image_bytes)
-            relative_path = f"assets/images/{filename}"
-            content_hash = sha256(payload.image_bytes).hexdigest()
-            width, height = image_dimensions(payload.image_bytes, payload.mime_type)
-            asset.path = relative_path
-            asset.mime_type = payload.mime_type
-            asset.content_hash = content_hash
-            asset.fallback_used = False
-            asset.fallback_reason = None
-            asset.generation = GeneratedImage(
-                provider=settings.image.provider,
-                model=payload.model,
-                local_path=relative_path,
-                mime_type=payload.mime_type,
-                width=width,
-                height=height,
-                prompt=payload.prompt,
-                revised_prompt=payload.revised_prompt,
-                seed=payload.seed,
-                content_hash=content_hash,
-                generated_at=datetime.now(timezone.utc).isoformat(),
-                provider_request_id=payload.provider_request_id,
-                source_trace=request.source_trace,
-                warnings=payload.warnings,
-            )
+            try:
+                _persist_raster_asset(image_dir, asset, request, settings, payload)
+            except RasterProviderError as exc:
+                _record_raster_fallback(asset, request, settings, exc)
+                diagnostic_records.append(_raster_diagnostic_record(asset, request, "fallback"))
+                continue
             diagnostic_records.append(_raster_diagnostic_record(asset, request, "generated"))
             continue
 
@@ -282,6 +259,79 @@ def _extension_for_mime(mime_type: str) -> str:
     return {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[mime_type]
 
 
+def _persist_raster_asset(image_dir, asset, request, settings, payload) -> None:
+    filename = f"{asset.id}{_extension_for_mime(payload.mime_type)}"
+    local_path = image_dir / filename
+    try:
+        _write_raster_bytes(local_path, payload.image_bytes)
+    except OSError as exc:
+        local_path.unlink(missing_ok=True)
+        raise RasterProviderError(
+            "local_write", f"Could not persist raster asset: {exc}",
+            stage="local_persist", category="local_write",
+            provider_request_id=payload.provider_request_id,
+        ) from exc
+
+    relative_path = f"assets/images/{filename}"
+    content_hash = sha256(payload.image_bytes).hexdigest()
+    width, height = image_dimensions(payload.image_bytes, payload.mime_type)
+    try:
+        generation = GeneratedImage(
+            provider=settings.image.provider,
+            model=payload.model,
+            local_path=relative_path,
+            mime_type=payload.mime_type,
+            width=width,
+            height=height,
+            prompt=payload.prompt,
+            revised_prompt=payload.revised_prompt,
+            seed=payload.seed,
+            content_hash=content_hash,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            provider_request_id=payload.provider_request_id,
+            source_trace=request.source_trace,
+            warnings=payload.warnings,
+        )
+    except Exception as exc:  # pragma: no cover - defensive manifest boundary
+        local_path.unlink(missing_ok=True)
+        raise RasterProviderError(
+            "manifest", f"Could not record raster manifest provenance: {exc}",
+            stage="manifest_record", category="unknown",
+            provider_request_id=payload.provider_request_id,
+        ) from exc
+
+    asset.path = relative_path
+    asset.mime_type = payload.mime_type
+    asset.content_hash = content_hash
+    asset.fallback_used = False
+    asset.fallback_reason = None
+    asset.generation = generation
+    asset.generation_failure = None
+
+
+def _write_raster_bytes(path: Path, content: bytes) -> None:
+    path.write_bytes(content)
+
+
+def _record_raster_fallback(asset, request, settings, exc: RasterProviderError) -> None:
+    # The deterministic local SVG was created before the provider pass.
+    asset.fallback_used = True
+    asset.fallback_reason = f"{exc.category}: {exc}"
+    asset.mime_type = "image/svg+xml"
+    asset.generation = None
+    asset.generation_failure = GeneratedImageFailure(
+        provider=settings.image.provider,
+        model=settings.image.model,
+        stage=exc.stage,
+        category=exc.category,
+        message=str(exc),
+        status_code=exc.status_code,
+        retry_count=exc.retry_count,
+        provider_request_id=exc.provider_request_id,
+        source_trace=request.source_trace,
+    )
+
+
 def _raster_diagnostic_record(asset: AssetFile, request: IllustrationRequest, status: str) -> dict:
     return {
         "request": request.model_dump(mode="json"),
@@ -292,6 +342,7 @@ def _raster_diagnostic_record(asset: AssetFile, request: IllustrationRequest, st
         "fallback_used": asset.fallback_used,
         "fallback_reason": asset.fallback_reason,
         "generation": asset.generation.model_dump(mode="json") if asset.generation else None,
+        "generation_failure": asset.generation_failure.model_dump(mode="json") if asset.generation_failure else None,
     }
 
 

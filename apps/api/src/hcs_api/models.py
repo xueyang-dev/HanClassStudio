@@ -153,6 +153,49 @@ class GeneratedImage(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+RasterFailureStage = Literal[
+    "request_build",
+    "provider_generation",
+    "provider_response_parse",
+    "remote_asset_download",
+    "mime_validation",
+    "local_persist",
+    "manifest_record",
+    "fallback",
+]
+RasterFailureCategory = Literal[
+    "configuration",
+    "authentication",
+    "rate_limit",
+    "provider_generation",
+    "generation_timeout",
+    "response_shape",
+    "download_forbidden",
+    "download_timeout",
+    "invalid_mime",
+    "local_write",
+    "network",
+    "unknown",
+]
+
+
+class GeneratedImageFailure(BaseModel):
+    """Structured provider-neutral provenance for a raster fallback."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str
+    stage: RasterFailureStage
+    category: RasterFailureCategory
+    message: str
+    status_code: int | None = None
+    retry_count: int = 0
+    provider_request_id: str | None = None
+    occurred_at: str = Field(default_factory=utc_now_iso)
+    source_trace: list[str] = Field(default_factory=list)
+
+
 class AssetFile(BaseModel):
     id: str
     kind: Literal["image", "audio", "video", "font", "data"]
@@ -165,6 +208,7 @@ class AssetFile(BaseModel):
     mime_type: str | None = None
     content_hash: str | None = None
     generation: GeneratedImage | None = None
+    generation_failure: GeneratedImageFailure | None = None
     fallback_used: bool = False
     fallback_reason: str | None = None
 
