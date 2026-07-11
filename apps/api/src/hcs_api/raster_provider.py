@@ -63,6 +63,7 @@ class ProviderImagePayload:
     prompt: str
     revised_prompt: str | None
     seed: int | None
+    retry_count: int
     provider_request_id: str | None
     warnings: list[str]
 
@@ -108,7 +109,7 @@ def generate_experimental_raster_image(
     if request.seed is not None:
         payload["seed"] = request.seed
 
-    response, response_request_id = _post_json_with_retries(endpoint, payload, api_key, timeout, retries)
+    response, response_request_id, generation_retry_count = _post_json_with_retries(endpoint, payload, api_key, timeout, retries)
     # SiliconFlow's compatible endpoint returns ``images`` while the OpenAI
     # endpoint uses ``data``. Both contain items with a temporary ``url``.
     items = response.get("data") or response.get("images") or []
@@ -122,6 +123,7 @@ def generate_experimental_raster_image(
     revised_prompt = item.get("revised_prompt") if isinstance(item.get("revised_prompt"), str) else None
     provider_request_id = response_request_id or _first_string(response, "request_id", "id")
     seed = response.get("seed") if isinstance(response.get("seed"), int) else request.seed
+    download_retry_count = 0
 
     if isinstance(item.get("b64_json"), str):
         try:
@@ -134,7 +136,7 @@ def generate_experimental_raster_image(
             ) from exc
         mime_type = _validated_download_mime(item.get("mime_type") or "application/octet-stream", image_bytes)
     elif isinstance(item.get("url"), str):
-        image_bytes, mime_type, response_request_id = _download_image(item["url"], timeout, retries)
+        image_bytes, mime_type, response_request_id, download_retry_count = _download_image(item["url"], timeout, retries)
         provider_request_id = provider_request_id or response_request_id
     else:
         raise RasterProviderError(
@@ -156,6 +158,7 @@ def generate_experimental_raster_image(
         prompt=request.scene_description,
         revised_prompt=revised_prompt,
         seed=seed,
+        retry_count=generation_retry_count + download_retry_count,
         provider_request_id=provider_request_id,
         warnings=[],
     )
@@ -176,7 +179,7 @@ def _size_for_request(request: IllustrationRequest) -> str:
 
 def _post_json_with_retries(
     endpoint: str, payload: dict[str, Any], api_key: str, timeout: int, retries: int,
-) -> tuple[dict[str, Any], str | None]:
+) -> tuple[dict[str, Any], str | None, int]:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         endpoint,
@@ -184,14 +187,15 @@ def _post_json_with_retries(
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
-    return _with_retries(
+    (response, request_id), retry_count = _with_retries(
         lambda: _read_json_response(request, timeout),
         retries,
         {"rate_limit", "provider_generation", "generation_timeout", "network"},
     )
+    return response, request_id, retry_count
 
 
-def _download_image(url: str, timeout: int, retries: int) -> tuple[bytes, str, str | None]:
+def _download_image(url: str, timeout: int, retries: int) -> tuple[bytes, str, str | None, int]:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         raise RasterProviderError(
@@ -222,7 +226,10 @@ def _download_image(url: str, timeout: int, retries: int) -> tuple[bytes, str, s
                 category="download_timeout" if timed_out else "network",
             ) from exc
 
-    return _with_retries(read, retries, {"download_timeout", "network"})
+    (image_bytes, mime_type, request_id), retry_count = _with_retries(
+        read, retries, {"download_timeout", "network"},
+    )
+    return image_bytes, mime_type, request_id, retry_count
 
 
 def _read_json_response(
@@ -271,7 +278,7 @@ def _with_retries(operation, retries: int, retry_categories: set[str]):
     last_error: RasterProviderError | None = None
     for attempt in range(retries + 1):
         try:
-            return operation()
+            return operation(), attempt
         except RasterProviderError as exc:
             last_error = exc
             exc.retry_count = attempt

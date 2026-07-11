@@ -8,36 +8,34 @@ import time
 from hashlib import sha256
 from pathlib import Path
 
+from .illustration_brief import compile_illustration_request
 from .media import _extension_for_mime, _placeholder_svg
-from .models import GeneratedImage, IllustrationRequest, ProviderSettings, utc_now_iso
+from .models import GeneratedImage, IllustrationBrief, ProviderSettings, utc_now_iso
 from .raster_provider import RasterProviderError, experimental_raster_enabled, generate_experimental_raster_image, image_dimensions
 
 
 BENCHMARK_CONCEPTS = ["睡觉", "吃饭", "喝水", "学习", "学生向老师问好"]
 
 
-def create_raster_provider_ab_gallery(project_root: Path, settings: ProviderSettings) -> Path:
+def create_raster_provider_ab_gallery(
+    project_root: Path,
+    settings: ProviderSettings,
+    gallery_name: str = "raster_provider_ab",
+) -> Path:
     """Generate local diagnostic comparisons; never touches AssetManifest/courseware."""
-    root = project_root / "diagnostics" / "raster_provider_ab"
+    root = project_root / "diagnostics" / gallery_name
     assets_dir = root / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict] = []
 
     for index, concept in enumerate(BENCHMARK_CONCEPTS, start=1):
-        request = IllustrationRequest(
-            id=f"raster-ab-{index}",
-            concept=concept,
-            scene_description=f"Chinese language classroom illustration of {concept}; clear action, no text.",
-            illustration_role="benchmark_primary_visual",
-            aspect_ratio="16:9",
-            negative_constraints=["no words", "no watermark", "no learner-facing metadata"],
-            source_trace=["diagnostics/raster_provider_ab"],
-        )
+        request = compile_illustration_request(_benchmark_brief(concept, gallery_name), f"raster-ab-{index}")
         svg_name = f"{index:02d}-fallback.svg"
         (assets_dir / svg_name).write_text(_placeholder_svg(request.scene_description, index), encoding="utf-8")
         started = time.perf_counter()
         raster: GeneratedImage | None = None
         fallback_reason: str | None = None
+        failure: dict | None = None
         raster_size = 0
         if experimental_raster_enabled(settings.image):
             try:
@@ -57,7 +55,11 @@ def create_raster_provider_ab_gallery(project_root: Path, settings: ProviderSett
                     height=height,
                     prompt=payload.prompt,
                     revised_prompt=payload.revised_prompt,
+                    brief_version=request.brief_version,
+                    style_profile=request.style_profile,
+                    style_profile_version=request.style_profile_version,
                     seed=payload.seed,
+                    retry_count=payload.retry_count,
                     content_hash=sha256(payload.image_bytes).hexdigest(),
                     generated_at=utc_now_iso(),
                     provider_request_id=payload.provider_request_id,
@@ -66,6 +68,13 @@ def create_raster_provider_ab_gallery(project_root: Path, settings: ProviderSett
                 )
             except RasterProviderError as exc:
                 fallback_reason = f"{exc.kind}: {exc}"
+                failure = {
+                    "stage": exc.stage,
+                    "category": exc.category,
+                    "status_code": exc.status_code,
+                    "retry_count": exc.retry_count,
+                    "provider_request_id": exc.provider_request_id,
+                }
         else:
             fallback_reason = "disabled: Experimental raster provider is disabled"
         records.append({
@@ -77,6 +86,7 @@ def create_raster_provider_ab_gallery(project_root: Path, settings: ProviderSett
             "svg_fallback": f"assets/{svg_name}",
             "fallback_used": raster is None,
             "fallback_reason": fallback_reason,
+            "failure": failure,
         })
 
     (root / "results.json").write_text(json.dumps({
@@ -103,12 +113,45 @@ def write_raster_provider_benchmark_summary(root: Path, records: list[dict]) -> 
             "model": record["raster"]["model"] if record["raster"] else None,
             "local_file_size": record["raster_file_size"],
             "fallback_used": record["fallback_used"],
+            "retry_count": record["raster"]["retry_count"] if record["raster"] else (
+                (record.get("failure") or {}).get("retry_count", 0)
+            ),
             "human_review": {"status": "pending", "notes": ""},
         } for record in records],
     }
     path = root / "benchmark_summary.json"
     path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def _benchmark_brief(concept: str, gallery_name: str) -> IllustrationBrief:
+    subject, action, environment, people = {
+        "睡觉": ("one school-age learner", "sleeping peacefully in a bed", "quiet bedroom at night", 1),
+        "吃饭": ("one school-age learner", "eating rice from a bowl with chopsticks", "simple home dining area", 1),
+        "喝水": ("one school-age learner", "drinking water naturally from a clear cup", "uncluttered classroom break area", 1),
+        "学习": ("one school-age learner", "studying attentively with an open book", "bright classroom desk", 1),
+        "学生向老师问好": ("one student and one teacher", "the student greeting the teacher politely", "school entrance or classroom doorway", 2),
+    }[concept]
+    return IllustrationBrief(
+        concept=concept,
+        scene_purpose="primary vocabulary teaching visual",
+        learner_age_range="8-14",
+        learner_language_level="zero beginner",
+        visual_subject=subject,
+        action=action,
+        environment=environment,
+        number_of_people=people,
+        cultural_context="contemporary, culturally neutral school context",
+        emotional_tone="warm, calm, and welcoming",
+        visual_hierarchy="the target action must be immediately recognizable",
+        aspect_ratio="16:9",
+        forbidden_content=["learner-facing metadata", "brand logos"],
+        text_policy="no_text",
+        composition_guidance=["one clear focal group", "avoid cropped hands and faces", "keep the background secondary"],
+        accessibility_requirements=["strong subject-background separation", "readable at classroom projection distance"],
+        language_context={"target_language": "Chinese", "scaffolding_language": "English"},
+        source_trace=[f"diagnostics/{gallery_name}", f"benchmark_concept:{concept}"],
+    )
 
 
 def _render_gallery(records: list[dict]) -> str:

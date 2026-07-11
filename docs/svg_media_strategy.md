@@ -187,6 +187,13 @@ def generate_raster_image(
 - 新增后端建议补充单测：给定 mock `ImageProviderSettings`，验证返回 bytes /
   None / 异常回退。
 
+### 4.5 教学插画 Brief
+
+`illustration_brief.py` 将 provider-neutral `IllustrationBrief` 确定性编译为
+`IllustrationRequest`。当前只提供版本化的 `soft_flat_educational_v1`，固定记录 brief/style
+版本、最终 prompt、negative constraints、source trace、model、seed 与重试次数。Brief 只拥有
+视觉教学意图，不进入 State-Evidence、Activity 或 Presentation Content 契约。
+
 ---
 
 ## 5. 已完成 / 待办

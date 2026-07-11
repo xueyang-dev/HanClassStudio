@@ -53,6 +53,12 @@ What has not been demonstrated:
 - the teacher editing workflow is efficient;
 - visual parity or public v2 export readiness.
 
+Raster illustration status:
+
+- the opt-in single-provider experiment and reliability hardening are merged;
+- real Qwen-Image generation, immediate local persistence, provenance, and SVG failure fallback are technically validated;
+- raster remains disabled by default and still requires teaching-focused briefs, teacher review, and a real lesson pilot before any cutover decision.
+
 ## Artifact Ownership
 
 ### Pedagogical authoritative
