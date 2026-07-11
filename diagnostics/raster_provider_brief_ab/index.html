@@ -1,0 +1,367 @@
+<!doctype html><meta charset="utf-8"><title>Raster Provider A/B</title>
+<style>body{font:16px system-ui;margin:2rem;background:#f7f8fa;color:#182028}article{background:white;padding:1rem;margin:1rem 0;border-radius:10px}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:1rem}section{border:1px solid #d9dfe5;padding:.75rem}img{display:block;max-width:100%;background:#f3f5f7}.fallback{min-height:12rem;padding:1rem;background:#fff3cd}.notice{background:#fff3cd;padding:1rem;border-radius:8px}pre{white-space:pre-wrap}</style>
+<h1>Experimental raster provider A/B</h1><p class="notice">Diagnostic-only. Teacher visual review is required; this page does not assert visual superiority and is excluded from courseware/export.</p>
+<article><h2>睡觉</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/01-raster.png" alt="Raster: 睡觉"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/01-fallback.svg" alt="SVG fallback: 睡觉"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;睡觉&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-1&quot;,
+    &quot;concept&quot;: &quot;睡觉&quot;,
+    &quot;scene_description&quot;: &quot;Teaching concept: 睡觉.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: sleeping peacefully in a bed.\nEnvironment: quiet bedroom at night.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;illustration_role&quot;: &quot;primary vocabulary teaching visual&quot;,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;embedded words or captions&quot;,
+      &quot;watermark&quot;,
+      &quot;poster layout&quot;,
+      &quot;user-interface layout&quot;,
+      &quot;infographic layout&quot;,
+      &quot;distorted anatomy&quot;,
+      &quot;cluttered background&quot;,
+      &quot;learner-facing metadata&quot;,
+      &quot;brand logos&quot;,
+      &quot;letters, words, or numbers&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {
+      &quot;learner_age_range&quot;: &quot;8-14&quot;,
+      &quot;learner_language_level&quot;: &quot;zero beginner&quot;,
+      &quot;target_language&quot;: &quot;Chinese&quot;,
+      &quot;scaffolding_language&quot;: &quot;English&quot;
+    },
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:睡觉&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 14871.7,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/01-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Teaching concept: 睡觉.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: sleeping peacefully in a bed.\nEnvironment: quiet bedroom at night.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;seed&quot;: 853515037,
+    &quot;retry_count&quot;: 0,
+    &quot;content_hash&quot;: &quot;072f87276e3555fa01f4e10bbbd134bb2b970c364d1c8b73fa17cc447345f0da&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T18:28:30.694522+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_7jshesp4rzxg26j8tn&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:睡觉&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1016901,
+  &quot;svg_fallback&quot;: &quot;assets/01-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null,
+  &quot;failure&quot;: null
+}</pre></details></article>
+
+<article><h2>吃饭</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/02-raster.png" alt="Raster: 吃饭"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/02-fallback.svg" alt="SVG fallback: 吃饭"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;吃饭&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-2&quot;,
+    &quot;concept&quot;: &quot;吃饭&quot;,
+    &quot;scene_description&quot;: &quot;Teaching concept: 吃饭.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: eating rice from a bowl with chopsticks.\nEnvironment: simple home dining area.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;illustration_role&quot;: &quot;primary vocabulary teaching visual&quot;,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;embedded words or captions&quot;,
+      &quot;watermark&quot;,
+      &quot;poster layout&quot;,
+      &quot;user-interface layout&quot;,
+      &quot;infographic layout&quot;,
+      &quot;distorted anatomy&quot;,
+      &quot;cluttered background&quot;,
+      &quot;learner-facing metadata&quot;,
+      &quot;brand logos&quot;,
+      &quot;letters, words, or numbers&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {
+      &quot;learner_age_range&quot;: &quot;8-14&quot;,
+      &quot;learner_language_level&quot;: &quot;zero beginner&quot;,
+      &quot;target_language&quot;: &quot;Chinese&quot;,
+      &quot;scaffolding_language&quot;: &quot;English&quot;
+    },
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:吃饭&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 14349.7,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/02-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Teaching concept: 吃饭.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: eating rice from a bowl with chopsticks.\nEnvironment: simple home dining area.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;seed&quot;: 1349462853,
+    &quot;retry_count&quot;: 0,
+    &quot;content_hash&quot;: &quot;43b21127542e6df0951975fcb8c4fd701c4dff05258e7d26134a67c3d8cdda26&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T18:28:45.044605+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_z407luixsaqjug95jw&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:吃饭&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1017222,
+  &quot;svg_fallback&quot;: &quot;assets/02-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null,
+  &quot;failure&quot;: null
+}</pre></details></article>
+
+<article><h2>喝水</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/03-raster.png" alt="Raster: 喝水"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/03-fallback.svg" alt="SVG fallback: 喝水"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;喝水&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-3&quot;,
+    &quot;concept&quot;: &quot;喝水&quot;,
+    &quot;scene_description&quot;: &quot;Teaching concept: 喝水.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: drinking water naturally from a clear cup.\nEnvironment: uncluttered classroom break area.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;illustration_role&quot;: &quot;primary vocabulary teaching visual&quot;,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;embedded words or captions&quot;,
+      &quot;watermark&quot;,
+      &quot;poster layout&quot;,
+      &quot;user-interface layout&quot;,
+      &quot;infographic layout&quot;,
+      &quot;distorted anatomy&quot;,
+      &quot;cluttered background&quot;,
+      &quot;learner-facing metadata&quot;,
+      &quot;brand logos&quot;,
+      &quot;letters, words, or numbers&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {
+      &quot;learner_age_range&quot;: &quot;8-14&quot;,
+      &quot;learner_language_level&quot;: &quot;zero beginner&quot;,
+      &quot;target_language&quot;: &quot;Chinese&quot;,
+      &quot;scaffolding_language&quot;: &quot;English&quot;
+    },
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:喝水&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 28321.8,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/03-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Teaching concept: 喝水.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: drinking water naturally from a clear cup.\nEnvironment: uncluttered classroom break area.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;seed&quot;: 622194166,
+    &quot;retry_count&quot;: 0,
+    &quot;content_hash&quot;: &quot;7507b3c8d711580025e00a4411dacf966db82b0a29dc4d100df0c76861f46fb2&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T18:29:13.366546+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_bpq8fr47ezfc3uvn2y&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:喝水&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1079497,
+  &quot;svg_fallback&quot;: &quot;assets/03-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null,
+  &quot;failure&quot;: null
+}</pre></details></article>
+
+<article><h2>学习</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/04-raster.png" alt="Raster: 学习"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/04-fallback.svg" alt="SVG fallback: 学习"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;学习&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-4&quot;,
+    &quot;concept&quot;: &quot;学习&quot;,
+    &quot;scene_description&quot;: &quot;Teaching concept: 学习.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: studying attentively with an open book.\nEnvironment: bright classroom desk.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;illustration_role&quot;: &quot;primary vocabulary teaching visual&quot;,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;embedded words or captions&quot;,
+      &quot;watermark&quot;,
+      &quot;poster layout&quot;,
+      &quot;user-interface layout&quot;,
+      &quot;infographic layout&quot;,
+      &quot;distorted anatomy&quot;,
+      &quot;cluttered background&quot;,
+      &quot;learner-facing metadata&quot;,
+      &quot;brand logos&quot;,
+      &quot;letters, words, or numbers&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {
+      &quot;learner_age_range&quot;: &quot;8-14&quot;,
+      &quot;learner_language_level&quot;: &quot;zero beginner&quot;,
+      &quot;target_language&quot;: &quot;Chinese&quot;,
+      &quot;scaffolding_language&quot;: &quot;English&quot;
+    },
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:学习&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 15361.8,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/04-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Teaching concept: 学习.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one school-age learner.\nAction: studying attentively with an open book.\nEnvironment: bright classroom desk.\nPeople: 1.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;seed&quot;: 965480948,
+    &quot;retry_count&quot;: 0,
+    &quot;content_hash&quot;: &quot;5a75d92882fb91cda7d3895ddaf9df50810c3cf3b8c4402727dc8f6c2b5f29e8&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T18:29:28.728834+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_5ewaw3qu58xg16a473&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:学习&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 1051192,
+  &quot;svg_fallback&quot;: &quot;assets/04-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null,
+  &quot;failure&quot;: null
+}</pre></details></article>
+
+<article><h2>学生向老师问好</h2><div class="comparison">
+<section><h3>Experimental raster</h3><img src="assets/05-raster.png" alt="Raster: 学生向老师问好"></section>
+<section><h3>Current deterministic SVG fallback</h3><img src="assets/05-fallback.svg" alt="SVG fallback: 学生向老师问好"></section>
+</div><details><summary>Request and provenance</summary><pre>{
+  &quot;concept&quot;: &quot;学生向老师问好&quot;,
+  &quot;request&quot;: {
+    &quot;id&quot;: &quot;raster-ab-5&quot;,
+    &quot;concept&quot;: &quot;学生向老师问好&quot;,
+    &quot;scene_description&quot;: &quot;Teaching concept: 学生向老师问好.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one student and one teacher.\nAction: the student greeting the teacher politely.\nEnvironment: school entrance or classroom doorway.\nPeople: 2.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;illustration_role&quot;: &quot;primary vocabulary teaching visual&quot;,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+    &quot;width&quot;: null,
+    &quot;height&quot;: null,
+    &quot;negative_constraints&quot;: [
+      &quot;embedded words or captions&quot;,
+      &quot;watermark&quot;,
+      &quot;poster layout&quot;,
+      &quot;user-interface layout&quot;,
+      &quot;infographic layout&quot;,
+      &quot;distorted anatomy&quot;,
+      &quot;cluttered background&quot;,
+      &quot;learner-facing metadata&quot;,
+      &quot;brand logos&quot;,
+      &quot;letters, words, or numbers&quot;
+    ],
+    &quot;seed&quot;: null,
+    &quot;candidate_count&quot;: 1,
+    &quot;language_context&quot;: {
+      &quot;learner_age_range&quot;: &quot;8-14&quot;,
+      &quot;learner_language_level&quot;: &quot;zero beginner&quot;,
+      &quot;target_language&quot;: &quot;Chinese&quot;,
+      &quot;scaffolding_language&quot;: &quot;English&quot;
+    },
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:学生向老师问好&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;latency_ms&quot;: 14505.5,
+  &quot;raster&quot;: {
+    &quot;provider&quot;: &quot;experimental_openai_images&quot;,
+    &quot;model&quot;: &quot;Qwen/Qwen-Image&quot;,
+    &quot;local_path&quot;: &quot;assets/05-raster.png&quot;,
+    &quot;mime_type&quot;: &quot;image/png&quot;,
+    &quot;width&quot;: 1536,
+    &quot;height&quot;: 864,
+    &quot;prompt&quot;: &quot;Teaching concept: 学生向老师问好.\nScene purpose: primary vocabulary teaching visual.\nLearners: ages 8-14; language level zero beginner.\nVisual subject: one student and one teacher.\nAction: the student greeting the teacher politely.\nEnvironment: school entrance or classroom doorway.\nPeople: 2.\nCultural context: contemporary, culturally neutral school context.\nEmotional tone: warm, calm, and welcoming.\nVisual hierarchy: the target action must be immediately recognizable.\nComposition: one clear focal group; avoid cropped hands and faces; keep the background secondary.\nAccessibility and clarity: strong subject-background separation; readable at classroom projection distance.\nText policy: no_text.\nStyle soft_flat_educational_v1@1: modern educational illustration with natural human anatomy and poses; simple uncluttered scene; clear central action; soft but distinct colors; suitable for classroom projection and learner worksheets.&quot;,
+    &quot;revised_prompt&quot;: null,
+    &quot;brief_version&quot;: &quot;illustration_brief.v1&quot;,
+    &quot;style_profile&quot;: &quot;soft_flat_educational_v1&quot;,
+    &quot;style_profile_version&quot;: &quot;1&quot;,
+    &quot;seed&quot;: 1489035955,
+    &quot;retry_count&quot;: 0,
+    &quot;content_hash&quot;: &quot;0f1e75aeb3d7a35cc7152dc0f8fbe22892505b6721c63901c309e2d197d10568&quot;,
+    &quot;generated_at&quot;: &quot;2026-07-11T18:29:43.234532+00:00&quot;,
+    &quot;provider_request_id&quot;: &quot;ti_gguwsxr683uh6usj8p&quot;,
+    &quot;source_trace&quot;: [
+      &quot;diagnostics/raster_provider_brief_ab&quot;,
+      &quot;benchmark_concept:学生向老师问好&quot;
+    ],
+    &quot;warnings&quot;: []
+  },
+  &quot;raster_file_size&quot;: 865218,
+  &quot;svg_fallback&quot;: &quot;assets/05-fallback.svg&quot;,
+  &quot;fallback_used&quot;: false,
+  &quot;fallback_reason&quot;: null,
+  &quot;failure&quot;: null
+}</pre></details></article>

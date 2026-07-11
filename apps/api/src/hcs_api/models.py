@@ -120,7 +120,9 @@ class IllustrationRequest(BaseModel):
     concept: str = ""
     scene_description: str = ""
     illustration_role: str = "classroom_visual"
-    style_profile: str = "soft_flat_educational_v1"
+    brief_version: str = "legacy_prompt.v1"
+    style_profile: str = "legacy_unspecified"
+    style_profile_version: str = "0"
     aspect_ratio: str = "16:9"
     width: int | None = None
     height: int | None = None
@@ -145,12 +147,55 @@ class GeneratedImage(BaseModel):
     height: int | None = None
     prompt: str
     revised_prompt: str | None = None
+    brief_version: str = "legacy_prompt.v1"
+    style_profile: str = "legacy_unspecified"
+    style_profile_version: str = "0"
     seed: int | None = None
+    retry_count: int = 0
     content_hash: str
     generated_at: str = Field(default_factory=utc_now_iso)
     provider_request_id: str | None = None
     source_trace: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class IllustrationStyleProfile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Literal["soft_flat_educational_v1"] = "soft_flat_educational_v1"
+    version: str = "1"
+    description: str
+    requirements: list[str] = Field(default_factory=list)
+    forbidden_content: list[str] = Field(default_factory=list)
+
+
+class IllustrationBrief(BaseModel):
+    """Provider-neutral teaching intent compiled into an IllustrationRequest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = "illustration_brief.v1"
+    concept: str
+    scene_purpose: str
+    learner_age_range: str
+    learner_language_level: str
+    visual_subject: str
+    action: str
+    environment: str
+    number_of_people: int = Field(ge=0, le=8)
+    cultural_context: str = "culturally neutral"
+    emotional_tone: str = "warm and calm"
+    visual_hierarchy: str = "one unmistakable central action"
+    aspect_ratio: str = "16:9"
+    width: int | None = None
+    height: int | None = None
+    style_profile: Literal["soft_flat_educational_v1"] = "soft_flat_educational_v1"
+    forbidden_content: list[str] = Field(default_factory=list)
+    text_policy: Literal["no_text", "semantic_symbols_only", "short_environment_label"] = "no_text"
+    composition_guidance: list[str] = Field(default_factory=list)
+    accessibility_requirements: list[str] = Field(default_factory=list)
+    language_context: dict[str, str] = Field(default_factory=dict)
+    source_trace: list[str] = Field(default_factory=list)
 
 
 RasterFailureStage = Literal[
