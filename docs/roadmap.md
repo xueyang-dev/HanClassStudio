@@ -55,9 +55,10 @@ What has not been demonstrated:
 
 Raster illustration status:
 
-- the opt-in single-provider experiment and reliability hardening are merged;
+- the opt-in single-provider experiment, reliability hardening, and deterministic teaching Illustration Brief compiler are merged;
 - real Qwen-Image generation, immediate local persistence, provenance, and SVG failure fallback are technically validated;
-- raster remains disabled by default and still requires teaching-focused briefs, teacher review, and a real lesson pilot before any cutover decision.
+- opt-in raster assets survive the local HTML, editable PPTX, and ZIP export paths without retaining provider URLs;
+- raster remains disabled by default and still requires teacher review and a real lesson pilot before any cutover decision.
 
 ## Artifact Ownership
 

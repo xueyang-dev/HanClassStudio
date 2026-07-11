@@ -115,8 +115,14 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     prs.slide_height = Inches(7.5)
     is_classroom = export_mode == "classroom"
     blank = prs.slide_layouts[6]
+    source_slides = {slide.id: slide for slide in blueprint.slides}
     for deck_slide in deck_plan.slides:
-        _render_deck_slide(prs.slides.add_slide(blank), deck_slide, is_classroom)
+        pptx_slide = prs.slides.add_slide(blank)
+        source_slide = source_slides.get(deck_slide.slide_id)
+        if source_slide and source_slide.media_requirements.image_key:
+            _render_slide(pptx_slide, root, source_slide, manifest, is_classroom)
+        else:
+            _render_deck_slide(pptx_slide, deck_slide, is_classroom)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     is_diagnostic = force and is_classroom
