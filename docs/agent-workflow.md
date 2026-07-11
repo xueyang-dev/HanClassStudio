@@ -19,7 +19,7 @@ runtime/projects/<project_id>/agent/AGENT_TASK.md
 runtime/projects/<project_id>/agent/AGENT_RULES.md
 ```
 
-## Files An Agent May Edit
+## Files An Agent May Edit In The Current Production Handoff
 
 - `specs/lesson_spec.md`
 - `specs/spec_lock.json`
@@ -27,6 +27,8 @@ runtime/projects/<project_id>/agent/AGENT_RULES.md
 - `blueprints/interaction_plan.json`
 - `blueprints/media_plan.json`
 - `assets/data/asset_manifest.json` only when media references are intentionally changed
+
+These are legacy production authoring and compatibility artifacts. Editing them does not make them the pedagogical authority of the v2 path. If a request changes goals, evidence, activities, learner constraints, or success criteria, update/regenerate the owned learning artifacts and rerun evidence alignment before presentation compilation.
 
 ## Files An Agent Must Not Edit
 
@@ -37,7 +39,7 @@ runtime/projects/<project_id>/agent/AGENT_RULES.md
 - generated PPTX files
 - component names outside `courseware/components/registry.json`
 
-The Agent should not bypass quality gate, invent runtime CSS, treat `lesson.html` as source, or directly write `.pptx` exports.
+The Agent should not bypass quality gates, invent runtime CSS, treat rendered HTML as source, directly write `.pptx` exports, or infer pedagogy from slide titles/component types.
 
 ## Validate Agent Output
 

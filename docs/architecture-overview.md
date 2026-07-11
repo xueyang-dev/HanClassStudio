@@ -1,8 +1,19 @@
 # Architecture Overview
 
-HanClassStudio uses an artifact-first, State-first architecture. The web workbench is a teacher-facing controller; the backend owns project workspaces, canonical artifacts, validation, rendering, quality gates, and export.
+HanClassStudio uses an artifact-first, State-first and Evidence-first architecture. The web workbench is a teacher-facing controller; the backend owns project workspaces, canonical artifacts, validation, rendering, quality gates, and export.
 
-The original v0.1 demo proved the local authoring/export loop. The v0.2.1-alpha pipeline added a State-Evidence teaching kernel before rendering, and v0.2.2-alpha adds a formal presentation binding layer between that kernel and HTML/PPTX outputs.
+The original v0.1 demo proved the local authoring/export loop. Phase 2B established a shadow canonical presentation compiler and Phase 2C established an internal rendered-output validation path. Production renderers and exports still use the legacy LessonBlueprint contract. Real teaching validation has not started.
+
+Current phase status:
+
+```text
+Phase 2B: substantially complete
+Phase 2C: internal technical validation complete
+Real teaching validation: not started
+Production v2 cutover: not started
+```
+
+The canonical roadmap is [roadmap.md](roadmap.md).
 
 ## Artifact-First Workspace
 
@@ -19,6 +30,7 @@ uploads/
 sources/
 analysis/
 learning/
+presentation/
 specs/
 blueprints/
 assets/
@@ -30,6 +42,27 @@ backup/
 ```
 
 The important rule: each stage writes named artifacts to a predictable path. Later stages read those artifacts instead of guessing state from UI fields.
+
+## Target Pipeline
+
+```text
+Source
+→ learner/source analysis
+→ Learning State Plan
+→ Evidence Plan
+→ Activity Plan
+→ Evidence Alignment Gate
+→ Presentation Content Contract
+→ Presentation Media Request Contract
+→ Abstract Presentation Bindings
+→ Canonical Presentation Blueprint
+→ Legacy LessonBlueprint Adapter
+→ Renderers
+→ Quality Gates
+→ Export
+```
+
+Goals define evidence before activities are selected. Evidence constrains activities; activities support presentation. Renderers compile approved presentation artifacts and do not make pedagogical decisions.
 
 ## State-Evidence Kernel
 
@@ -44,8 +77,7 @@ source_material.json
   -> learning/evidence_plan.json
   -> learning/activity_plan.json
   -> quality/evidence_alignment_report.json
-  -> blueprints/lesson_blueprint.json
-  -> courseware / PPTX
+  -> presentation contracts
 ```
 
 The kernel follows the [State-Evidence Kernel white paper](state-evidence-kernel-v0.2.2.md):
@@ -55,13 +87,38 @@ The kernel follows the [State-Evidence Kernel white paper](state-evidence-kernel
 - `learning/activity_plan.json` defines activities that collect evidence.
 - `quality/evidence_alignment_report.json` checks Goal-Evidence-Activity alignment.
 
-If evidence alignment is `blocked`, the pipeline stops classroom render/export and writes a kernel diagnostic ZIP. This keeps pedagogical failure upstream of presentation generation.
+If evidence alignment is `blocked`, downstream presentation artifacts cannot appear successful and normal classroom render/export is blocked. This keeps pedagogical failure upstream of presentation generation.
 
-## Presentation Bindings
+## Presentation Contracts
 
-`presentation/activity_bindings.json` is the presentation-layer contract between the kernel and renderers. It maps `LearningActivity` and `EvidenceSpec` records to `slide_id` / `component_id` targets, then marks which presentation modes consume that binding.
+The v2 canonical path separates four responsibilities:
 
-HTML and PPTX renderers read this artifact instead of performing their own evidence-mapping heuristics. The fallback matching logic lives only in the binding builder. See [Presentation Bindings v0.2.2](presentation-bindings-v0.2.2.md).
+- `presentation/presentation_content_plan.json` owns component-neutral learner-facing payloads and provenance.
+- `presentation/presentation_media_request_plan.json` owns deterministic renderer-neutral media needs.
+- `presentation/abstract_activity_bindings.json` maps approved activity/evidence pairs to presentation modes without slide or component IDs.
+- `presentation/presentation_blueprint.json` owns ordered renderer-neutral presentation units.
+
+`presentation/activity_bindings.json` is the v1 legacy production binding. It maps into existing slide/component targets and remains necessary for the current renderer contract, but it is not the future source of pedagogical truth. See [Presentation Contracts and Bindings](presentation-bindings-v0.2.2.md).
+
+## Current Production, Shadow, And Internal Routes
+
+```text
+Production: Legacy LessonBlueprint → v1 bindings → existing renderers → public exports
+Shadow v2: Kernel → content/media contracts → abstract bindings → canonical blueprint → shadow adapter → diagnostics
+Internal experiment: eligible whole lesson → v2 readiness → lesson_v2_internal.html → rendered-output review
+```
+
+The internal route is disabled by default, does not overwrite production output, and currently supports only whole lessons whose learner-facing modes are all `listening_choice` or `matching_response`.
+
+## Artifact Ownership Summary
+
+| Category | Artifacts | Authority |
+|---|---|---|
+| Pedagogical authoritative | learning state, evidence, and activity plans | learner assumptions, goals, evidence, activities |
+| Pedagogical gate | evidence alignment report | Goal-Evidence-Activity validity |
+| Canonical presentation | content plan, media request plan, abstract bindings, canonical blueprint | renderer-neutral content and presentation structure |
+| Legacy production compatibility | lesson blueprint, v1 bindings, interaction plan, media plan | current renderer input only |
+| Diagnostic-only | readiness, parity, projection, reconciliation, assessment, cutover, and rendered-output reports | explain and validate a run |
 
 ## Lesson Spec And Spec Lock
 

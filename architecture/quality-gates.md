@@ -4,6 +4,8 @@ Quality gates decide whether a generated lesson can be previewed, exported, or h
 
 The goal is not perfection. The goal is to catch failures that make courseware unusable, misleading, inaccessible, or impossible to run offline.
 
+Quality reports do not own pedagogy and do not mutate upstream artifacts. A downstream warning or pass cannot override an upstream blocked state.
+
 ## Quality States
 
 | State | Meaning | Export |
@@ -11,6 +13,34 @@ The goal is not perfection. The goal is to catch failures that make courseware u
 | `pass` | No blocking issues | allowed |
 | `warning` | Usable, but has quality concerns | allowed with report |
 | `blocked` | Broken or unsafe for delivery | blocked unless forced |
+
+## Gate Layers And Dependency
+
+| Layer | Representative report | Responsibility |
+|---|---|---|
+| Pedagogical | `quality/evidence_alignment_report.json` | Goal-Evidence-Activity validity |
+| Presentation content | `quality/presentation_content_report.json` | mode-required content completeness and learner safety |
+| Media trace | request, projection, and reconciliation reports | deterministic request-to-asset trace |
+| Presentation compilation | shadow, adapter assessment, parity, readiness reports | canonical-to-legacy compatibility and trace |
+| Internal cutover | `quality/v2_cutover_readiness_report.json` | whole-lesson allowlist eligibility |
+| Rendered output | `quality/v2_rendered_output_review.json` | actual internal HTML behavior and safety |
+| Production aggregate | `quality/quality_report.json` | current public render/export gate |
+
+```text
+Evidence Alignment
+→ Presentation Content
+→ Media Request
+→ Media Projection / Asset Reconciliation when required
+→ Abstract Binding / Canonical Blueprint
+→ Adapter Assessment
+→ Structural Parity
+→ Presentation Readiness
+→ internal cutover readiness
+→ rendered-output review
+→ future aggregate export decision
+```
+
+Most v2 reports are diagnostic-only while the v2 route remains shadow/internal. They must not be interpreted as public export authorization.
 
 ## Gate Categories
 

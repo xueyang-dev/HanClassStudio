@@ -1,6 +1,6 @@
 # HanClassStudio Architecture
 
-This folder defines the target architecture for HanClassStudio after borrowing the strongest ideas from PPT Master:
+This folder defines the current and target architecture for HanClassStudio:
 
 - strict pipeline discipline
 - clear runtime artifact ownership
@@ -25,30 +25,35 @@ It turns teaching materials into offline-ready, teacher-editable, interactive HT
 | `templates-and-specs.md` | Template model, `lesson_spec.md`, `spec_lock.json`, and component registry. |
 | `quality-gates.md` | Quality checks for pedagogy, interaction, media, accessibility, and offline export. |
 
+The canonical delivery sequence and phase status live in [`docs/roadmap.md`](../docs/roadmap.md).
+
 ## Core Pipeline
 
 ```text
 Source Material
-  -> Project Init
-  -> Source Intake
-  -> Lesson Strategist
-  -> Spec Lock
-  -> Media Planner / Generator
-  -> Courseware Executor
+  -> learner/source analysis
+  -> Learning State Plan
+  -> Evidence Plan
+  -> Activity Plan
+  -> Evidence Alignment Gate
+  -> Presentation Content / Media Contracts
+  -> Abstract Bindings
+  -> Canonical Presentation Blueprint
+  -> Legacy Adapter
+  -> Renderer
   -> Quality Gate
-  -> Render / Package
   -> Export
 ```
 
-Current v0.1 already has the beginning of this flow:
+The current production route remains legacy while the v2 route is shadow/internal:
 
 ```text
-upload -> parse_source -> infer_profile -> generate_blueprint
-       -> spec_lock -> generate_media -> render_lesson
-       -> check_quality -> export_policy -> zip_output
+Production: LessonBlueprint -> v1 Bindings -> existing renderers -> exports
+Shadow v2: Kernel -> canonical presentation -> shadow adapter -> diagnostics
+Internal: eligible v2 lesson -> lesson_v2_internal.html -> rendered review
 ```
 
-The new architecture makes each step explicit, recoverable, and inspectable.
+The internal path is disabled by default and currently allows only whole lessons using `listening_choice` and `matching_response`.
 
 ## Architectural Invariants
 
@@ -58,12 +63,13 @@ These rules should stay true as the codebase grows:
 |---|---|
 | `sources/` is the content contract | Source facts come from normalized materials, not from rendered HTML. |
 | `analysis/` stores machine facts | It can be regenerated and should not become human-authored teaching design. |
-| `lesson_spec.md` explains design | Human-readable teaching rationale, audience, route, and choices. |
-| `spec_lock.json` executes design | Runtime truth for generation, rendering, quality checks, and recovery. |
-| `blueprints/` is author state | Lesson structure and interactions are editable source artifacts. |
+| learning artifacts own pedagogy | Goals, evidence, and activities are defined before presentation. |
+| canonical presentation artifacts own renderer-neutral presentation | Content, media needs, abstract bindings, and ordered units live under `presentation/`. |
+| legacy blueprints are compatibility inputs | `lesson_blueprint.json` and v1 bindings remain production inputs, not future pedagogical truth. |
 | `courseware/` is derived output | Rendered HTML can be rebuilt from specs, blueprints, assets, and templates. |
 | `exports/` is delivery output | ZIP packages are immutable snapshots for sharing or classroom use. |
 | quality gates run before export | The system should know whether a courseware package is safe to hand to a teacher. |
+| renderers do not decide pedagogy | They compile validated presentation inputs. |
 
 ## Relationship To PPT Master
 

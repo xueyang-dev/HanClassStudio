@@ -85,6 +85,8 @@ Editable PPTX does not preserve HTML runtime interactions. Components are pedago
 
 ## Roadmap
 
+This list records the v0.1 planning context. It is not the current delivery order. See [the canonical roadmap](roadmap.md) for Phase 2B/2C status, real-lesson pilots, and cutover sequencing.
+
 - v0.2 Provider layer for configurable LLM, image, TTS, OCR, and video services.
 - Template discovery and richer runtime themes.
 - Streaming pipeline progress through SSE or WebSocket.
