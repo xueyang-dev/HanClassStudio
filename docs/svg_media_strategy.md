@@ -169,6 +169,10 @@ def generate_raster_image(
 - 仅当 `settings.image.provider == "experimental_openai_images"` 时调用；否则保留旧
   façade 行为。`HCS_EXPERIMENTAL_RASTER_API_KEY` 可覆盖现有 `api_key` 设置。
 - 固定 30 秒超时、至多一次重试；超时、HTTP、网络、响应、MIME 和配置错误均会分类。
+- 失败 provenance 区分 `request_build`、`provider_generation`、`provider_response_parse`、
+  `remote_asset_download`、`mime_validation`、`local_persist`、`manifest_record` 与 `fallback`；
+  HTTP 状态、重试次数和 provider trace ID 在可用时一并记录。
+- HTTPS 使用操作系统信任库（`truststore`），不关闭证书校验、不使用浏览器或命令行抓取。
 - 短期 URL 会在写入 `assets/images/` 前立即下载；AssetManifest / diagnostics 不保留该
   URL，改记录 MIME、内容 hash、provider/model/prompt、请求 ID 和本地路径。
 - 实验失败时保留先行生成的确定性本地 SVG placeholder，并写入 fallback reason；不会
@@ -196,8 +200,8 @@ def generate_raster_image(
 - 栅格轨集成点 `generate_raster_image` 已留接口（当前委托 OpenAI 兼容端点）。
 
 ### 待办（非本次范围，留给后续）
-- 对 `experimental_openai_images` 完成低成本端点的教师视觉 A/B 验证；在未复核画廊前不
-  做生产切换。
+- 已完成低成本端点的五概念 A/B 技术验证；继续保留教师视觉复核，在未复核画廊前不做
+  生产切换。
 - 扩展示例概念（CONCEPT_RECIPES）覆盖更多词汇；复杂人物场景改走栅格轨。
 - 可选：cairosvg 加入依赖以便 PPTX 真实栅格化 SVG（当前为 best-effort 回退）。
 

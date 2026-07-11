@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import urllib.error
 from email.message import Message
 from hashlib import sha256
 from pathlib import Path
@@ -29,6 +30,7 @@ from hcs_api.raster_provider_benchmark import BENCHMARK_CONCEPTS, create_raster_
 
 
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00"
+WEBP = b"RIFF\x08\x00\x00\x00WEBPVP8 "
 
 
 class _Response:
@@ -182,14 +184,112 @@ def test_siliconflow_images_url_response_shape_is_supported(tmp_path: Path, monk
 
 
 def test_content_hash_is_deterministic_and_extension_tracks_mime(tmp_path: Path, monkeypatch) -> None:
-    encoded = base64.b64encode(PNG).decode()
+    encoded = base64.b64encode(WEBP).decode()
     _mock_generation(monkeypatch, {"b64_json": encoded, "mime_type": "image/webp", "revised_prompt": "revised"})
     first = generate_configured_media(tmp_path / "first", _blueprint(), _settings()).images[0]
     _mock_generation(monkeypatch, {"b64_json": encoded, "mime_type": "image/webp", "revised_prompt": "revised"})
     second = generate_configured_media(tmp_path / "second", _blueprint(), _settings()).images[0]
-    assert first.content_hash == second.content_hash == sha256(PNG).hexdigest()
+    assert first.content_hash == second.content_hash == sha256(WEBP).hexdigest()
     assert first.path.endswith(".webp") and first.mime_type == "image/webp"
     assert first.generation and first.generation.revised_prompt == "revised"
+
+
+@pytest.mark.parametrize("status", [401, 403, 451])
+def test_download_forbidden_preserves_stage_category_and_status(tmp_path: Path, monkeypatch, status: int) -> None:
+    def urlopen(request, timeout, **_kwargs):
+        if request.get_method() == "POST":
+            return _Response(json.dumps({"images": [{"url": "https://temporary.test/image.png"}]}).encode())
+        headers = Message(); headers["x-request-id"] = "download-denied"
+        raise urllib.error.HTTPError(request.full_url, status, "denied", headers, None)
+
+    monkeypatch.setattr("hcs_api.raster_provider.urllib.request.urlopen", urlopen)
+    asset = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0]
+    assert asset.path.endswith(".svg") and asset.fallback_used
+    assert asset.generation_failure
+    assert asset.generation_failure.stage == "remote_asset_download"
+    assert asset.generation_failure.category == "download_forbidden"
+    assert asset.generation_failure.status_code == status
+    assert asset.generation_failure.retry_count == 0
+    assert "https://temporary.test" not in json.dumps(asset.model_dump(mode="json"))
+
+
+def test_expired_signed_url_uses_fallback(tmp_path: Path, monkeypatch) -> None:
+    def urlopen(request, timeout, **_kwargs):
+        if request.get_method() == "POST":
+            return _Response(json.dumps({"images": [{"url": "https://temporary.test/expired"}]}).encode())
+        raise urllib.error.HTTPError(request.full_url, 410, "expired", Message(), None)
+
+    monkeypatch.setattr("hcs_api.raster_provider.urllib.request.urlopen", urlopen)
+    failure = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0].generation_failure
+    assert failure and failure.category == "download_forbidden" and failure.status_code == 410
+
+
+def test_html_error_body_declared_as_image_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    _mock_generation(monkeypatch, {"url": "https://temporary.test/image.png"}, download=b"<html>denied</html>", mime_type="image/png")
+    failure = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0].generation_failure
+    assert failure and failure.stage == "mime_validation" and failure.category == "invalid_mime"
+
+
+def test_download_timeout_retries_once_then_falls_back(tmp_path: Path, monkeypatch) -> None:
+    downloads = 0
+
+    def urlopen(request, timeout, **_kwargs):
+        nonlocal downloads
+        if request.get_method() == "POST":
+            return _Response(json.dumps({"images": [{"url": "https://temporary.test/image.png"}]}).encode())
+        downloads += 1
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("hcs_api.raster_provider.urllib.request.urlopen", urlopen)
+    failure = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0].generation_failure
+    assert downloads == 2
+    assert failure and failure.category == "download_timeout" and failure.retry_count == 1
+
+
+def test_local_write_failure_preserves_svg_and_structured_failure(tmp_path: Path, monkeypatch) -> None:
+    _mock_generation(monkeypatch, {"b64_json": base64.b64encode(PNG).decode(), "mime_type": "image/png"})
+    monkeypatch.setattr("hcs_api.media._write_raster_bytes", lambda *_args: (_ for _ in ()).throw(OSError("disk full")))
+    asset = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0]
+    assert asset.path.endswith(".svg") and asset.fallback_used
+    assert asset.generation_failure
+    assert asset.generation_failure.stage == "local_persist"
+    assert asset.generation_failure.category == "local_write"
+    assert not (tmp_path / "assets/images/sleep.png").exists()
+
+
+@pytest.mark.parametrize("status,category,calls", [(401, "authentication", 1), (429, "rate_limit", 2), (503, "provider_generation", 2)])
+def test_generation_http_errors_are_classified_and_bounded(tmp_path: Path, monkeypatch, status, category, calls) -> None:
+    attempts = 0
+
+    def urlopen(request, timeout, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        headers = Message(); headers["x-siliconcloud-trace-id"] = "generation-trace"
+        raise urllib.error.HTTPError(request.full_url, status, "provider error", headers, None)
+
+    monkeypatch.setattr("hcs_api.raster_provider.urllib.request.urlopen", urlopen)
+    failure = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0].generation_failure
+    assert attempts == calls
+    assert failure and failure.stage == "provider_generation" and failure.category == category
+    assert failure.provider_request_id == "generation-trace"
+
+
+def test_invalid_response_shape_is_recorded(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "hcs_api.raster_provider.urllib.request.urlopen",
+        lambda *_args, **_kwargs: _Response(json.dumps({"images": []}).encode()),
+    )
+    failure = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0].generation_failure
+    assert failure and failure.stage == "provider_response_parse" and failure.category == "response_shape"
+
+
+def test_manifest_record_failure_removes_orphan_raster(tmp_path: Path, monkeypatch) -> None:
+    _mock_generation(monkeypatch, {"b64_json": base64.b64encode(PNG).decode(), "mime_type": "image/png"})
+    monkeypatch.setattr("hcs_api.media.GeneratedImage", lambda **_kwargs: (_ for _ in ()).throw(ValueError("bad provenance")))
+    asset = generate_configured_media(tmp_path, _blueprint(), _settings()).images[0]
+    assert asset.path.endswith(".svg")
+    assert asset.generation_failure and asset.generation_failure.stage == "manifest_record"
+    assert not (tmp_path / "assets/images/sleep.png").exists()
 
 
 def test_existing_facade_callers_stay_compatible(monkeypatch) -> None:
