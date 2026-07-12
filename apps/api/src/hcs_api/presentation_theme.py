@@ -194,6 +194,7 @@ def observe_existing_image_palette(project_root: Path, manifest: AssetManifest |
     images = (manifest.images if manifest else [])
     samples: list[tuple[int, int, int]] = []
     hashes: list[str] = []
+    sampled_image_count = 0
     for asset in images:
         if asset.kind != "image" or not asset.path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
             continue
@@ -204,6 +205,7 @@ def observe_existing_image_palette(project_root: Path, manifest: AssetManifest |
             image = Image.open(path).convert("RGB").resize((48, 27))
         except Exception:
             continue
+        sampled_image_count += 1
         samples.extend(image.get_flattened_data())
         if asset.content_hash:
             hashes.append(asset.content_hash)
@@ -213,13 +215,13 @@ def observe_existing_image_palette(project_root: Path, manifest: AssetManifest |
     saturations: list[float] = []
     brightness: list[float] = []
     for r, g, b in samples:
-        key = (round(r / 32) * 32, round(g / 32) * 32, round(b / 32) * 32)
+        key = tuple(min(255, round(channel / 32) * 32) for channel in (r, g, b))
         bins[key] = bins.get(key, 0) + 1
         h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
         saturations.append(s); brightness.append(v)
     dominant = [f"#{r:02X}{g:02X}{b:02X}" for (r, g, b), _ in sorted(bins.items(), key=lambda item: item[1], reverse=True)[:6]]
     return {
-        "image_count": len({asset.path for asset in images if (project_root / asset.path).is_file()}),
+        "image_count": sampled_image_count,
         "dominant_colors": dominant,
         "mean_brightness": round(sum(brightness) / len(brightness), 3),
         "mean_saturation": round(sum(saturations) / len(saturations), 3),
