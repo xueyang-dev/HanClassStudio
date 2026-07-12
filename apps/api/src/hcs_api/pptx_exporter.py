@@ -14,7 +14,8 @@ from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 
 from .models import AssetManifest, LessonBlueprint, LessonProfile, QualityReport
-from .pptx_design import PROFILE, RECIPES
+from .pptx_design import PROFILE, RECIPES, profile_for_theme
+from .presentation_theme import presentation_theme_for_project
 from .storage import ensure_project, read_json, read_model, write_json
 
 
@@ -53,7 +54,12 @@ def _clean_classroom_text(text: str) -> str:
 
 
 def export_editable_pptx(project_id: str, force: bool = False, export_mode: str = "debug") -> Path:
+    global PROFILE
     root = ensure_project(project_id)
+    theme = presentation_theme_for_project(root)
+    # Recipes and coordinates remain reference-master driven; this switches
+    # only their shared visual tokens for the current project's export.
+    PROFILE = profile_for_theme(theme)
     blueprint = read_model(project_id, "lesson_blueprint.json", LessonBlueprint)
     if not blueprint:
         raise ValueError("Project needs blueprints/lesson_blueprint.json before editable PPTX export")
@@ -133,7 +139,7 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     prs.save(export_path)
 
     quality_state = report.state if report else "warning"
-    pptx_report = _build_pptx_quality_report(blueprint, report, force, prs)
+    pptx_report = _build_pptx_quality_report(blueprint, report, force, prs, theme=theme)
     write_json(project_id, "quality/pptx_quality_report.json", pptx_report)
     write_json(
         project_id,
@@ -151,6 +157,11 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
             "evidence_alignment_state": alignment_report.get("state") if isinstance(alignment_report, dict) else None,
             "presentation_readiness_state": readiness_report.get("state") if isinstance(readiness_report, dict) else None,
             "interaction_policy": "classroom_static_activity",
+            "presentation_theme": {
+                "theme_id": theme.theme_id,
+                "version": theme.version,
+                "source": theme.source,
+            },
             "source_artifacts": {
                 "spec_lock": bool(spec_lock),
                 "interaction_plan": bool(interaction_plan),
@@ -753,7 +764,7 @@ def _image_path(root: Path, image_key: str | None, manifest: AssetManifest) -> P
     return None
 
 
-def _build_pptx_quality_report(blueprint: LessonBlueprint, report: QualityReport | None, force: bool, presentation=None) -> dict[str, Any]:
+def _build_pptx_quality_report(blueprint: LessonBlueprint, report: QualityReport | None, force: bool, presentation=None, theme=None) -> dict[str, Any]:
     warnings = [
         "HTML interactions were converted to editable classroom static activity pages.",
         "Audio is represented as text prompts or labels; real audio is not embedded.",
@@ -775,6 +786,10 @@ def _build_pptx_quality_report(blueprint: LessonBlueprint, report: QualityReport
             "chinese_font": PROFILE.chinese_font,
             "latin_font": PROFILE.latin_font,
         },
+        "presentation_theme": {
+            "theme_id": theme.theme_id,
+            "version": theme.version,
+        } if theme else None,
         "off_slide_objects": structural["off_slide"],
         "text_below_minimum": structural["small_text"],
         "passed": [

@@ -111,6 +111,106 @@ class LessonBlueprint(BaseModel):
     slides: list[LessonSlide] = Field(default_factory=list)
 
 
+ThemeDecisionSource = Literal[
+    "ppt_master_auto", "teacher_selected", "inherited_from_existing_assets",
+]
+
+
+class ThemeTypography(BaseModel):
+    """Concrete type decisions shared by editable and web presentation output."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chinese_font: str
+    pinyin_font: str
+    latin_font: str
+    fallback_fonts: list[str] = Field(default_factory=list)
+    title_size_pt: int = 24
+    chinese_hero_size_pt: int = 54
+    pinyin_size_pt: int = 25
+    body_size_pt: int = 18
+    heading_weight: str = "700"
+    pinyin_letter_spacing_em: float = 0.02
+
+
+class ThemePalette(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    background: str
+    surface: str
+    primary: str
+    secondary: str
+    accent: str
+    text: str
+    muted: str
+    line: str
+    success: str
+    warning: str
+
+
+class ThemeShapeLanguage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    corner_radius: float = 0.12
+    border_weight: float = 1.2
+    shadow: str = "subtle"
+    card_treatment: str = "soft_surface"
+
+
+class ThemeLayout(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    safe_margin_inches: float = 0.68
+    grid_columns: int = 12
+    whitespace: Literal["generous", "balanced", "compact"] = "generous"
+    image_text_ratio: str = "5:4"
+    max_content_items: int = 6
+
+
+class ThemeImageTreatment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    illustration_style: str
+    palette_descriptors: list[str] = Field(default_factory=list)
+    palette_anchors: list[str] = Field(default_factory=list)
+    saturation: str = "soft_distinct"
+    contrast: str = "clear"
+    background_complexity: str = "low"
+    framing: str = "rounded_cover"
+    prohibited_traits: list[str] = Field(default_factory=list)
+
+
+class PresentationTheme(BaseModel):
+    """Master-derived design decisions; never a provider or pedagogy contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    theme_id: str
+    version: str
+    source: str
+    audience_profile: str = "general classroom"
+    visual_mood: str = "clear, warm, classroom-ready"
+    typography: ThemeTypography
+    palette: ThemePalette
+    shapes: ThemeShapeLanguage = Field(default_factory=ThemeShapeLanguage)
+    layout: ThemeLayout = Field(default_factory=ThemeLayout)
+    image_treatment: ThemeImageTreatment
+
+
+class PresentationThemeDecision(BaseModel):
+    """Traceable theme selection stored beside the presentation plan."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+    schema_: str = Field(default="hanclassstudio.presentation_theme.v1", alias="schema")
+    decision_source: ThemeDecisionSource = "ppt_master_auto"
+    theme: PresentationTheme
+    rationale: list[str] = Field(default_factory=list)
+    asset_observations: dict[str, Any] = Field(default_factory=dict)
+    requested_theme_id: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
 class IllustrationRequest(BaseModel):
     """Provider-neutral request for experimental raster illustration generation."""
 
@@ -123,6 +223,8 @@ class IllustrationRequest(BaseModel):
     brief_version: str = "legacy_prompt.v1"
     style_profile: str = "legacy_unspecified"
     style_profile_version: str = "0"
+    theme_id: str | None = None
+    theme_version: str | None = None
     aspect_ratio: str = "16:9"
     width: int | None = None
     height: int | None = None
@@ -150,6 +252,8 @@ class GeneratedImage(BaseModel):
     brief_version: str = "legacy_prompt.v1"
     style_profile: str = "legacy_unspecified"
     style_profile_version: str = "0"
+    theme_id: str | None = None
+    theme_version: str | None = None
     seed: int | None = None
     retry_count: int = 0
     content_hash: str
@@ -190,6 +294,8 @@ class IllustrationBrief(BaseModel):
     width: int | None = None
     height: int | None = None
     style_profile: Literal["soft_flat_educational_v1"] = "soft_flat_educational_v1"
+    presentation_theme_id: str | None = None
+    presentation_theme_version: str | None = None
     forbidden_content: list[str] = Field(default_factory=list)
     text_policy: Literal["no_text", "semantic_symbols_only", "short_environment_label"] = "no_text"
     composition_guidance: list[str] = Field(default_factory=list)
@@ -290,6 +396,8 @@ class AssetFile(BaseModel):
     candidates: list[AssetCandidate] = Field(default_factory=list)
     review_history: list[AssetReviewEvent] = Field(default_factory=list)
     request_fingerprint: str | None = None
+    presentation_theme_id: str | None = None
+    presentation_theme_version: str | None = None
 
 
 class MediaReviewAction(BaseModel):
@@ -303,6 +411,8 @@ class AssetManifest(BaseModel):
     audio: list[AssetFile] = Field(default_factory=list)
     video: list[AssetFile] = Field(default_factory=list)
     fonts: list[AssetFile] = Field(default_factory=list)
+    presentation_theme_id: str | None = None
+    presentation_theme_version: str | None = None
 
 
 class QualityReport(BaseModel):
@@ -1108,6 +1218,8 @@ class PresentationContentPlan(BaseModel):
     generation_strategy: str = "approved_artifact_projection"
     deterministic: bool = True
     trace: list[PresentationTrace] = Field(default_factory=list)
+    presentation_theme_id: str | None = None
+    presentation_theme_version: str | None = None
 
 
 class PresentationContentReport(BaseModel):
