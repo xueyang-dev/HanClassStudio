@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .models import AssetManifest, LessonBlueprint, LessonProfile, PresentationBindingPlan, QualityReport
 from .presentation_theme import presentation_theme_for_project, project_has_presentation_theme
+from .typography import resolve_typography
 
 
 def render_lesson(
@@ -20,6 +21,7 @@ def render_lesson(
     output_filename: str | None = None,
 ) -> Path:
     theme = presentation_theme_for_project(project_root) if project_has_presentation_theme(project_root) else None
+    typography = resolve_typography(profile.target_language, profile.explanation_language, profile.transliteration_system, profile.interface_language)
     image_by_id = {asset.id: f"../{asset.path}" for asset in manifest.images}
     audio_by_id = {asset.id: f"../{asset.path}" for asset in manifest.audio}
     slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id, render_mode) for slide in blueprint.slides)
@@ -34,12 +36,12 @@ def render_lesson(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{escape(blueprint.lesson_title)} · HanClassStudio</title>
-  <style>{_css(theme)}</style>
+  <style>{_css(theme, typography)}</style>
 </head>
 <body{body_class}>
   <div id="loadingState" class="loading-state">正在准备课件...</div>
   <a class="skip-link" href="#slides">跳到课件</a>
-  <div class="courseware-shell" data-mode="bilingual">
+  <div class="courseware-shell" data-mode="bilingual" dir="{'rtl' if typography.roles['explanation'].direction == 'rtl' else 'ltr'}">
     <aside class="slide-rail" aria-label="页面目录">
       <div class="rail-brand">HanClassStudio</div>
       <div class="thumb-list">
@@ -372,7 +374,7 @@ def _list(value) -> list:
     return value if isinstance(value, list) else []
 
 
-def _css(theme=None) -> str:
+def _css(theme=None, typography_profile=None) -> str:
     variables = ""
     if theme is not None:
         palette, typography, shapes = theme.palette, theme.typography, theme.shapes
@@ -386,6 +388,9 @@ def _css(theme=None) -> str:
   --card-radius: {shapes.corner_radius * 100:.0f}px;
 }}
 """
+    if typography_profile is not None:
+        target = typography_profile.roles["target_text"]; explanation = typography_profile.roles["explanation"]; pinyin = typography_profile.roles["transliteration"]
+        variables += f':root {{ --font-chinese: "{target.resolved_font}", sans-serif; --font-pinyin: "{pinyin.resolved_font}", sans-serif; --font-explanation: "{explanation.resolved_font}", sans-serif; }}\n[dir="rtl"] {{ direction: rtl; text-align: right; unicode-bidi: plaintext; }}\n'
     base = """
 :root {
   color-scheme: light;
