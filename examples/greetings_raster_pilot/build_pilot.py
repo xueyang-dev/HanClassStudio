@@ -15,11 +15,12 @@ from hcs_api import storage
 from hcs_api.asset_review import render_review_page
 from hcs_api.media import generate_configured_media
 from hcs_api.models import (
-    ContentBlock, ImageProviderSettings, LessonBlueprint, LessonProfile, LessonSlide,
+    AssetManifest, ContentBlock, ImageProviderSettings, LessonBlueprint, LessonProfile, LessonSlide,
     MediaRequirements, ProviderSettings, QualityReport, SlideComponent, SourceMaterial,
     SourcePage, TextBlock,
 )
 from hcs_api.pipeline import run_full_pipeline, write_blueprint_artifacts
+from hcs_api.presentation_theme import presentation_theme_for_project
 from hcs_api.pptx_exporter import export_editable_pptx
 from hcs_api.quality import check_quality
 from hcs_api.renderer import render_lesson
@@ -33,6 +34,7 @@ def build_pilot(real_raster: bool = False) -> Path:
     root = storage.ensure_project(PROJECT_ID)
     manifest_path = root / "assets" / "data" / "asset_manifest.json"
     previous_manifest = manifest_path.read_bytes() if manifest_path.exists() else None
+    prior_assets = AssetManifest.model_validate_json(previous_manifest) if previous_manifest else None
     source = _source()
     profile = _profile()
     storage.write_model(PROJECT_ID, "source_material.json", source)
@@ -52,12 +54,20 @@ def build_pilot(real_raster: bool = False) -> Path:
     # manifest before the real media pass so a repeat build can reuse local assets.
     if previous_manifest is not None:
         manifest_path.write_bytes(previous_manifest)
+    # Keep the user-reviewed raster visuals and choose the closest
+    # master-derived presentation theme from their local palette.  No provider
+    # call is needed for this path.
+    storage.write_json(PROJECT_ID, "presentation/theme_selection.json", {
+        "decision_source": "inherited_from_existing_assets",
+    })
 
     blueprint = _blueprint()
     write_blueprint_artifacts(PROJECT_ID, blueprint)
     settings = _provider_settings(real_raster)
     started = time.perf_counter()
     manifest = generate_configured_media(root, blueprint, settings, preserve_media_origin_trace=True)
+    if prior_assets is not None:
+        _reuse_pilot_rasters(root, manifest, prior_assets)
     generation_ms = round((time.perf_counter() - started) * 1000, 1)
     storage.write_model(PROJECT_ID, "asset_manifest.json", manifest)
 
@@ -81,7 +91,41 @@ def build_pilot(real_raster: bool = False) -> Path:
     review_dir = diagnostics / "teacher_media_review"
     review_dir.mkdir(parents=True, exist_ok=True)
     (review_dir / "index.html").write_text(review_html, encoding="utf-8")
+    theme = presentation_theme_for_project(root)
+    theme_decision = root / "presentation" / "presentation_theme.json"
+    (diagnostics / "theme_decision_report.json").write_text(json.dumps({
+        "schema": "hanclassstudio.greetings_raster_theme_review.v1",
+        "selected_theme": theme.model_dump(mode="json"),
+        "decision_source": "inherited_from_existing_assets",
+        "decision": json.loads(theme_decision.read_text(encoding="utf-8")) if theme_decision.exists() else None,
+        "reused_raster_hashes": {asset.id: asset.content_hash for asset in manifest.images if asset.id in RASTER_KEYS},
+        "human_review_required": True,
+        "notes": ["Theme selection analyses local accepted/generated raster pixels only.", "No automatic aesthetic verdict is made."],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
     return root
+
+
+def _reuse_pilot_rasters(root: Path, manifest: AssetManifest, prior: AssetManifest) -> None:
+    """Reuse valid local candidates rather than re-requesting reviewed raster art."""
+    from hashlib import sha256
+
+    prior_by_id = {asset.id: asset for asset in prior.images}
+    for index, asset in enumerate(manifest.images):
+        previous = prior_by_id.get(asset.id)
+        if asset.id not in RASTER_KEYS or previous is None or not previous.path.lower().endswith(".png"):
+            continue
+        path = root / previous.path
+        if not path.is_file() or not previous.content_hash:
+            continue
+        if sha256(path.read_bytes()).hexdigest() != previous.content_hash:
+            continue
+        reused = previous.model_copy(deep=True)
+        reused.presentation_theme_id = manifest.presentation_theme_id
+        reused.presentation_theme_version = manifest.presentation_theme_version
+        if reused.generation:
+            reused.generation.theme_id = manifest.presentation_theme_id
+            reused.generation.theme_version = manifest.presentation_theme_version
+        manifest.images[index] = reused
 
 
 def _provider_settings(real_raster: bool) -> ProviderSettings:
@@ -119,11 +163,9 @@ def _profile() -> LessonProfile:
 
 def _scene(key: str, action: str) -> MediaRequirements:
     prompt = (
-        "Modern soft flat educational illustration for English-speaking zero-beginner Chinese learners. "
-        f"{action}. Natural human anatomy and poses; one unmistakable central action; simple uncluttered "
-        "contemporary school context; warm, calm expressions; soft distinct colors; strong subject-background "
-        "separation; suitable for classroom projection and worksheets; 16:9 composition; no embedded words, "
-        "letters, captions, watermark, logo, poster, UI, or infographic layout."
+        f"{action}. One unmistakable central action for English-speaking zero-beginner Chinese learners; "
+        "natural human anatomy and poses; 16:9 composition; no embedded words, letters, captions, watermark, "
+        "logo, poster, UI, or infographic layout."
     )
     return MediaRequirements(image_key=key, image_prompt=prompt, media_kind="raster", text_policy="no_text")
 

@@ -41,6 +41,7 @@ def test_diagnostic_pilot_build_uses_pipeline_and_stays_offline(tmp_path: Path, 
     assert (root / "learning" / "evidence_plan.json").is_file()
     assert (root / "learning" / "activity_plan.json").is_file()
     assert (root / "presentation" / "presentation_blueprint.json").is_file()
+    assert (root / "presentation" / "presentation_theme.json").is_file()
     assert (root / "courseware" / "lesson.html").is_file()
     assert list((root / "exports").glob("*.pptx"))
     assert list((root / "exports").glob("*.zip"))
@@ -49,3 +50,6 @@ def test_diagnostic_pilot_build_uses_pipeline_and_stays_offline(tmp_path: Path, 
     assert report["remote_provider_url_in_export"] is False
     assert report["teacher_had_to_edit_json_or_code"] is False
     assert report["verdict"] == "pending_teacher_visual_review"
+    theme_report = storage.read_json(module.PROJECT_ID, "diagnostics/theme_decision_report.json")
+    assert theme_report["decision_source"] == "inherited_from_existing_assets"
+    assert theme_report["human_review_required"] is True
