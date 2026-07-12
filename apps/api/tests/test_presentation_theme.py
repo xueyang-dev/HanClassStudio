@@ -51,7 +51,9 @@ def test_teacher_selected_theme_falls_back_from_unknown_font(tmp_path: Path) -> 
 def test_existing_warm_images_select_master_warm_variant_and_propagate(tmp_path: Path) -> None:
     image_path = tmp_path / "assets/images/scene.png"
     image_path.parent.mkdir(parents=True)
-    Image.new("RGB", (160, 90), "#EFA37E").save(image_path)
+    image = Image.new("RGB", (160, 90), "#EFA37E")
+    image.putpixel((0, 0), (255, 255, 255))
+    image.save(image_path)
     manifest = AssetManifest(images=[AssetFile(
         id="scene", kind="image", path="assets/images/scene.png", content_hash="abc",
     )])
@@ -66,6 +68,7 @@ def test_existing_warm_images_select_master_warm_variant_and_propagate(tmp_path:
     assert decision.theme.theme_id == WARM_THEME_ID
     assert manifest.presentation_theme_id == WARM_THEME_ID
     assert manifest.images[0].presentation_theme_id == WARM_THEME_ID
+    assert all(len(color) == 7 for color in decision.asset_observations["dominant_colors"])
     plan = json.loads((tmp_path / "presentation/presentation_content_plan.json").read_text())
     assert plan["presentation_theme_id"] == WARM_THEME_ID
 
