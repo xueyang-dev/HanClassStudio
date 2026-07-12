@@ -6,6 +6,7 @@ from html import escape
 from pathlib import Path
 
 from .models import AssetManifest, LessonBlueprint, LessonProfile, PresentationBindingPlan, QualityReport
+from .presentation_theme import presentation_theme_for_project, project_has_presentation_theme
 
 
 def render_lesson(
@@ -18,6 +19,7 @@ def render_lesson(
     activity_bindings: PresentationBindingPlan | None = None,
     output_filename: str | None = None,
 ) -> Path:
+    theme = presentation_theme_for_project(project_root) if project_has_presentation_theme(project_root) else None
     image_by_id = {asset.id: f"../{asset.path}" for asset in manifest.images}
     audio_by_id = {asset.id: f"../{asset.path}" for asset in manifest.audio}
     slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id, render_mode) for slide in blueprint.slides)
@@ -32,7 +34,7 @@ def render_lesson(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{escape(blueprint.lesson_title)} · HanClassStudio</title>
-  <style>{_css()}</style>
+  <style>{_css(theme)}</style>
 </head>
 <body{body_class}>
   <div id="loadingState" class="loading-state">正在准备课件...</div>
@@ -84,6 +86,7 @@ def render_lesson(
                 "schema": "hanclassstudio.render_manifest.v1",
                 "entry": f"courseware/{filename}",
                 "slide_count": len(blueprint.slides),
+                "presentation_theme": {"theme_id": theme.theme_id, "version": theme.version} if theme else None,
             },
             ensure_ascii=False,
             indent=2,
@@ -369,8 +372,21 @@ def _list(value) -> list:
     return value if isinstance(value, list) else []
 
 
-def _css() -> str:
-    return """
+def _css(theme=None) -> str:
+    variables = ""
+    if theme is not None:
+        palette, typography, shapes = theme.palette, theme.typography, theme.shapes
+        variables = f"""
+:root {{
+  --bg: #{palette.background}; --surface: #{palette.surface}; --ink: #{palette.text};
+  --muted: #{palette.muted}; --line: #{palette.line}; --teal: #{palette.primary};
+  --coral: #{palette.accent}; --gold: #{palette.warning}; --mint: #{palette.success};
+  --font-chinese: \"{typography.chinese_font}\", \"{typography.fallback_fonts[0]}\", sans-serif;
+  --font-pinyin: \"{typography.pinyin_font}\", \"{typography.latin_font}\", sans-serif;
+  --card-radius: {shapes.corner_radius * 100:.0f}px;
+}}
+"""
+    base = """
 :root {
   color-scheme: light;
   --bg: #f8faf7;
@@ -382,10 +398,13 @@ def _css() -> str:
   --coral: #f25f5c;
   --gold: #f7b32b;
   --mint: #ddf7e5;
+  --font-chinese: Inter, "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif;
+  --font-pinyin: Inter, Arial, sans-serif;
+  --card-radius: 8px;
   --shadow: 0 18px 45px rgba(22, 49, 54, 0.14);
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; font-family: Inter, "Noto Sans SC", "Microsoft YaHei", Arial, sans-serif; background: var(--bg); color: var(--ink); }
+html, body { margin: 0; min-height: 100%; font-family: var(--font-chinese); background: var(--bg); color: var(--ink); }
 button { font: inherit; cursor: pointer; min-height: 44px; }
 button:disabled { cursor: not-allowed; opacity: .62; }
 .loading-state { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: var(--bg); color: var(--teal); font-size: 22px; font-weight: 800; }
@@ -408,7 +427,7 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .toolbar button.active, .player-nav button:hover, .component-actions button:hover { border-color: var(--teal); color: var(--teal); }
 .slide-frame { position: relative; min-height: min(72vw, calc(100dvh - 150px)); aspect-ratio: 16 / 9; max-height: calc(100dvh - 150px); margin: 0 auto; width: min(100%, 1280px); }
 .v2-internal .slide-frame { min-width: 0; }
-.slide { display: none; position: absolute; inset: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: clamp(28px, 4vw, 56px); }
+.slide { display: none; position: absolute; inset: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: var(--card-radius); box-shadow: var(--shadow); padding: clamp(28px, 4vw, 56px); }
 .slide.active { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 18px; }
 .slide-content { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr); gap: 32px; align-items: center; min-height: 0; }
 .text-zone { min-width: 0; }
@@ -463,6 +482,7 @@ h2 { margin: 0 0 12px; font-size: 22px; }
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
 """
+    return base + variables
 
 
 def _js() -> str:

@@ -14,7 +14,11 @@ from .asset_review import (
 )
 from .models import (
     AssetCandidate, AssetFile, AssetManifest, GeneratedImage, GeneratedImageFailure,
-    IllustrationRequest, LessonBlueprint, ProviderSettings,
+    IllustrationRequest, LessonBlueprint, PresentationTheme, ProviderSettings,
+)
+from .presentation_theme import (
+    THEME_DECISION_PATH, THEME_SELECTION_PATH, persist_theme_decision,
+    resolve_presentation_theme,
 )
 from .providers import ProviderError, _llm_enabled, generate_openai_image, generate_openai_tts
 from .raster_provider import (
@@ -28,7 +32,12 @@ from .svg_illustration import (
 )
 
 
-def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint, preserve_media_origin_trace: bool = False) -> AssetManifest:
+def generate_placeholder_media(
+    project_root: Path,
+    blueprint: LessonBlueprint,
+    preserve_media_origin_trace: bool = False,
+    theme: PresentationTheme | None = None,
+) -> AssetManifest:
     images: list[AssetFile] = []
     audio: list[AssetFile] = []
     image_dir = project_root / "assets" / "images"
@@ -45,7 +54,7 @@ def generate_placeholder_media(project_root: Path, blueprint: LessonBlueprint, p
                 spec = build_scene_spec_for_concept(
                     slide.media_requirements.image_prompt or "", blueprint.lesson_title
                 )
-                path.write_text(render_scene_spec(spec), encoding="utf-8")
+                path.write_text(render_scene_spec(spec, presentation_theme=theme), encoding="utf-8")
                 path.with_suffix(".scene.json").write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
             else:
                 path.write_text(_placeholder_svg(slide.media_requirements.image_prompt, slide.id), encoding="utf-8")
@@ -101,6 +110,7 @@ def _upgrade_svg_illustrations(
     lesson_ctx: dict,
     svg_keys: set[str],
     offline_safe: bool,
+    theme: PresentationTheme | None,
 ) -> None:
     """Replace placeholder SVGs with locked-contract LLM illustrations where enabled."""
     image_dir = project_root / "assets" / "images"
@@ -126,7 +136,7 @@ def _upgrade_svg_illustrations(
             style=slide.media_requirements.svg_style or "flat",
             offline_safe=offline_safe,
         )
-        svg, _report, spec = generate_svg_illustration(contract, settings.llm)
+        svg, _report, spec = generate_svg_illustration(contract, settings.llm, presentation_theme=theme)
         (image_dir / f"{asset.id}.svg").write_text(svg, encoding="utf-8")
         (image_dir / f"{asset.id}.scene.json").write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
         asset.path = f"assets/images/{asset.id}.svg"
@@ -140,7 +150,21 @@ def generate_configured_media(
     force_regenerate: bool = False,
 ) -> AssetManifest:
     previous = previous_assets(project_root)
-    manifest = generate_placeholder_media(project_root, blueprint, preserve_media_origin_trace)
+    # Existing courseware remains visually stable until a presentation theme is
+    # explicitly requested or already selected for the project.  New theme-aware
+    # workflows opt in through presentation/theme_selection.json.
+    theme_requested = (project_root / THEME_SELECTION_PATH).is_file() or (project_root / THEME_DECISION_PATH).is_file()
+    decision = None
+    theme = None
+    if theme_requested:
+        previous_manifest = AssetManifest(images=list(previous.values()))
+        decision = resolve_presentation_theme(
+            project_root, lesson_title=blueprint.lesson_title, manifest=previous_manifest,
+        )
+        theme = decision.theme
+    manifest = generate_placeholder_media(project_root, blueprint, preserve_media_origin_trace, theme=theme)
+    if decision is not None:
+        persist_theme_decision(project_root, decision, manifest)
     spec_lock = _read_spec_lock(project_root)
     media_cfg = (spec_lock or {}).get("media", {})
     svg_policy = media_cfg.get("svg_illustration_policy", "llm-or-placeholder")
@@ -154,7 +178,7 @@ def generate_configured_media(
     }
     _replace_images_with_provider_assets(
         project_root, manifest, settings, allowed_keys=raster_keys,
-        previous=previous, force_regenerate=force_regenerate,
+        previous=previous, force_regenerate=force_regenerate, theme=theme,
     )
 
     svg_keys = {
@@ -163,9 +187,11 @@ def generate_configured_media(
         if s.media_requirements.image_key and s.media_requirements.media_kind == "svg_illustration"
     }
     if svg_keys and svg_policy != "disabled" and _llm_enabled(settings.llm):
-        _upgrade_svg_illustrations(project_root, manifest, blueprint, settings, lesson_ctx, svg_keys, offline_safe)
+        _upgrade_svg_illustrations(project_root, manifest, blueprint, settings, lesson_ctx, svg_keys, offline_safe, theme)
 
     _replace_audio_with_provider_assets(project_root, manifest, settings)
+    if decision is not None:
+        persist_theme_decision(project_root, decision, manifest)
     return manifest
 
 
@@ -214,6 +240,7 @@ def _replace_images_with_provider_assets(
     allowed_keys: set[str] | None = None,
     previous: dict[str, AssetFile] | None = None,
     force_regenerate: bool = False,
+    theme: PresentationTheme | None = None,
 ) -> None:
     if settings.image.provider == "placeholder":
         return
@@ -225,8 +252,12 @@ def _replace_images_with_provider_assets(
         request = IllustrationRequest(
             id=asset.id,
             concept=asset.prompt,
-            scene_description=asset.prompt,
+            scene_description=_theme_aware_prompt(asset.prompt, theme),
             aspect_ratio="16:9",
+            style_profile=theme.image_treatment.illustration_style if theme else "legacy_unspecified",
+            style_profile_version="1" if theme else "0",
+            theme_id=theme.theme_id if theme else None,
+            theme_version=theme.version if theme else None,
             source_trace=[f"legacy_media_requirement:{asset.id}"],
         )
         fingerprint = raster_request_fingerprint(request, settings.image)
@@ -315,6 +346,8 @@ def _persist_raster_asset(image_dir, asset, request, settings, payload) -> None:
             brief_version=request.brief_version,
             style_profile=request.style_profile,
             style_profile_version=request.style_profile_version,
+            theme_id=request.theme_id,
+            theme_version=request.theme_version,
             seed=payload.seed,
             retry_count=payload.retry_count,
             content_hash=content_hash,
@@ -338,6 +371,8 @@ def _persist_raster_asset(image_dir, asset, request, settings, payload) -> None:
     asset.fallback_reason = None
     asset.generation = generation
     asset.generation_failure = None
+    asset.presentation_theme_id = request.theme_id
+    asset.presentation_theme_version = request.theme_version
     asset.review_state = "pending_review"
     generated = AssetCandidate(
         id=f"generated-{content_hash[:12]}", path=relative_path,
@@ -378,6 +413,19 @@ def _record_raster_fallback(project_root, asset, request, settings, exc: RasterP
         retain_candidate(asset, fallback)
         asset.selected_candidate_id = fallback.id
         asset.content_hash = fallback.content_hash
+
+
+def _theme_aware_prompt(prompt: str, theme: PresentationTheme | None) -> str:
+    if theme is None:
+        return prompt
+    treatment = theme.image_treatment
+    return " ".join([
+        prompt.strip(),
+        f"Presentation theme {theme.theme_id}@{theme.version}: {theme.visual_mood}.",
+        f"Palette guidance: {', '.join(treatment.palette_descriptors)}; anchors {', '.join(treatment.palette_anchors)}.",
+        f"Use {treatment.saturation} saturation, {treatment.contrast} contrast, {treatment.background_complexity} background complexity, and {treatment.framing} framing.",
+        "Do not embed words, letters, captions, logos, or watermarks.",
+    ])
 
 
 def _raster_diagnostic_record(asset: AssetFile, request: IllustrationRequest, status: str) -> dict:

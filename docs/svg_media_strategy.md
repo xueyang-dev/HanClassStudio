@@ -194,6 +194,17 @@ def generate_raster_image(
 版本、最终 prompt、negative constraints、source trace、model、seed 与重试次数。Brief 只拥有
 视觉教学意图，不进入 State-Evidence、Activity 或 Presentation Content 契约。
 
+### 4.6 Presentation theme 对齐（opt-in）
+
+`presentation_theme.py` 保存一份来自 PPT-master 的可执行主题决策，而不是让 PPTX、HTML、
+SVG 和 raster prompt 各自维护颜色/字体常量。主题身份与版本可追溯到 presentation artifact、
+AssetManifest 和生成 provenance；Presentation Content 仅记录主题 ID/版本，不携带颜色、字体或
+provider 字段。支持 `ppt_master_auto`、配置级 `teacher_selected` 与
+`inherited_from_existing_assets`：后者只分析现有本地 raster 的轻量调色板，不触发重新生成。
+
+现有项目在没有 `presentation/theme_selection.json` 或既有主题决策时保持原有 HTML 样式。主题化
+媒体流程是显式 opt-in；它不会改变 raster 默认关闭、SVG 离线兜底或生产媒体策略。
+
 ---
 
 ## 5. 已完成 / 待办
@@ -226,6 +237,7 @@ def generate_raster_image(
 | `apps/api/src/hcs_api/svg_illustration.py` | SceneSpec 模型、渲染器、质量门、placeholder |
 | `apps/api/src/hcs_api/svg_components.py` | 注册组件库（含 `SleepingInBed` 复合组件） |
 | `apps/api/src/hcs_api/style_tokens.py` | 锁定调色板（离线安全、禁止效果清单） |
+| `apps/api/src/hcs_api/presentation_theme.py` | PPT-master 派生主题、选择、资产调色板观察与 provenance |
 | `apps/api/src/hcs_api/quality.py` | `_check_svg_illustrations` 双门 + 报告 |
 | `apps/api/src/hcs_api/pptx_exporter.py` | `_rasterize_svg` PPTX 栅格化兜底 |
 | `diagnostics/` | 开发者诊断页（对比画廊、benchmark 画廊） |

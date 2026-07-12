@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .style_tokens import SKIN_TONES, HAIR_TONES, get_style_token
+from .style_tokens import SKIN_TONES, HAIR_TONES, get_style_token, style_token_for_presentation_theme
 
 CANVAS_W = 1200
 CANVAS_H = 675
@@ -641,7 +641,7 @@ def _wrap_svg(inner: str, spec: dict, token) -> str:
     )
 
 
-def render_scene_spec(spec: dict, aspect: str = "16:9") -> str:
+def render_scene_spec(spec: dict, aspect: str = "16:9", presentation_theme=None) -> str:
     """Deterministically assemble an SVG from an IllustrationSceneSpec (dict).
 
     Pure function of the spec + style token: no LLM, no randomness, so the
@@ -652,7 +652,7 @@ def render_scene_spec(spec: dict, aspect: str = "16:9") -> str:
     suppressed for non-16:9 aspects so small frames stay uncluttered and the
     subject dominates.
     """
-    token = get_style_token(spec.get("style_token"))
+    token = style_token_for_presentation_theme(presentation_theme) if presentation_theme is not None else get_style_token(spec.get("style_token"))
     level = spec.get("illustration_level", "scene")
     setting = spec.get("setting")
 

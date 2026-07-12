@@ -8,7 +8,7 @@ colours, stroke widths, or proportions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -94,3 +94,29 @@ STYLE_TOKENS: dict[str, StyleToken] = {DEFAULT_STYLE_TOKEN: StyleToken()}
 
 def get_style_token(name: str | None = None) -> StyleToken:
     return STYLE_TOKENS.get(name or DEFAULT_STYLE_TOKEN, STYLE_TOKENS[DEFAULT_STYLE_TOKEN])
+
+
+def style_token_for_presentation_theme(theme) -> StyleToken:
+    """Map safe shared theme tokens into the deterministic SVG palette.
+
+    Components still own geometry; only colour, outline and corner decisions
+    are inherited.  This keeps the SVG lane a deterministic fallback rather
+    than turning it into another scene-design system.
+    """
+    if theme is None:
+        return get_style_token()
+    palette = theme.palette
+    return replace(
+        get_style_token(),
+        bg_light="#" + palette.background,
+        bg_light_warm="#" + palette.secondary,
+        accent="#" + palette.primary,
+        accent2="#" + palette.accent,
+        fabric_blue="#" + palette.primary,
+        fabric_teal="#" + palette.accent,
+        ink="#" + palette.text,
+        outline="#" + palette.text,
+        aux_symbol="#" + palette.muted,
+        corner_radius=theme.shapes.corner_radius * 100,
+        outline_width=max(2.0, theme.shapes.border_weight * 3),
+    )

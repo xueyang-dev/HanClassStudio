@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 MASTER_SOURCE = "runtime/projects/0bce727f8b6f/uploads/第1课 教学课件 中文 七年级 第一学期.pptx"
@@ -47,6 +47,36 @@ class PptMasterDesignProfile:
 
 
 PROFILE = PptMasterDesignProfile()
+
+
+def profile_for_theme(theme) -> PptMasterDesignProfile:
+    """Apply a shared theme's actionable tokens to the reference-master layout."""
+    if theme is None:
+        return PptMasterDesignProfile()
+    palette, typography, shapes = theme.palette, theme.typography, theme.shapes
+    return replace(
+        PptMasterDesignProfile(),
+        background=palette.background,
+        background_alt=palette.secondary,
+        primary=palette.primary,
+        accent=palette.accent,
+        mint=palette.success,
+        warm=palette.warning,
+        ink=palette.text,
+        muted=palette.muted,
+        line=palette.line,
+        heading_font=typography.chinese_font,
+        chinese_font=typography.chinese_font,
+        latin_font=typography.latin_font,
+        title_size=typography.title_size_pt,
+        chinese_hero_size=typography.chinese_hero_size_pt,
+        pinyin_size=typography.pinyin_size_pt,
+        meaning_size=max(14, typography.body_size_pt + 2),
+        instruction_size=typography.body_size_pt,
+        minimum_body_size=typography.body_size_pt,
+        card_radius=shapes.corner_radius,
+        image_radius=shapes.corner_radius,
+    )
 
 
 RECIPES = {
