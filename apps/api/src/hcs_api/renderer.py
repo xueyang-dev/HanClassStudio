@@ -418,7 +418,7 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .thumb { text-align: left; border: 1px solid transparent; background: transparent; color: var(--ink); border-radius: 8px; padding: 10px; display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: center; }
 .thumb span { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface); color: var(--teal); font-weight: 800; }
 .thumb.active, .thumb:hover { background: var(--surface); border-color: var(--line); }
-.stage { min-height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 18px; gap: 14px; }
+.stage { min-width: 0; min-height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; padding: 18px; gap: 14px; }
 .player-bar, .player-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .player-bar strong { display: block; font-size: 18px; }
 .player-bar span, .scaffold { color: var(--muted); }
@@ -473,8 +473,8 @@ h2 { margin: 0 0 12px; font-size: 22px; }
   .courseware-shell { grid-template-columns: 1fr; }
   .slide-rail { display: none; }
   .stage { padding: 10px; }
-  .slide-frame { min-height: auto; max-height: none; }
-  .slide { position: relative; min-height: 640px; padding: 24px; }
+  .slide-frame { width: 100%; min-height: auto; max-height: none; aspect-ratio: auto; }
+  .slide { position: relative; min-height: 0; padding: 24px; }
   .slide-content { grid-template-columns: 1fr; }
   .vocab-grid { grid-template-columns: 1fr; }
 }
