@@ -44,7 +44,8 @@
   --success-surface: rgba(52, 199, 89, 0.12);
   --focus: #0a8276;
   --focus-ring: rgba(10, 130, 118, 0.32);
-  --scrim: rgba(0, 0, 0, 0.28);
+  --scrim: rgba(0, 0, 0, 0.52);
+  --modal-bg: var(--surface);
 
   /* Layered, soft Apple shadows */
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px rgba(0, 0, 0, 0.1);
@@ -2002,12 +2003,12 @@ textarea {
   width: min(720px, 100%);
   max-height: min(760px, calc(100dvh - 40px));
   overflow: auto;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--line);
   border-radius: var(--radius-xl);
-  background: var(--glass-bg-strong);
-  backdrop-filter: blur(26px) saturate(140%);
-  -webkit-backdrop-filter: blur(26px) saturate(140%);
-  box-shadow: var(--glass-inset), var(--shadow);
+  background: var(--modal-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: var(--shadow);
   padding: 22px;
   transform-origin: center;
   animation: modal-materialize 0.34s var(--ease-out) both;
@@ -2256,7 +2257,8 @@ textarea {
     --primary-tint: rgba(48, 209, 192, 0.14);
     --primary-line: rgba(48, 209, 192, 0.4);
     --accent: #0a84ff;
-    --scrim: rgba(0, 0, 0, 0.5);
+    --scrim: rgba(0, 0, 0, 0.78);
+    --modal-bg: #242426;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.5);
     --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.45);
     --text: var(--ink);
