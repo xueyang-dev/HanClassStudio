@@ -382,25 +382,31 @@ def check_svg_offline_safe(svg: str, asset_id: str) -> SvgQualityReport:
     return report
 
 
-def placeholder_svg(brief: str, slide_id: int, accent: str = BRAND_ACCENT) -> str:
+def placeholder_svg(brief: str, slide_id: int, accent: str = BRAND_ACCENT, presentation_theme=None) -> str:
     """Deprecated geometric placeholder. Kept only as a last-resort fallback."""
     safe = html.escape((brief or "illustration")[:120])
     hue = (slide_id * 41) % 360
     secondary = f"hsl({(hue + 120) % 360}, 62%, 60%)"
+    background, surface, line, muted = "#F8FAF7", "#FFFFFF", "#DCE8E2", "#6F8D88"
+    if presentation_theme is not None:
+        palette = presentation_theme.palette
+        accent = "#" + palette.primary
+        secondary = "#" + palette.accent
+        background, surface, line, muted = ("#" + palette.background, "#" + palette.surface, "#" + palette.line, "#" + palette.muted)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" '
         f'role="img" aria-label="{safe}">\n'
-        f'  <rect width="1200" height="675" fill="#F8FAF7"/>\n'
+        f'  <rect width="1200" height="675" fill="{background}"/>\n'
         f'  <circle cx="220" cy="180" r="120" fill="{accent}" opacity="0.16"/>\n'
         f'  <circle cx="980" cy="500" r="160" fill="{secondary}" opacity="0.18"/>\n'
-        f'  <rect x="340" y="170" width="520" height="335" rx="14" fill="#FFFFFF" stroke="#DCE8E2" stroke-width="4"/>\n'
+        f'  <rect x="340" y="170" width="520" height="335" rx="14" fill="{surface}" stroke="{line}" stroke-width="4"/>\n'
         f'  <circle cx="470" cy="300" r="46" fill="{accent}" opacity="0.85"/>\n'
         f'  <path d="M560 360 C640 250 720 300 800 230 C860 180 920 240 960 210" fill="none" '
         f'stroke="{accent}" stroke-width="18" stroke-linecap="round" opacity="0.7"/>\n'
         f'  <rect x="400" y="410" width="300" height="20" rx="8" fill="{accent}" opacity="0.30"/>\n'
-        f'  <rect x="400" y="448" width="220" height="16" rx="8" fill="#6F8D88" opacity="0.26"/>\n'
+        f'  <rect x="400" y="448" width="220" height="16" rx="8" fill="{muted}" opacity="0.26"/>\n'
         f'  <text x="600" y="525" text-anchor="middle" font-family="sans-serif" font-size="24" '
-        f'fill="#6F8D88" opacity="0.75">{safe}</text>\n'
+        f'fill="{muted}" opacity="0.75">{safe}</text>\n'
         f"</svg>"
     )
 
@@ -409,7 +415,7 @@ def placeholder_svg(brief: str, slide_id: int, accent: str = BRAND_ACCENT) -> st
 # Generator orchestration
 # ==========================================================================
 
-def generate_svg_illustration(contract: SvgContract, llm_settings: LLMProviderSettings) -> tuple[str, SvgQualityReport]:
+def generate_svg_illustration(contract: SvgContract, llm_settings: LLMProviderSettings, presentation_theme=None) -> tuple[str, SvgQualityReport, dict]:
     """Return (svg_text, offline_report).
 
     Tries the LLM scene-spec path, falls back to the deterministic recipe, then
@@ -435,10 +441,10 @@ def generate_svg_illustration(contract: SvgContract, llm_settings: LLMProviderSe
     if spec is None:
         spec = validate_scene_spec(build_scene_spec_for_concept(contract.brief, contract.lesson_title))
 
-    svg = render_scene_spec(spec.model_dump())
+    svg = render_scene_spec(spec.model_dump(), presentation_theme=presentation_theme)
     report = check_svg_offline_safe(svg, asset_id)
     if not report.passed:
-        svg = placeholder_svg(contract.brief, contract.slide_id, contract.accent)
+        svg = placeholder_svg(contract.brief, contract.slide_id, contract.accent, presentation_theme=presentation_theme)
         report = check_svg_offline_safe(svg, asset_id)
     return svg, report, spec.model_dump()
 

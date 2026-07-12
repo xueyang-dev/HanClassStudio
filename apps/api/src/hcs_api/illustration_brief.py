@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .models import IllustrationBrief, IllustrationRequest, IllustrationStyleProfile
+from .presentation_theme import theme_by_id
 
 
 SOFT_FLAT_EDUCATIONAL_V1 = IllustrationStyleProfile(
@@ -28,6 +29,8 @@ SOFT_FLAT_EDUCATIONAL_V1 = IllustrationStyleProfile(
 def compile_illustration_request(brief: IllustrationBrief, request_id: str) -> IllustrationRequest:
     """Compile the same validated brief into the same ordered prompt."""
     profile = SOFT_FLAT_EDUCATIONAL_V1
+    theme = theme_by_id(brief.presentation_theme_id)
+    treatment = theme.image_treatment
     prompt = "\n".join([
         f"Teaching concept: {brief.concept}.",
         f"Scene purpose: {brief.scene_purpose}.",
@@ -42,6 +45,7 @@ def compile_illustration_request(brief: IllustrationBrief, request_id: str) -> I
         f"Composition: {'; '.join(brief.composition_guidance) or 'center the teaching action with generous clear space'}.",
         f"Accessibility and clarity: {'; '.join(brief.accessibility_requirements) or 'recognizable at classroom projection distance'}.",
         f"Text policy: {brief.text_policy}.",
+        f"Presentation theme {theme.theme_id}@{theme.version}: {theme.visual_mood}; palette {'; '.join(treatment.palette_descriptors)}; anchors {'; '.join(treatment.palette_anchors)}; saturation {treatment.saturation}; contrast {treatment.contrast}; background complexity {treatment.background_complexity}; framing {treatment.framing}.",
         f"Style {profile.id}@{profile.version}: {profile.description}; {'; '.join(profile.requirements)}.",
     ])
     negative_constraints = _unique([
@@ -57,6 +61,8 @@ def compile_illustration_request(brief: IllustrationBrief, request_id: str) -> I
         brief_version=brief.version,
         style_profile=profile.id,
         style_profile_version=profile.version,
+        theme_id=theme.theme_id,
+        theme_version=theme.version,
         aspect_ratio=brief.aspect_ratio,
         width=brief.width,
         height=brief.height,
