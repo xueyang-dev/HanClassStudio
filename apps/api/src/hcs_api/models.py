@@ -59,6 +59,10 @@ class LessonProfile(BaseModel):
     lesson_type: str = "New lesson"
     generation_mode: GenerationMode = "guided_redesign"
     estimated_duration: str = "45 minutes"
+    target_language: str = "zh-CN"
+    explanation_language: str = "en-US"
+    transliteration_system: str = "pinyin"
+    interface_language: str = "zh-CN"
 
 
 class ContentBlock(BaseModel):
