@@ -425,7 +425,7 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
 .toolbar button, .player-nav button, .component-actions button, .audio-button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 9px 13px; }
 .toolbar button.active, .player-nav button:hover, .component-actions button:hover { border-color: var(--teal); color: var(--teal); }
-.slide-frame { position: relative; min-height: min(72vw, calc(100dvh - 150px)); aspect-ratio: 16 / 9; max-height: calc(100dvh - 150px); margin: 0 auto; width: min(100%, 1280px); }
+.slide-frame { position: relative; min-height: 0; aspect-ratio: 16 / 9; max-height: calc(100dvh - 150px); margin: 0 auto; width: min(100%, 1280px); }
 .v2-internal .slide-frame { min-width: 0; }
 .slide { display: none; position: absolute; inset: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: var(--card-radius); box-shadow: var(--shadow); padding: clamp(28px, 4vw, 56px); }
 .slide.active { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 18px; }
