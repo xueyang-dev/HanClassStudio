@@ -303,10 +303,7 @@ def _source_text(source: SourceMaterial) -> str:
     chunks: list[str] = []
     for page in source.pages:
         chunks.append(page.title)
-        for block in page.text_blocks:
-            chunks.append(block.text)
-        if page.ocr_text:
-            chunks.append(page.ocr_text)
+        chunks.append(page.content_text())
         if page.notes:
             chunks.append(page.notes)
     return "\n".join(chunk for chunk in chunks if chunk)

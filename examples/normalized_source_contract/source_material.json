@@ -1,0 +1,441 @@
+{
+  "source_type": "pdf",
+  "original_filename": "第三课_你叫什么名字.pdf",
+  "created_at": "2026-07-12T04:08:41.290016+00:00",
+  "pages": [],
+  "source_analysis": {
+    "schema": "hanclassstudio.source_evidence.v1",
+    "source_method_summary": {
+      "native": 1,
+      "tesseract": 1
+    },
+    "pipeline": [
+      "document_ingestion",
+      "text_recognition",
+      "reading_order",
+      "structure_reconstruction",
+      "source_normalization"
+    ],
+    "pages": [
+      {
+        "page_number": 1,
+        "width": 720.0,
+        "height": 1280.0,
+        "orientation": 0,
+        "skew_corrected": false,
+        "has_native_text": true,
+        "dominant_language": "zh",
+        "source_method": "native",
+        "blocks": [
+          {
+            "id": "page_1_block_01",
+            "page_number": 1,
+            "block_type": "lesson_title",
+            "text": "第三课 你叫什么名字",
+            "bbox": [
+              0.1,
+              0.04,
+              0.9,
+              0.1
+            ],
+            "polygon": null,
+            "reading_order": 1,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "",
+            "language_hint": "zh",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [],
+            "alternatives": [],
+            "meta": {}
+          },
+          {
+            "id": "page_1_block_02",
+            "page_number": 1,
+            "block_type": "heading",
+            "text": "生词",
+            "bbox": [
+              0.1,
+              0.14,
+              0.3,
+              0.18
+            ],
+            "polygon": null,
+            "reading_order": 2,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "",
+            "language_hint": "zh",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [],
+            "alternatives": [],
+            "meta": {}
+          },
+          {
+            "id": "page_1_block_03",
+            "page_number": 1,
+            "block_type": "vocabulary_item",
+            "text": "你好 nǐ hǎo hello",
+            "bbox": [
+              0.1,
+              0.2,
+              0.7,
+              0.24
+            ],
+            "polygon": null,
+            "reading_order": 3,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "",
+            "language_hint": "mixed",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [
+              {
+                "type": "pinyin_hanzi_misalignment",
+                "position": null,
+                "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+                "candidates": [],
+                "confidence": null
+              }
+            ],
+            "alternatives": [],
+            "meta": {}
+          },
+          {
+            "id": "page_1_block_04",
+            "page_number": 1,
+            "block_type": "heading",
+            "text": "对话",
+            "bbox": [
+              0.1,
+              0.36,
+              0.3,
+              0.4
+            ],
+            "polygon": null,
+            "reading_order": 4,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "",
+            "language_hint": "zh",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [],
+            "alternatives": [],
+            "meta": {}
+          },
+          {
+            "id": "page_1_block_05",
+            "page_number": 1,
+            "block_type": "dialogue_turn",
+            "text": "A：你好！我叫李明。",
+            "bbox": [
+              0.1,
+              0.44,
+              0.85,
+              0.49
+            ],
+            "polygon": null,
+            "reading_order": 5,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "A",
+            "language_hint": "mixed",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [
+              {
+                "type": "pinyin_hanzi_misalignment",
+                "position": null,
+                "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+                "candidates": [],
+                "confidence": null
+              }
+            ],
+            "alternatives": [],
+            "meta": {}
+          },
+          {
+            "id": "page_1_block_06",
+            "page_number": 1,
+            "block_type": "heading",
+            "text": "练习",
+            "bbox": [
+              0.1,
+              0.64,
+              0.3,
+              0.68
+            ],
+            "polygon": null,
+            "reading_order": 6,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "",
+            "language_hint": "zh",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [],
+            "alternatives": [],
+            "meta": {}
+          },
+          {
+            "id": "page_1_block_07",
+            "page_number": 1,
+            "block_type": "exercise_question",
+            "text": "1. 听一听，选一选。",
+            "bbox": [
+              0.1,
+              0.72,
+              0.85,
+              0.77
+            ],
+            "polygon": null,
+            "reading_order": 7,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "",
+            "language_hint": "zh",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [],
+            "alternatives": [],
+            "meta": {}
+          },
+          {
+            "id": "page_1_block_08",
+            "page_number": 1,
+            "block_type": "exercise_option",
+            "text": "A. 你好 B. 再见",
+            "bbox": [
+              0.1,
+              0.8,
+              0.85,
+              0.85
+            ],
+            "polygon": null,
+            "reading_order": 8,
+            "confidence": 1.0,
+            "source_method": "native",
+            "speaker": "",
+            "language_hint": "mixed",
+            "needs_review": false,
+            "review_status": "auto",
+            "source_crop": "",
+            "warnings": [
+              {
+                "type": "pinyin_hanzi_misalignment",
+                "position": null,
+                "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+                "candidates": [],
+                "confidence": null
+              }
+            ],
+            "alternatives": [],
+            "meta": {}
+          }
+        ],
+        "visual_assets": [
+          {
+            "id": "page_1_asset_01",
+            "page_number": 1,
+            "asset_type": "illustration",
+            "bbox": [
+              0.55,
+              0.2,
+              0.9,
+              0.55
+            ],
+            "crop_path": "assets/images/lesson3_greetings.png",
+            "description": "",
+            "confidence": 1.0,
+            "needs_review": false,
+            "review_status": "auto",
+            "warnings": []
+          }
+        ],
+        "warnings": [
+          {
+            "type": "pinyin_hanzi_misalignment",
+            "position": null,
+            "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+            "candidates": [],
+            "confidence": null
+          },
+          {
+            "type": "pinyin_hanzi_misalignment",
+            "position": null,
+            "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+            "candidates": [],
+            "confidence": null
+          },
+          {
+            "type": "pinyin_hanzi_misalignment",
+            "position": null,
+            "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+            "candidates": [],
+            "confidence": null
+          }
+        ]
+      },
+      {
+        "page_number": 2,
+        "width": null,
+        "height": null,
+        "orientation": 0,
+        "skew_corrected": false,
+        "has_native_text": false,
+        "dominant_language": "",
+        "source_method": "tesseract",
+        "blocks": [
+          {
+            "id": "page_2_block_01",
+            "page_number": 2,
+            "block_type": "other",
+            "text": "",
+            "bbox": null,
+            "polygon": null,
+            "reading_order": 1,
+            "confidence": 0.0,
+            "source_method": "tesseract",
+            "speaker": "",
+            "language_hint": "",
+            "needs_review": true,
+            "review_status": "needs_review",
+            "source_crop": "",
+            "warnings": [
+              {
+                "type": "ocr_no_text",
+                "position": null,
+                "message": "OCR engine ran but found no text; confirm whether the page is image-only or needs manual entry.",
+                "candidates": [],
+                "confidence": null
+              },
+              {
+                "type": "low_confidence",
+                "position": null,
+                "message": "Low confidence; blocked from automatic key-content generation.",
+                "candidates": [],
+                "confidence": 0.0
+              }
+            ],
+            "alternatives": [],
+            "meta": {}
+          }
+        ],
+        "visual_assets": [],
+        "warnings": [
+          {
+            "type": "ocr_no_text",
+            "position": null,
+            "message": "OCR engine ran but found no text; confirm whether the page is image-only or needs manual entry.",
+            "candidates": [],
+            "confidence": null
+          },
+          {
+            "type": "low_confidence",
+            "position": null,
+            "message": "Low confidence; blocked from automatic key-content generation.",
+            "candidates": [],
+            "confidence": 0.0
+          }
+        ]
+      }
+    ],
+    "textbook_structure": {
+      "unit": "",
+      "lesson_title": "第三课 你叫什么名字",
+      "sections": [
+        {
+          "section_type": "lesson_title",
+          "title": "第三课 你叫什么名字",
+          "block_ids": [
+            "page_1_block_01"
+          ],
+          "meta": {}
+        },
+        {
+          "section_type": "vocabulary",
+          "title": "生词",
+          "block_ids": [
+            "page_1_block_02",
+            "page_1_block_03"
+          ],
+          "meta": {}
+        },
+        {
+          "section_type": "dialogue",
+          "title": "对话",
+          "block_ids": [
+            "page_1_block_04",
+            "page_1_block_05"
+          ],
+          "meta": {}
+        },
+        {
+          "section_type": "exercise",
+          "title": "练习",
+          "block_ids": [
+            "page_1_block_06",
+            "page_1_block_07",
+            "page_1_block_08"
+          ],
+          "meta": {}
+        }
+      ]
+    },
+    "overall_confidence": 0.889,
+    "needs_review_count": 1,
+    "warnings": [
+      {
+        "type": "pinyin_hanzi_misalignment",
+        "position": null,
+        "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+        "candidates": [],
+        "confidence": null
+      },
+      {
+        "type": "pinyin_hanzi_misalignment",
+        "position": null,
+        "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+        "candidates": [],
+        "confidence": null
+      },
+      {
+        "type": "pinyin_hanzi_misalignment",
+        "position": null,
+        "message": "Pinyin block contains hanzi; verify pinyin/character alignment.",
+        "candidates": [],
+        "confidence": null
+      },
+      {
+        "type": "ocr_no_text",
+        "position": null,
+        "message": "OCR engine ran but found no text; confirm whether the page is image-only or needs manual entry.",
+        "candidates": [],
+        "confidence": null
+      },
+      {
+        "type": "low_confidence",
+        "position": null,
+        "message": "Low confidence; blocked from automatic key-content generation.",
+        "candidates": [],
+        "confidence": 0.0
+      }
+    ],
+    "notes": [
+      "PP-StructureV3 / PaddleOCR (paddle_ocr) not installed; scanned pages use Tesseract or the native text layer. Install paddleocr for full textbook parsing (layout, tables, formulas).",
+      "Tesseract has no chi_sim traineddata; install it for reliable Chinese recognition.",
+      "PaddleOCR-VL-1.6 (paddle_vl) not installed; hard pages are not auto-recovered by VLM."
+    ]
+  }
+}

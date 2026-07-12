@@ -185,11 +185,11 @@ def _source_excerpt(source: SourceMaterial, limit: int = 7000) -> str:
     chunks: list[str] = [f"File: {source.original_filename}", f"Type: {source.source_type}"]
     for page in source.pages:
         chunks.append(f"\nPage {page.page_number}: {page.title}")
-        chunks.extend(block.text for block in page.text_blocks if block.text.strip())
+        content = page.content_text()
+        if content:
+            chunks.append(content)
         if page.notes.strip():
             chunks.append(f"Notes: {page.notes}")
-        if page.ocr_text.strip():
-            chunks.append(f"OCR: {page.ocr_text}")
     text = "\n".join(chunks)
     return text[:limit]
 

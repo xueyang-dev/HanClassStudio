@@ -1,6 +1,38 @@
 export type GenerationMode = "faithful" | "guided_redesign" | "reimagined";
 export type QualityState = "pass" | "warning" | "blocked";
 
+/** Capability category handled by a provider. */
+export type ProviderCapability = "ocr" | "image" | "tts" | "video";
+
+/** One configurable field for a provider. */
+export interface ProviderFieldDef {
+  key: string;
+  labelKey: string;
+  type: "text" | "password" | "select" | "url";
+  placeholderKey?: string;
+  required: boolean;
+  options?: Array<{ value: string; label: string }>;
+}
+
+/** A selectable provider (cloud API or local runtime). */
+export interface ProviderDefinition {
+  id: string;
+  name: string;
+  category: "cloud" | "local";
+  capabilities: ProviderCapability[];
+  descriptionKey: string;
+  fields: ProviderFieldDef[];
+}
+
+/** Stored configuration for one capability. */
+export interface CapabilityConfig {
+  providerId: string;
+  values: Record<string, string>;
+}
+
+/** Full provider configuration persisted per user/browser. */
+export type ProviderConfig = Partial<Record<ProviderCapability, CapabilityConfig>>;
+
 export interface ComponentConfig {
   renderer?: string;
   requires?: string[];
@@ -41,10 +73,52 @@ export interface SourcePage {
 }
 
 export interface SourceMaterial {
-  source_type: "pptx" | "pdf" | "unknown";
+  source_type: "pptx" | "pdf" | "image" | "unknown";
   original_filename: string;
   created_at: string;
   pages: SourcePage[];
+  source_analysis?: SourceAnalysis | null;
+}
+
+/** A single recognized block inside the OCR Source Evidence Model. */
+export interface SourceAnalysisBlock {
+  text: string;
+  confidence: number;
+  block_type: string;
+  needs_review: boolean;
+}
+
+/** Per-page result of the OCR / Source Document Understanding layer. */
+export interface SourceAnalysisPage {
+  page_number: number;
+  source_method: string;
+  dominant_language?: string;
+  has_native_text?: boolean;
+  blocks: SourceAnalysisBlock[];
+}
+
+/** Normalized source contract (hanclassstudio.source_evidence.v1) produced by OCR. */
+export interface SourceAnalysis {
+  schema: string;
+  source_method_summary: Record<string, number>;
+  overall_confidence: number;
+  needs_review_count: number;
+  pages: SourceAnalysisPage[];
+  notes: string[];
+}
+
+/** One OCR engine reported by GET /api/ocr/status. */
+export interface OcrEngineStatus {
+  name: string;
+  available: boolean;
+  detail: string;
+}
+
+/** Response of GET /api/ocr/status. */
+export interface OcrStatusResponse {
+  engines: OcrEngineStatus[];
+  policy: Record<string, unknown>;
+  recommended_pipeline: string[];
 }
 
 export interface LessonProfile {

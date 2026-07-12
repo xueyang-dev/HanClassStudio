@@ -76,10 +76,7 @@ def _source_text(source: SourceMaterial) -> str:
     for page in source.pages:
         if page.title:
             chunks.append(page.title)
-        for block in page.text_blocks:
-            chunks.append(block.text)
-        if page.ocr_text:
-            chunks.append(page.ocr_text)
+        chunks.append(page.content_text())
         if page.notes:
             chunks.append(page.notes)
     return "\n".join(chunk for chunk in chunks if chunk)
@@ -183,6 +180,12 @@ def _classify_vocabulary(
 
         # Skip framework noise
         if word in FRAMEWORK_NOISE and freq <= 3:
+            noise.append(word)
+            continue
+
+        # A greeting route should not promote nearby phonetics/explanation text
+        # into target vocabulary merely because OCR placed it near pinyin.
+        if route == "greeting_lesson" and word not in GREETING_WORDS:
             noise.append(word)
             continue
 

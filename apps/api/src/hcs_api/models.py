@@ -7,7 +7,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 GenerationMode = Literal["faithful", "guided_redesign", "reimagined"]
-SourceType = Literal["pptx", "pdf", "unknown"]
+SourceType = Literal["pptx", "pdf", "image", "unknown"]
 QualityState = Literal["pass", "warning", "blocked"]
 
 
@@ -42,12 +42,175 @@ class SourcePage(BaseModel):
     notes: str = ""
     ocr_text: str = ""
 
+    def content_text(self) -> str:
+        """Return one compatibility text view without duplicating OCR output."""
+        block_text = "\n".join(block.text for block in self.text_blocks if block.text.strip())
+        return block_text or self.ocr_text.strip()
+
 
 class SourceMaterial(BaseModel):
     source_type: SourceType
     original_filename: str
     created_at: str = Field(default_factory=utc_now_iso)
     pages: list[SourcePage] = Field(default_factory=list)
+    # Normalized source contract produced by the OCR / Source Document
+    # Understanding layer. None for legacy material parsed before this feature.
+    source_analysis: "SourceAnalysisResult | None" = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Source Document Understanding / OCR Evidence models
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# These models implement the front-of-pipeline OCR layer recommended for
+# HanClassStudio. They replace the flat ``ocr_text`` string with a structured,
+# evidence-preserving Source Evidence Model that keeps版面类型、坐标、阅读顺序、
+# 置信度和来源方法，并保留原始证据供教师复核。
+#
+# The OCR layer is responsible ONLY for answering "what is in the source
+# material?" (text, layout, semantic units, non-text assets, uncertainty).
+# It deliberately does NOT convert material into teaching activities — that is
+# the Learner Analysis / State-Evidence Kernel's job.
+
+SourceMethod = Literal["native", "paddle_ocr", "paddle_vl", "tesseract", "unavailable"]
+
+ReviewStatus = Literal["auto", "needs_review", "accepted", "rejected"]
+
+OCREvidenceBlockType = Literal[
+    "title", "unit_title", "lesson_title", "heading", "subheading",
+    "body", "list_item", "dialogue_turn", "speaker_label",
+    "vocabulary_item", "grammar_point", "culture_note",
+    "exercise_question", "exercise_option", "exercise_answer",
+    "caption", "footnote", "page_number", "header", "footer",
+    "table", "table_cell", "formula", "note_marker", "other",
+]
+
+TextbookSectionType = Literal[
+    "unit_title", "lesson_title", "vocabulary", "dialogue",
+    "language_focus", "exercise", "culture", "listening",
+    "picture_task", "reading", "notes", "other",
+]
+
+VisualAssetType = Literal[
+    "illustration", "photo", "map", "table", "flowchart",
+    "qrcode", "audio_icon", "handwriting", "chart", "unknown",
+]
+
+
+class OCREvidenceWarning(BaseModel):
+    """One uncertainty signal attached to a block, asset, page or the whole run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str = ""
+    position: int | str | None = None
+    message: str = ""
+    candidates: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+
+
+class OCREvidenceBlock(BaseModel):
+    """A single recognized content block with full provenance and uncertainty.
+
+    This is the atomic unit the rest of the system reasons about. ``bbox`` is
+    normalized to the [0,1] page coordinate space so downstream features
+    (highlight-on-source, crop, source-trace, asset linkage) work uniformly.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    page_number: int
+    block_type: OCREvidenceBlockType = "body"
+    text: str = ""
+    bbox: list[float] | None = None  # [x0, y0, x1, y1] normalized 0..1
+    polygon: list[float] | None = None  # optional quad for curved text
+    reading_order: int | None = None
+    confidence: float = 1.0
+    source_method: SourceMethod = "native"
+    speaker: str = ""  # dialogue turns
+    language_hint: str = ""  # zh | en | pinyin | ar | mixed
+    needs_review: bool = False
+    review_status: ReviewStatus = "auto"
+    source_crop: str = ""  # path to cropped image asset
+    warnings: list[OCREvidenceWarning] = Field(default_factory=list)
+    alternatives: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class VisualAsset(BaseModel):
+    """A non-text region extracted from the page (illustration, photo, map, ...)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    page_number: int
+    asset_type: VisualAssetType = "unknown"
+    bbox: list[float] | None = None
+    crop_path: str = ""
+    description: str = ""
+    confidence: float = 1.0
+    needs_review: bool = False
+    review_status: ReviewStatus = "auto"
+    warnings: list[OCREvidenceWarning] = Field(default_factory=list)
+
+
+class TextbookSection(BaseModel):
+    """A stable structural unit of the source material (NOT a teaching activity)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    section_type: TextbookSectionType = "other"
+    title: str = ""
+    block_ids: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class TextbookStructure(BaseModel):
+    """A stable, teaching-agnostic reconstruction of the source's textbook layout."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    unit: str = ""
+    lesson_title: str = ""
+    sections: list[TextbookSection] = Field(default_factory=list)
+
+
+class PageAnalysisResult(BaseModel):
+    """Per-page analysis produced by the Source Document Understanding layer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_number: int
+    width: float | None = None
+    height: float | None = None
+    orientation: int = 0
+    skew_corrected: bool = False
+    has_native_text: bool = False
+    dominant_language: str = ""
+    source_method: SourceMethod = "native"
+    blocks: list[OCREvidenceBlock] = Field(default_factory=list)
+    visual_assets: list[VisualAsset] = Field(default_factory=list)
+    warnings: list[OCREvidenceWarning] = Field(default_factory=list)
+
+
+class SourceAnalysisResult(BaseModel):
+    """Normalized source contract (Source Evidence Model) at the front of the
+    workflow. Replaces the flat ``ocr_text`` placeholder with structured,
+    reviewable evidence. Stored as ``SourceMaterial.source_analysis``.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+    schema_: str = Field(default="hanclassstudio.source_evidence.v1", alias="schema")
+    source_method_summary: dict[str, int] = Field(default_factory=dict)
+    pipeline: list[str] = Field(default_factory=list)
+    pages: list[PageAnalysisResult] = Field(default_factory=list)
+    textbook_structure: TextbookStructure = Field(default_factory=TextbookStructure)
+    overall_confidence: float = 0.0
+    needs_review_count: int = 0
+    warnings: list[OCREvidenceWarning] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class LessonProfile(BaseModel):
@@ -384,6 +547,7 @@ class AssetFile(BaseModel):
     id: str
     kind: Literal["image", "audio", "video", "font", "data"]
     path: str
+    placeholder: bool = True
     prompt: str = ""
     text: str = ""
     media_request_id: str | None = None
@@ -520,10 +684,34 @@ class AudioProviderSettings(BaseModel):
     voice: str = "default"
 
 
+class OCRProviderSettings(BaseModel):
+    provider: str = ""
+    deploy_mode: str = "local"
+    api_key: str = ""
+    endpoint_url: str = ""
+    model: str = ""
+    langs: str = ""
+    use_gpu: bool = False
+
+
+class VideoProviderSettings(BaseModel):
+    provider: str = ""
+    deploy_mode: str = "local"
+    api_key: str = ""
+    endpoint_url: str = ""
+    model: str = ""
+
+
 class ProviderSettings(BaseModel):
     llm: LLMProviderSettings = Field(default_factory=LLMProviderSettings)
     image: ImageProviderSettings = Field(default_factory=ImageProviderSettings)
     audio: AudioProviderSettings = Field(default_factory=AudioProviderSettings)
+    ocr: OCRProviderSettings = Field(default_factory=OCRProviderSettings)
+    video: VideoProviderSettings = Field(default_factory=VideoProviderSettings)
+    # Raw frontend capability config (source of truth). The flat fields above are
+    # derived from this on save so the media pipeline / OCR engine selection can
+    # read user choices directly.
+    capabilities: dict = Field(default_factory=dict)
 
 QualityState = Literal["pass", "warning", "blocked"]
 LearnerLevel = Literal["zero_beginner", "beginner", "elementary", "intermediate"]

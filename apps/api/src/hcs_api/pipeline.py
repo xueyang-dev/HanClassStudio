@@ -274,8 +274,10 @@ def render_and_check(
     if blueprint and profile:
         from .models import DifficultyProfile as _DP, LanguageInventory as _LI, LearnerModel as _LM
         from .realization_engine import build_presentation_plan, check_realization as _check_real
-        diff = read_model(project_id, "analysis/difficulty_profile.json", _DP) or _DP()
-        inv = read_model(project_id, "analysis/language_inventory.json", _LI) or _LI()
+        diff_data = read_json(project_id, "analysis/difficulty_profile.json")
+        inv_data = read_json(project_id, "analysis/language_inventory.json")
+        diff = _DP.model_validate(diff_data) if diff_data else _DP()
+        inv = _LI.model_validate(inv_data) if inv_data else _LI()
         atp = build_allowed_text_plan(blueprint, inv, diff)
         write_json(project_id, "analysis/allowed_text_plan.json", atp.model_dump(mode="json"))
         off_report = check_off_level(blueprint, atp, inv, diff)
@@ -346,6 +348,13 @@ def run_full_pipeline(
     difficulty = build_difficulty_profile(source, profile, source_lesson)
     write_json(project_id, "analysis/difficulty_profile.json", difficulty.model_dump(mode="json"))
     inventory = build_language_inventory(source_lesson, difficulty, learner_model)
+    for item in language_items:
+        if item.item_type != "word" or not item.target_form or item.target_form in inventory.known_items:
+            continue
+        if item.target_form not in inventory.lesson_target_items:
+            inventory.lesson_target_items.append(item.target_form)
+        if item.target_form in inventory.off_level_items:
+            inventory.off_level_items.remove(item.target_form)
     write_json(project_id, "analysis/language_inventory.json", inventory.model_dump(mode="json"))
 
     # State-Evidence Kernel

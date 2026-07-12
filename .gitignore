@@ -13,5 +13,8 @@ runtime/
 apps/web/node_modules/
 apps/web/dist/
 apps/api/.venv/
+apps/api/output/
+output/
+apps/api/_prefetch_*.py
 
 .workbuddy/

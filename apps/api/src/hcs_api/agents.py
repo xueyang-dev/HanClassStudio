@@ -165,11 +165,16 @@ def build_blueprint(
     ]
     # Greeting lesson: filter out blocked words
     if route == "greeting_lesson":
-        vocabulary = [v for v in vocabulary if v["word"] not in GREETING_VOCAB_BLOCK]
-        # Ensure priority greeting words come first
-        priority = [v for v in vocabulary if v["word"] in GREETING_VOCAB_PRIORITY]
-        other = [v for v in vocabulary if v["word"] not in GREETING_VOCAB_PRIORITY]
-        vocabulary = (priority + other)[:8]
+        from .learner_comprehension import GREETING_GLOSS
+
+        item_lookup = {li.target_form: li for li in (language_items or [])}
+        vocabulary = []
+        for word, pinyin in (("你好", "nǐ hǎo"), ("您好", "nín hǎo")):
+            item = item_lookup.get(word)
+            meaning = item.scaffold_meaning if item and item.scaffold_meaning else GREETING_GLOSS[word].get(
+                profile.scaffolding_language, GREETING_GLOSS[word]["English"]
+            )
+            vocabulary.append({"word": word, "pinyin": pinyin, "meaning": meaning})
     if not vocabulary:
         vocabulary = fallback_vocab
 
@@ -274,8 +279,8 @@ def _build_greeting_lesson(
                          scaffolding_text=_scaffold("Greet others in Chinese", profile)),
             ContentBlock(id="obj_2", block_type="objective", text="您好！",
                          scaffolding_text=_scaffold("Use polite greetings", profile)),
-            ContentBlock(id="obj_3", block_type="objective", text="一、二、三",
-                         scaffolding_text=_scaffold("Write three characters", profile)),
+            ContentBlock(id="obj_3", block_type="objective", text="你好 / 您好",
+                         scaffolding_text=_scaffold("Choose a greeting for a friend or teacher", profile)),
         ],
     ))
 
@@ -292,20 +297,21 @@ def _build_greeting_lesson(
     # 5. Politeness: 你 vs 您
     slide_id += 1
     slides.append(LessonSlide(
-        id=slide_id, slide_type="GrammarPatternSlide", layout_variant="drag_builder",
-        title="练一练",
+        id=slide_id, slide_type="PracticeSlide", layout_variant="match_game",
+        title="你好还是您好？",
         content_blocks=[ContentBlock(
             id="politeness_note", block_type="pattern",
-            text="",
-            scaffolding_text=_scaffold("", profile),
+            text="你好 / 您好",
+            scaffolding_text=_scaffold("Choose the greeting that fits the person.", profile),
         )],
         components=[SlideComponent(
-            id="sentence_drag", component_type="SentenceDragBuilder", title="",
+            id="politeness_match", component_type="MatchGame", title="",
             data={
-                "words": ["你好", "您好", "！"],
-                "answer": "您好！",
-                "hint": _scaffold("Drag the words to make a polite greeting.", profile),
-                "audio_key": "politeness_1", "audio_text": "您好！",
+                "pairs": [
+                    {"left": "你好", "right": "friend / classmate"},
+                    {"left": "您好", "right": "teacher / elder"},
+                ],
+                "hint": _scaffold("Match each greeting with the right person.", profile),
             },
         )],
     ))
@@ -392,12 +398,13 @@ def _vocab_slide_zb(
             "usage_context": sc_usage,
             "example": f"{word}！",
         })
+    hint = _scaffold("Tap cards to flip; check pinyin and scaffold-language meaning with students.", profile)
     return LessonSlide(
         id=slide_id, slide_type="VocabularySlide", layout_variant="card_grid",
-        title="生词卡",
+        title=items_data[0]["word"] if items_data else "听一听，读一读",
         components=[SlideComponent(
-            id="vocab_cards", component_type="VocabularyFlipCard", title="生词卡",
-            data={"items": items_data},
+            id="vocab_cards", component_type="VocabularyFlipCard", title="",
+            data={"items": items_data, "hint": hint},
         )],
     )
 
@@ -610,8 +617,7 @@ def _source_text(source: SourceMaterial) -> str:
     chunks: list[str] = []
     for page in source.pages:
         chunks.append(page.title)
-        chunks.extend(block.text for block in page.text_blocks)
-        chunks.append(page.ocr_text)
+        chunks.append(page.content_text())
     return "\n".join(chunk for chunk in chunks if chunk)
 
 

@@ -139,7 +139,7 @@ def check_quality(project_root: Path, blueprint: LessonBlueprint, manifest: Asse
             msg = f"资源路径不存在：{asset.path}"
             report.resource_errors.append(msg)
             _block(report, msg)
-        if asset.path.endswith(".wav"):
+        if asset.kind == "audio" and getattr(asset, "placeholder", True):
             _warn(report, f"资源使用占位文件：{asset.path}")
 
     _check_svg_illustrations(project_root, manifest, report)

@@ -125,6 +125,19 @@ def build_language_items(
             source_evidence="core_vocabulary",
         ))
 
+    if candidates.route_hint == "greeting_lesson" and not any(item.target_form == "您好" for item in items):
+        items.append(LanguageItem(
+            id="vocab_polite_hello",
+            item_type="word",
+            target_form="您好",
+            pronunciation="nín hǎo",
+            scaffold_meaning=_lookup_gloss("您好", learner.scaffold_language, gloss_table),
+            usage_context="对老师、长辈等尊敬的人使用",
+            example="您好！",
+            difficulty=1,
+            source_evidence="greeting_composition",
+        ))
+
     # Add politeness pattern as a LanguageItem
     for gc in candidates.grammar_candidates:
         if "vs" in gc["pattern"] or "对比" in gc.get("note", ""):

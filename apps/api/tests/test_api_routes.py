@@ -70,11 +70,20 @@ def test_provider_settings_round_trip(tmp_path, monkeypatch) -> None:
 
     save_response = client.put("/api/settings/providers", json=payload)
     assert save_response.status_code == 200
-    assert save_response.json() == payload
+    saved = save_response.json()
+    # The flat llm/image/audio fields must round-trip unchanged. The model also
+    # carries ocr/video/capabilities (derived from the frontend capability config),
+    # so we assert the flat contract rather than exact full-document equality.
+    for key in ("llm", "image", "audio"):
+        assert saved[key] == payload[key], f"{key} did not round-trip"
+    assert "capabilities" in saved and "ocr" in saved and "video" in saved
 
     get_response = client.get("/api/settings/providers")
     assert get_response.status_code == 200
-    assert get_response.json() == payload
+    fetched = get_response.json()
+    for key in ("llm", "image", "audio"):
+        assert fetched[key] == payload[key], f"{key} did not round-trip on GET"
+    assert "capabilities" in fetched and "ocr" in fetched and "video" in fetched
 
 
 def test_project_pipeline_route_runs_full_generation(tmp_path, monkeypatch) -> None:

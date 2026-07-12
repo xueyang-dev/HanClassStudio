@@ -1,35 +1,47 @@
 import { type ChangeEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
+  Boxes,
   Check,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
   Clipboard,
+  Cpu,
   FileUp,
   Image,
   Layers3,
   Loader2,
+  MessageSquare,
+  Mic,
   MonitorPlay,
   Pencil,
   Play,
   Plus,
+  RefreshCw,
   Save,
   Settings2,
   Sparkles,
   Trash2,
+  Video,
   X
 } from "lucide-react";
 import {
+  backendToConfig,
+  configToBackend,
   exportEditablePptx,
   exportUrl,
+  fetchProviderSettings,
   forceExportProject,
   generateAgentPackage,
   generateBlueprint,
   generateMedia,
   getComponentRegistry,
+  getOcrStatus,
   listProjectArtifacts,
   previewUrl,
+  putProviderSettings,
+  rerunOcr,
   renderProject,
   runPipeline,
   saveBlueprint,
@@ -43,6 +55,7 @@ import type {
   AgentValidation,
   ArtifactEntry,
   ArtifactTree,
+  CapabilityConfig,
   ComponentConfig,
   ComponentRegistry,
   ContentBlock,
@@ -51,11 +64,242 @@ import type {
   LessonBlueprint,
   LessonProfile,
   LessonSlide,
+  OcrStatusResponse,
+  ProviderCapability,
+  ProviderConfig,
+  ProviderDefinition,
   ProjectState,
-  SlideComponent
+  SlideComponent,
+  SourceAnalysis,
+  SourceAnalysisPage
 } from "./types";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
+
+const PROVIDER_STORAGE_KEY = "hcs_provider_config";
+const ONBOARDING_STORAGE_KEY = "hcs_onboarding_seen";
+
+const CAPABILITY_ORDER: ProviderCapability[] = ["ocr", "image", "tts", "video"];
+
+const CAPABILITY_META: Record<ProviderCapability, { labelKey: string; icon: typeof Cpu; defaultProvider: string }> = {
+  ocr: { labelKey: "provider.ocr.label", icon: MessageSquare, defaultProvider: "paddle_ocr" },
+  image: { labelKey: "provider.image.label", icon: Image, defaultProvider: "openai" },
+  tts: { labelKey: "provider.tts.label", icon: Mic, defaultProvider: "openai_tts" },
+  video: { labelKey: "provider.video.label", icon: Video, defaultProvider: "runway" },
+};
+
+const PROVIDER_CATALOG: ProviderDefinition[] = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    category: "cloud",
+    capabilities: ["image", "tts"],
+    descriptionKey: "provider.desc.openai",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
+      { key: "baseUrl", labelKey: "provider.field.baseUrl", type: "url", placeholderKey: "provider.field.baseUrl.optional", required: false },
+      { key: "model", labelKey: "provider.field.model", type: "select", required: true, options: [
+        { value: "gpt-4o", label: "GPT-4o" },
+        { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+        { value: "gpt-4-turbo", label: "GPT-4 Turbo" }
+      ]}
+    ]
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic Claude",
+    category: "cloud",
+    capabilities: [],
+    descriptionKey: "provider.desc.anthropic",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
+      { key: "model", labelKey: "provider.field.model", type: "select", required: true, options: [
+        { value: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet" },
+        { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+        { value: "claude-3-haiku-20240307", label: "Claude 3 Haiku" }
+      ]}
+    ]
+  },
+  {
+    id: "azure_openai",
+    name: "Azure OpenAI",
+    category: "cloud",
+    capabilities: ["image"],
+    descriptionKey: "provider.desc.azure",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
+      { key: "endpoint", labelKey: "provider.field.endpoint", type: "url", required: true },
+      { key: "deployment", labelKey: "provider.field.deployment", type: "text", required: true }
+    ]
+  },
+  {
+    id: "google",
+    name: "Google Gemini",
+    category: "cloud",
+    capabilities: ["image"],
+    descriptionKey: "provider.desc.google",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
+      { key: "model", labelKey: "provider.field.model", type: "select", required: true, options: [
+        { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+        { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" }
+      ]}
+    ]
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    category: "local",
+    capabilities: ["image"],
+    descriptionKey: "provider.desc.ollama",
+    fields: [
+      { key: "baseUrl", labelKey: "provider.field.baseUrl", type: "url", required: true, placeholderKey: "provider.field.baseUrl.ollama" },
+      { key: "model", labelKey: "provider.field.model", type: "text", required: true, placeholderKey: "provider.field.model.example" }
+    ]
+  },
+  {
+    id: "lm_studio",
+    name: "LM Studio",
+    category: "local",
+    capabilities: [],
+    descriptionKey: "provider.desc.lm_studio",
+    fields: [
+      { key: "baseUrl", labelKey: "provider.field.baseUrl", type: "url", required: true, placeholderKey: "provider.field.baseUrl.lmstudio" },
+      { key: "model", labelKey: "provider.field.model", type: "text", required: false, placeholderKey: "provider.field.model.optional" }
+    ]
+  },
+  {
+    id: "openai_tts",
+    name: "OpenAI TTS",
+    category: "cloud",
+    capabilities: ["tts"],
+    descriptionKey: "provider.desc.openai_tts",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
+      { key: "model", labelKey: "provider.field.ttsModel", type: "select", required: true, options: [
+        { value: "tts-1", label: "TTS-1" },
+        { value: "tts-1-hd", label: "TTS-1 HD" }
+      ]},
+      { key: "voice", labelKey: "provider.field.voice", type: "select", required: true, options: [
+        { value: "alloy", label: "Alloy" },
+        { value: "echo", label: "Echo" },
+        { value: "fable", label: "Fable" },
+        { value: "onyx", label: "Onyx" },
+        { value: "nova", label: "Nova" },
+        { value: "shimmer", label: "Shimmer" }
+      ]}
+    ]
+  },
+  {
+    id: "elevenlabs",
+    name: "ElevenLabs",
+    category: "cloud",
+    capabilities: ["tts"],
+    descriptionKey: "provider.desc.elevenlabs",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
+      { key: "voiceId", labelKey: "provider.field.voiceId", type: "text", required: true }
+    ]
+  },
+  {
+    id: "macos_say",
+    name: "macOS Say",
+    category: "local",
+    capabilities: ["tts"],
+    descriptionKey: "provider.desc.macos_say",
+    fields: [
+      { key: "voice", labelKey: "provider.field.voice", type: "text", required: false, placeholderKey: "provider.field.voice.optional" }
+    ]
+  },
+  {
+    id: "runway",
+    name: "Runway",
+    category: "cloud",
+    capabilities: ["video"],
+    descriptionKey: "provider.desc.runway",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true }
+    ]
+  },
+  {
+    id: "paddle_ocr",
+    name: "PaddleOCR",
+    category: "local",
+    capabilities: ["ocr"],
+    descriptionKey: "provider.desc.paddle_ocr",
+    fields: [
+      { key: "useGpu", labelKey: "provider.field.useGpu", type: "select", required: false, options: [
+        { value: "false", label: "CPU" },
+        { value: "true", label: "GPU" }
+      ]}
+    ]
+  },
+  {
+    id: "tesseract",
+    name: "Tesseract",
+    category: "local",
+    capabilities: ["ocr"],
+    descriptionKey: "provider.desc.tesseract",
+    fields: [
+      { key: "langs", labelKey: "provider.field.langs", type: "text", required: false, placeholderKey: "provider.field.langs.example" }
+    ]
+  },
+  {
+    id: "azure_doc",
+    name: "Azure Document Intelligence",
+    category: "cloud",
+    capabilities: ["ocr"],
+    descriptionKey: "provider.desc.azure_doc",
+    fields: [
+      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
+      { key: "endpoint", labelKey: "provider.field.endpoint", type: "url", required: true }
+    ]
+  }
+];
+
+function getProviderById(id: string): ProviderDefinition | undefined {
+  return PROVIDER_CATALOG.find((p) => p.id === id);
+}
+
+function isCapabilityConfigured(config: CapabilityConfig | undefined): boolean {
+  if (!config) return false;
+  const def = getProviderById(config.providerId);
+  if (!def) return false;
+  return def.fields.filter((f) => f.required).every((f) => config.values[f.key]?.trim());
+}
+
+function readStoredProviderConfig(): ProviderConfig {
+  try {
+    const raw = localStorage.getItem(PROVIDER_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as ProviderConfig) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredProviderConfig(config: ProviderConfig) {
+  try {
+    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(config));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function readOnboardingSeen(): boolean {
+  try {
+    return localStorage.getItem(ONBOARDING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeOnboardingSeen() {
+  try {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "1");
+  } catch {
+    // ignore
+  }
+}
 
 const modes: Array<{ value: GenerationMode; titleKey: string; detailKey: string }> = [
   { value: "faithful", titleKey: "mode.faithful", detailKey: "mode.faithful.detail" },
@@ -73,14 +317,6 @@ const steps = [
 
 type StepId = (typeof steps)[number]["id"];
 type PipelineStepStatus = "pending" | "running" | "done" | "error";
-
-const providerStatuses = [
-  { labelKey: "provider.llm.label", nameKey: "provider.configured", statusKey: "provider.mock", mode: "Mock" },
-  { labelKey: "provider.image.label", nameKey: "provider.placeholderSvg", statusKey: "provider.mock", mode: "Mock" },
-  { labelKey: "provider.tts.label", nameKey: "provider.placeholderTone", statusKey: "provider.mock", mode: "Mock" },
-  { labelKey: "provider.video.label", nameKey: "provider.notConnected", statusKey: "provider.notConfigured", mode: "Mock" },
-  { labelKey: "provider.ocr.label", nameKey: "provider.parserFallback", statusKey: "provider.mock", mode: "Local" }
-] as const;
 
 const pipelineStepKeys = [
   "pipeline.contract",
@@ -137,12 +373,17 @@ export function App() {
   const [previewError, setPreviewError] = useState("");
   const [artifactTree, setArtifactTree] = useState<ArtifactTree | null>(null);
   const [componentRegistry, setComponentRegistry] = useState<ComponentRegistry>({});
+  const [ocrStatus, setOcrStatus] = useState<OcrStatusResponse | null>(null);
   const [agentPackage, setAgentPackage] = useState<AgentPackage | null>(null);
   const [agentValidation, setAgentValidation] = useState<AgentValidation | null>(null);
   const [agentCopied, setAgentCopied] = useState(false);
   const [pptxExport, setPptxExport] = useState<EditablePptxExportResponse | null>(null);
   const [autoFilledFields, setAutoFilledFields] = useState<Set<string>>(new Set());
   const [userEditedFields, setUserEditedFields] = useState<Set<string>>(new Set());
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig>(() => readStoredProviderConfig());
+  const [settingsSynced, setSettingsSynced] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const settingsLoadedRef = useRef(false);
 
   const progressIndex = useMemo(() => {
     if (project?.preview_url) return 4;
@@ -161,6 +402,50 @@ export function App() {
     getComponentRegistry()
       .then(setComponentRegistry)
       .catch((err) => setError(readableError(err, t)));
+    if (!readOnboardingSeen()) {
+      setOnboardingOpen(true);
+    }
+  }, []);
+
+  // Load persisted provider settings from the backend (source of truth) on mount.
+  useEffect(() => {
+    fetchProviderSettings()
+      .then((backend) => {
+        const fromBackend = backendToConfig(backend);
+        if (Object.keys(fromBackend).length > 0) {
+          setProviderConfig(fromBackend);
+          writeStoredProviderConfig(fromBackend);
+        } else if (Object.keys(providerConfig).length > 0) {
+          // Promote any existing local-only config to the server.
+          putProviderSettings(configToBackend(providerConfig)).catch(() => {});
+        }
+        setSettingsSynced(true);
+      })
+      .catch(() => setSettingsSynced(false))
+      .finally(() => {
+        settingsLoadedRef.current = true;
+      });
+  }, []);
+
+  // Persist provider settings to the backend whenever they change (best-effort,
+  // debounced, and skipped until the initial load has resolved).
+  useEffect(() => {
+    if (!settingsLoadedRef.current) return;
+    const handle = setTimeout(() => {
+      putProviderSettings(configToBackend(providerConfig))
+        .then(() => setSettingsSynced(true))
+        .catch(() => setSettingsSynced(false));
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [providerConfig]);
+
+  useEffect(() => {
+    getOcrStatus()
+      .then(setOcrStatus)
+      .catch(() => {
+        // OCR status is non-critical; the panel degrades gracefully.
+        setOcrStatus(null);
+      });
   }, []);
 
   async function refreshArtifacts(projectId: string) {
@@ -233,6 +518,20 @@ export function App() {
     setPreviewError("");
     setPreviewLoading(false);
     await run(t("busy.parsing"), () => uploadProject(file), "profile");
+  }
+
+  async function handleRerunOcr(engine?: string) {
+    if (!project) return;
+    setBusy(t("ocr.busy"));
+    setError("");
+    try {
+      const next = await rerunOcr(project.project_id, engine);
+      updateProject(next);
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusy("");
+    }
   }
 
   async function handleSaveProfile(nextStep?: StepId) {
@@ -395,7 +694,7 @@ export function App() {
             );
           })}
         </nav>
-        <ProviderStatusPanel onOpenSettings={() => setSettingsOpen(true)} />
+        <ProviderStatusPanel config={providerConfig} onOpenSettings={() => setSettingsOpen(true)} />
       </aside>
 
       <main className="workspace">
@@ -451,7 +750,10 @@ export function App() {
               <input type="file" accept=".pptx,.pdf" onChange={handleUpload} />
             </label>
             {project?.source_material && (
-              <SourcePreview project={project} />
+              <>
+                <SourcePreview project={project} />
+                <OcrRerunPanel project={project} ocrStatus={ocrStatus} onRerun={handleRerunOcr} busy={Boolean(busy)} />
+              </>
             )}
           </section>
         )}
@@ -695,7 +997,30 @@ export function App() {
           </section>
         )}
       </main>
-      {settingsOpen && <ModelSettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <ModelSettingsModal
+          config={providerConfig}
+          synced={settingsSynced}
+          onChange={(next) => {
+            setProviderConfig(next);
+            writeStoredProviderConfig(next);
+          }}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+      {onboardingOpen && (
+        <OnboardingWizard
+          config={providerConfig}
+          onChange={(next) => {
+            setProviderConfig(next);
+            writeStoredProviderConfig(next);
+          }}
+          onClose={() => {
+            writeOnboardingSeen();
+            setOnboardingOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -774,33 +1099,34 @@ function LanguageSwitcher() {
   );
 }
 
-function ProviderStatusPanel({ onOpenSettings }: { onOpenSettings: () => void }) {
+function ProviderStatusPanel({
+  config,
+  onOpenSettings,
+}: {
+  config: ProviderConfig;
+  onOpenSettings: () => void;
+}) {
   const { t } = useI18n();
+  const total = CAPABILITY_ORDER.length;
+  const configured = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c])).length;
+
   return (
     <section className="provider-status" aria-label={t("provider.title")}>
-      <div className="provider-status-header">
-        <div>
-          <strong>{t("provider.title")}</strong>
-          <span>{t("provider.subtitle")}</span>
+      <button
+        type="button"
+        className="provider-summary-card"
+        onClick={onOpenSettings}
+        aria-label={t("provider.open")}
+      >
+        <div className="provider-summary-icon">
+          <Boxes size={22} aria-hidden="true" />
         </div>
-        <button type="button" onClick={onOpenSettings} aria-label={t("provider.open")}>
-          <Settings2 size={17} aria-hidden="true" />
-        </button>
-      </div>
-      <div className="provider-list">
-        {providerStatuses.map((provider) => (
-          <article className="provider-row" key={provider.labelKey}>
-            <div>
-              <strong>{t(provider.labelKey)}</strong>
-              <span>{t(provider.nameKey)}</span>
-            </div>
-            <div className="provider-meta">
-              <span>{t(provider.statusKey)}</span>
-              <span>{provider.mode}</span>
-            </div>
-          </article>
-        ))}
-      </div>
+        <div className="provider-summary-text">
+          <strong>{t("provider.title")}</strong>
+          <span>{t("provider.summary", { configured, total })}</span>
+        </div>
+        <Settings2 size={18} aria-hidden="true" />
+      </button>
     </section>
   );
 }
@@ -821,19 +1147,149 @@ function PipelineStatus({ steps }: { steps: Record<string, PipelineStepStatus> }
   );
 }
 
-function ModelSettingsModal({ onClose }: { onClose: () => void }) {
+function getProvidersForCapabilityByMode(
+  capability: ProviderCapability,
+  mode: "local" | "cloud"
+): ProviderDefinition[] {
+  return PROVIDER_CATALOG.filter((p) => p.capabilities.includes(capability) && p.category === mode);
+}
+
+function CapabilityConfigPanel({
+  capability,
+  config,
+  onChange,
+}: {
+  capability: ProviderCapability;
+  config: ProviderConfig;
+  onChange: (next: ProviderConfig) => void;
+}) {
   const { t } = useI18n();
-  const fields = [
-    ["settings.llmAddr", "settings.backendConsole"],
-    ["settings.llmName", "settings.backendManaged"],
-    ["settings.imageApi", "settings.later"],
-    ["settings.ttsApi", "settings.later"],
-    ["settings.ocr", "settings.later"],
-    ["settings.videoApi", "settings.later"]
-  ] as const;
+  const cfg = config[capability];
+  const selectedProvider = cfg ? getProviderById(cfg.providerId) : undefined;
+  const [mode, setMode] = useState<"local" | "cloud">(selectedProvider?.category ?? "local");
+  const providers = getProvidersForCapabilityByMode(capability, mode);
+  const selectedId = selectedProvider && selectedProvider.category === mode ? selectedProvider.id : "";
+
+  function applyProvider(id: string) {
+    const def = getProviderById(id);
+    if (!def) return;
+    const defaults: Record<string, string> = {};
+    def.fields.forEach((f) => {
+      defaults[f.key] = f.type === "select" && f.options?.length ? f.options[0].value : "";
+    });
+    onChange({ ...config, [capability]: { providerId: id, values: defaults } });
+  }
+
+  function switchMode(next: "local" | "cloud") {
+    setMode(next);
+    const list = getProvidersForCapabilityByMode(capability, next);
+    if (list.length) {
+      applyProvider(list[0].id);
+    } else {
+      onChange({ ...config, [capability]: undefined });
+    }
+  }
+
+  function setValue(key: string, value: string) {
+    if (!cfg) return;
+    onChange({
+      ...config,
+      [capability]: { ...cfg, values: { ...cfg.values, [key]: value } }
+    });
+  }
+
+  return (
+    <div className="capability-config-panel">
+      <div className="deploy-mode">
+        <span className="deploy-mode-label">{t("provider.deployMode")}</span>
+        <div className="segmented-toggle" role="group" aria-label={t("provider.deployMode")}>
+          <button
+            type="button"
+            className={mode === "local" ? "active" : ""}
+            onClick={() => switchMode("local")}
+          >
+            {t("provider.mode.local")}
+          </button>
+          <button
+            type="button"
+            className={mode === "cloud" ? "active" : ""}
+            onClick={() => switchMode("cloud")}
+          >
+            {t("provider.mode.cloud")}
+          </button>
+        </div>
+      </div>
+
+      {providers.length === 0 ? (
+        <p className="muted-text">{t("provider.noProviders")}</p>
+      ) : (
+        <label className="field">
+          <span>{t("provider.selectProvider")}</span>
+          <select value={selectedId} onChange={(e) => applyProvider(e.target.value)}>
+            <option value="">{t("provider.chooseProvider")}</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} — {t(p.descriptionKey)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {selectedProvider && selectedProvider.category === mode && (
+        <div className="provider-fields">
+          {selectedProvider.fields.map((field) => (
+            <label className="field" key={field.key}>
+              <span>
+                {t(field.labelKey)}
+                {field.required && <span className="required-mark">*</span>}
+              </span>
+              {field.type === "select" ? (
+                <select
+                  value={cfg?.values[field.key] ?? ""}
+                  onChange={(e) => setValue(field.key, e.target.value)}
+                >
+                  {field.options?.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={field.type === "password" ? "password" : field.type === "url" ? "url" : "text"}
+                  value={cfg?.values[field.key] ?? ""}
+                  placeholder={field.placeholderKey ? t(field.placeholderKey) : ""}
+                  onChange={(e) => setValue(field.key, e.target.value)}
+                />
+              )}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModelSettingsModal({
+  config,
+  onChange,
+  onClose,
+  synced,
+}: {
+  config: ProviderConfig;
+  onChange: (next: ProviderConfig) => void;
+  onClose: () => void;
+  synced?: boolean;
+}) {
+  const { t } = useI18n();
+  const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
+
+  const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c])).length;
+
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
+      <section className="settings-modal provider-settings-modal" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
         <header>
           <div>
             <p className="eyebrow">{t("settings.eyebrow")}</p>
@@ -843,22 +1299,236 @@ function ModelSettingsModal({ onClose }: { onClose: () => void }) {
             <X size={20} aria-hidden="true" />
           </button>
         </header>
-        <p className="settings-note">
-          {t("settings.note")}
-        </p>
-        <div className="settings-placeholder-grid">
-          {fields.map(([label, placeholder]) => (
-            <label className="field" key={label}>
-              <span>{t(label)}</span>
-              <input disabled placeholder={t(placeholder)} />
-            </label>
-          ))}
+
+        <div className="settings-progress">
+          <span>{t("provider.configuredCount", { n: configuredCount, total: CAPABILITY_ORDER.length })}</span>
+          <div className="settings-progress-bar">
+            <div
+              className="settings-progress-fill"
+              style={{ width: `${(configuredCount / CAPABILITY_ORDER.length) * 100}%` }}
+            />
+          </div>
         </div>
+
+        <div className="provider-settings-layout">
+          <nav className="capability-tabs">
+            {CAPABILITY_ORDER.map((capability) => {
+              const meta = CAPABILITY_META[capability];
+              const ok = isCapabilityConfigured(config[capability]);
+              const Icon = meta.icon;
+              return (
+                <button
+                  type="button"
+                  key={capability}
+                  className={`capability-tab ${activeCapability === capability ? "active" : ""} ${ok ? "ok" : ""}`}
+                  onClick={() => setActiveCapability(capability)}
+                >
+                  <Icon size={16} aria-hidden="true" />
+                  <span>{t(meta.labelKey)}</span>
+                  {ok && <Check size={14} aria-hidden="true" />}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="capability-tab-content">
+            <CapabilityConfigPanel capability={activeCapability} config={config} onChange={onChange} />
+          </div>
+        </div>
+
+        <p className={`settings-saved-note ${synced ? "ok" : ""}`}>
+          {synced ? t("settings.savedToServer") : t("settings.note")}
+        </p>
+
         <div className="action-row">
+          <button type="button" className="secondary" onClick={onClose}>
+            {t("settings.cancel")}
+          </button>
           <button type="button" className="primary" onClick={onClose}>
-            {t("settings.gotIt")}
+            {t("settings.save")}
           </button>
         </div>
+      </section>
+    </div>
+  );
+}
+
+function OnboardingWizard({
+  config,
+  onChange,
+  onClose,
+}: {
+  config: ProviderConfig;
+  onChange: (next: ProviderConfig) => void;
+  onClose: () => void;
+}) {
+  const { t, lang, setLang } = useI18n();
+  const [step, setStep] = useState(0);
+  const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
+
+  const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c])).length;
+
+  const steps = [
+    { id: "welcome", titleKey: "onboarding.welcome.title", icon: Sparkles },
+    { id: "providers", titleKey: "onboarding.providers.title", icon: Boxes },
+    { id: "done", titleKey: "onboarding.done.title", icon: CheckCircle2 }
+  ];
+
+  function nextStep() {
+    if (step < steps.length - 1) setStep(step + 1);
+  }
+
+  function prevStep() {
+    if (step > 0) setStep(step - 1);
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+        <header>
+          <div>
+            <p className="eyebrow">{t("onboarding.eyebrow")}</p>
+            <h2 id="onboardingTitle">{t(steps[step].titleKey)}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label={t("settings.close")}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="onboarding-steps">
+          {steps.map((s, idx) => {
+            const Icon = s.icon;
+            const state = idx === step ? "active" : idx < step ? "done" : "";
+            return (
+              <div key={s.id} className={`onboarding-step ${state}`}>
+                <span className="onboarding-step-marker">
+                  <span className="onboarding-step-icon">
+                    {idx < step ? <Check size={14} /> : <Icon size={16} />}
+                  </span>
+                  {idx < steps.length - 1 && <span className="onboarding-step-line" />}
+                </span>
+                <span className="onboarding-step-label">{t(s.titleKey)}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="onboarding-step-pane" key={step}>
+          {step === 0 && (
+            <div className="onboarding-body onboarding-welcome">
+              <div className="onboarding-hero">
+                <Boxes size={48} aria-hidden="true" />
+                <h3>{t("onboarding.welcome.heading")}</h3>
+                <p>{t("onboarding.welcome.body")}</p>
+              </div>
+              <div className="onboarding-lang">
+                <span className="onboarding-lang-label">{t("onboarding.chooseLanguage")}</span>
+                <div className="lang-grid">
+                  {UI_LANGUAGES.map((item) => (
+                    <button
+                      type="button"
+                      key={item.code}
+                      className={`lang-chip ${lang === item.code ? "active" : ""}`}
+                      onClick={() => setLang(item.code)}
+                      aria-pressed={lang === item.code}
+                    >
+                      <span className="lang-chip-flag" aria-hidden="true">{LANG_FLAGS[item.code]}</span>
+                      <span className="lang-chip-native">{item.native}</span>
+                      {lang === item.code && <Check size={16} className="lang-chip-check" aria-hidden="true" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="onboarding-welcome-actions">
+                <button type="button" className="secondary" onClick={onClose}>
+                  {t("onboarding.skip")}
+                </button>
+                <button type="button" className="primary" onClick={nextStep}>
+                  {t("onboarding.selectProvider")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div className="onboarding-body">
+              <div className="onboarding-progress">
+                <span>{t("provider.configuredCount", { n: configuredCount, total: CAPABILITY_ORDER.length })}</span>
+              </div>
+              <div className="provider-settings-layout">
+                <nav className="capability-tabs">
+                  {CAPABILITY_ORDER.map((capability) => {
+                    const meta = CAPABILITY_META[capability];
+                    const ok = isCapabilityConfigured(config[capability]);
+                    const Icon = meta.icon;
+                    return (
+                      <button
+                        type="button"
+                        key={capability}
+                        className={`capability-tab ${activeCapability === capability ? "active" : ""} ${ok ? "ok" : ""}`}
+                        onClick={() => setActiveCapability(capability)}
+                      >
+                        <Icon size={16} aria-hidden="true" />
+                        <span>{t(meta.labelKey)}</span>
+                        {ok && <Check size={14} aria-hidden="true" />}
+                      </button>
+                    );
+                  })}
+                </nav>
+                <div className="capability-tab-content">
+                  <CapabilityConfigPanel capability={activeCapability} config={config} onChange={onChange} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="onboarding-body">
+              <div className="onboarding-hero">
+                <CheckCircle2 size={48} aria-hidden="true" />
+                <h3>{t("onboarding.done.heading")}</h3>
+                <p>{t("onboarding.done.body", { n: configuredCount })}</p>
+              </div>
+              <div className="onboarding-summary">
+                {CAPABILITY_ORDER.map((capability) => {
+                  const meta = CAPABILITY_META[capability];
+                  const cfg = config[capability];
+                  const ok = isCapabilityConfigured(cfg);
+                  const def = cfg ? getProviderById(cfg.providerId) : undefined;
+                  const Icon = meta.icon;
+                  return (
+                    <div className="onboarding-summary-row" key={capability}>
+                      <Icon size={16} aria-hidden="true" />
+                      <span>{t(meta.labelKey)}</span>
+                      <span className={`onboarding-summary-status ${ok ? "ok" : ""}`}>
+                        {def ? def.name : t("provider.notConfigured")}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {step > 0 && (
+          <div className="action-row">
+            {step < steps.length - 1 && (
+              <button type="button" className="secondary" onClick={prevStep}>
+                {t("onboarding.back")}
+              </button>
+            )}
+            {step < steps.length - 1 ? (
+              <button type="button" className="primary" onClick={nextStep}>
+                {t("onboarding.next")}
+              </button>
+            ) : (
+              <button type="button" className="primary" onClick={onClose}>
+                {t("onboarding.finish")}
+              </button>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -939,22 +1609,132 @@ function ProfileForm({
   );
 }
 
+function ocrMethodLabel(method: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  return t(`ocr.method.${method}`) || method;
+}
+
+function ocrConfClass(conf: number): string {
+  return conf >= 90 ? "high" : conf >= 70 ? "mid" : "low";
+}
+
+function OcrSummary({ analysis }: { analysis: SourceAnalysis }) {
+  const { t } = useI18n();
+  const conf = Math.round(analysis.overall_confidence * 100);
+  const engines = Object.entries(analysis.source_method_summary)
+    .map(([method, count]) => `${ocrMethodLabel(method, t)} ×${count}`)
+    .join("，");
+  return (
+    <section className="ocr-summary" aria-label={t("ocr.summaryTitle")}>
+      <div className="ocr-summary-head">
+        <strong>{t("ocr.summaryTitle")}</strong>
+        <span className={`ocr-conf ocr-conf--${ocrConfClass(conf)}`}>{conf}%</span>
+      </div>
+      <div className="ocr-summary-meta">
+        <span>
+          <b>{t("ocr.engineUsed")}:</b> {engines || "—"}
+        </span>
+        {analysis.needs_review_count > 0 && (
+          <span className="ocr-flag">{t("ocr.needsReview")}: {analysis.needs_review_count}</span>
+        )}
+      </div>
+      {analysis.notes.length > 0 && (
+        <ul className="ocr-notes">
+          {analysis.notes.map((note, i) => (
+            <li key={i}>{note}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function OcrPageBadge({ page }: { page: SourceAnalysisPage }) {
+  const { t } = useI18n();
+  const conf = page.blocks.length
+    ? Math.round((page.blocks.reduce((sum, b) => sum + b.confidence, 0) / page.blocks.length) * 100)
+    : null;
+  const needsReview = page.blocks.some((b) => b.needs_review);
+  return (
+    <div className="ocr-page-badge">
+      <span className="ocr-method">{ocrMethodLabel(page.source_method, t)}</span>
+      {conf !== null && <span className={`ocr-conf ocr-conf--${ocrConfClass(conf)}`}>{conf}%</span>}
+      {needsReview && <span className="ocr-flag">{t("ocr.needsReview")}</span>}
+    </div>
+  );
+}
+
 function SourcePreview({ project }: { project: ProjectState }) {
   const source = project.source_material;
   if (!source) return null;
+  const analysis = source.source_analysis;
   return (
     <div className="source-list">
-      {source.pages.map((page) => (
-        <article className="source-item" key={page.page_number}>
-          <span>{page.page_number}</span>
-          <div>
-            <h3>{page.title}</h3>
-            <p>{page.text_blocks.map((block) => block.text).join(" · ").slice(0, 180)}</p>
-          </div>
-          <small>{page.images.length} images</small>
-        </article>
-      ))}
+      {analysis && <OcrSummary analysis={analysis} />}
+      {source.pages.map((page) => {
+        const pa = analysis?.pages.find((p) => p.page_number === page.page_number);
+        return (
+          <article className="source-item" key={page.page_number}>
+            <span>{page.page_number}</span>
+            <div>
+              <h3>{page.title}</h3>
+              <p>{page.text_blocks.map((block) => block.text).join(" · ").slice(0, 180)}</p>
+              {pa && <OcrPageBadge page={pa} />}
+            </div>
+            <small>{page.images.length} images</small>
+          </article>
+        );
+      })}
     </div>
+  );
+}
+
+function OcrRerunPanel({
+  ocrStatus,
+  onRerun,
+  busy,
+}: {
+  project: ProjectState;
+  ocrStatus: OcrStatusResponse | null;
+  onRerun: (engine?: string) => void;
+  busy: boolean;
+}) {
+  const { t } = useI18n();
+  const [engine, setEngine] = useState("auto");
+  const paddle = ocrStatus?.engines.find((e) => e.name === "paddle_ocr");
+  const tess = ocrStatus?.engines.find((e) => e.name === "tesseract");
+  const canPaddle = Boolean(paddle?.available);
+  const canTess = Boolean(tess?.available);
+  const canOcr = canPaddle || canTess;
+  return (
+    <section className="ocr-rerun">
+      <div className="ocr-rerun-head">
+        <strong>
+          <RefreshCw size={15} aria-hidden="true" /> {t("ocr.rerun")}
+        </strong>
+        <span>{t("ocr.rerunHint")}</span>
+      </div>
+      <div className="ocr-rerun-controls">
+        <select
+          value={engine}
+          disabled={busy || !canOcr}
+          onChange={(event) => setEngine(event.target.value)}
+          aria-label={t("ocr.engineLabel")}
+        >
+          <option value="auto">{t("ocr.engine.auto")}</option>
+          {canPaddle && <option value="paddle_ocr">{t("ocr.engine.paddle_ocr")}</option>}
+          {canTess && <option value="tesseract">{t("ocr.engine.tesseract")}</option>}
+        </select>
+        <button
+          type="button"
+          className="secondary"
+          disabled={busy || !canOcr}
+          onClick={() => onRerun(engine)}
+        >
+          <RefreshCw size={16} aria-hidden="true" /> {t("ocr.rerun")}
+        </button>
+      </div>
+      {!canOcr && <p className="ocr-rerun-note">{t("ocr.noEngine")}</p>}
+    </section>
   );
 }
 

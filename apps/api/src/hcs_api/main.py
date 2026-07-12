@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -18,15 +19,20 @@ from .models import (
     AssetFile,
     AssetManifest,
     ArtifactTree,
+    AudioProviderSettings,
     EditablePptxExportResponse,
+    ImageProviderSettings,
     LessonBlueprint,
     LessonProfile,
     MediaReviewAction,
+    OCRProviderSettings,
     ProjectState,
     ProviderSettings,
     SourceMaterial,
+    VideoProviderSettings,
 )
 from .parser import parse_source
+from .source_understanding import OCRPolicy, get_engine_status
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
 from .pptx_exporter import export_editable_pptx
@@ -54,7 +60,12 @@ ensure_runtime()
 app = FastAPI(title="HanClassStudio API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -611,8 +622,87 @@ def get_provider_settings() -> ProviderSettings:
     return read_provider_settings()
 
 
+# Frontend provider ids that are cloud-hosted (vs. local runtimes). Used to derive
+# deploy_mode when reconstructing the flat settings from the raw capability config.
+_CLOUD_PROVIDER_IDS = {
+    "openai", "anthropic", "azure_openai", "google", "ollama", "lm_studio",
+    "openai_tts", "elevenlabs", "runway", "azure_doc",
+}
+# OCR provider id -> concrete OCR engine name (None = cloud-only, no local engine yet).
+_OCR_PROVIDER_TO_ENGINE = {
+    "paddle_ocr": "paddle_ocr",
+    "tesseract": "tesseract",
+    "azure_doc": None,
+}
+
+
+def _apply_capabilities(settings: ProviderSettings) -> None:
+    """Derive the flat image/audio/ocr/video fields from ``settings.capabilities``.
+
+    ``capabilities`` is the raw frontend ``ProviderConfig`` (capability -> {providerId,
+    values}) and is the single source of truth. When it is empty (e.g. edited from the
+    dev console HTML form), the flat fields are left untouched.
+    """
+    caps = settings.capabilities or {}
+    if not caps:
+        return
+
+    img = caps.get("image") or {}
+    img_v = img.get("values", {})
+    settings.image = ImageProviderSettings(  # type: ignore[name-defined]
+        provider=img.get("providerId", ""),
+        endpoint_url=img_v.get("endpoint") or img_v.get("baseUrl") or "",
+        api_key=img_v.get("apiKey", ""),
+        model=img_v.get("model") or img_v.get("deployment") or "",
+    )
+
+    tts = caps.get("tts") or {}
+    tts_v = tts.get("values", {})
+    settings.audio = AudioProviderSettings(  # type: ignore[name-defined]
+        provider=tts.get("providerId", ""),
+        endpoint_url=tts_v.get("endpoint") or tts_v.get("baseUrl") or "",
+        api_key=tts_v.get("apiKey", ""),
+        model=tts_v.get("model", ""),
+        voice=tts_v.get("voice") or tts_v.get("voiceId") or "",
+    )
+
+    ocr = caps.get("ocr") or {}
+    ocr_v = ocr.get("values", {})
+    ocr_id = ocr.get("providerId", "")
+    settings.ocr = OCRProviderSettings(
+        provider=ocr_id,
+        deploy_mode="cloud" if ocr_id in _CLOUD_PROVIDER_IDS else "local",
+        api_key=ocr_v.get("apiKey", ""),
+        endpoint_url=ocr_v.get("endpoint", ""),
+        model=ocr_v.get("model", ""),
+        langs=ocr_v.get("langs", ""),
+        use_gpu=str(ocr_v.get("useGpu", "false")).lower() == "true",
+    )
+
+    vid = caps.get("video") or {}
+    vid_v = vid.get("values", {})
+    vid_id = vid.get("providerId", "")
+    settings.video = VideoProviderSettings(
+        provider=vid_id,
+        deploy_mode="cloud" if vid_id in _CLOUD_PROVIDER_IDS else "local",
+        api_key=vid_v.get("apiKey", ""),
+        endpoint_url=vid_v.get("endpoint", ""),
+        model=vid_v.get("model", ""),
+    )
+
+
+def _resolve_ocr_engine(force_engine: str | None, settings: ProviderSettings) -> str | None:
+    """Pick the OCR engine: an explicit request wins; otherwise fall back to the
+    provider the user configured in settings (local engines only)."""
+    if force_engine:
+        return force_engine
+    provider = (settings.ocr.provider or "").strip()
+    return _OCR_PROVIDER_TO_ENGINE.get(provider)
+
+
 @app.put("/api/settings/providers", response_model=ProviderSettings)
 def save_provider_settings(settings: ProviderSettings) -> ProviderSettings:
+    _apply_capabilities(settings)
     write_provider_settings(settings)
     return read_provider_settings()
 
@@ -623,12 +713,12 @@ def component_registry() -> dict:
 
 
 @app.post("/api/projects/upload", response_model=ProjectState)
-async def upload_project(file: UploadFile = File(...)) -> ProjectState:
+async def upload_project(file: UploadFile = File(...), engine: str | None = Query(default=None)) -> ProjectState:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     suffix = Path(file.filename).suffix.lower()
-    if suffix not in {".pptx", ".pdf"}:
-        raise HTTPException(status_code=400, detail="Only PPTX and PDF files are supported")
+    if suffix not in {".pptx", ".pdf", ".png", ".jpg", ".jpeg"}:
+        raise HTTPException(status_code=400, detail="Only PPTX, PDF and PNG/JPEG files are supported")
 
     project_id = create_project_id()
     root = ensure_project(project_id)
@@ -637,7 +727,9 @@ async def upload_project(file: UploadFile = File(...)) -> ProjectState:
         shutil.copyfileobj(file.file, output)
 
     try:
-        source = parse_source(upload_path, root, file.filename)
+        source = parse_source(
+            upload_path, root, file.filename, force_engine=_resolve_ocr_engine(engine, read_provider_settings())
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -645,6 +737,53 @@ async def upload_project(file: UploadFile = File(...)) -> ProjectState:
     write_model(project_id, "source_material.json", source)
     write_model(project_id, "lesson_profile.json", profile)
     return get_project_state(project_id)
+
+
+@app.post("/api/projects/{project_id}/ocr", response_model=ProjectState)
+def rerun_ocr(project_id: str, engine: str | None = Query(default=None)) -> ProjectState:
+    """Re-run the OCR / Source Document Understanding layer on the already
+    uploaded file (e.g. after a teacher spots a misread, or to force a specific
+    engine). Rewrites ``source_material.json`` and the inferred ``lesson_profile``
+    and returns the refreshed project state.
+    """
+    _assert_project(project_id)
+    root = ensure_project(project_id)
+    uploads = root / "uploads"
+    candidates = (
+        [p for p in uploads.iterdir() if p.suffix.lower() in {".pptx", ".pdf", ".png", ".jpg", ".jpeg"}]
+        if uploads.exists()
+        else []
+    )
+    if not candidates:
+        raise HTTPException(status_code=400, detail="No uploaded source file found for this project")
+    upload_path = candidates[0]
+    try:
+        source = parse_source(
+            upload_path, root, upload_path.name, force_engine=_resolve_ocr_engine(engine, read_provider_settings())
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    profile = infer_profile(source)
+    write_model(project_id, "source_material.json", source)
+    write_model(project_id, "lesson_profile.json", profile)
+    return get_project_state(project_id)
+
+
+@app.get("/api/ocr/status")
+def ocr_status() -> dict:
+    """Report which OCR engines are available in this deployment and the active
+    layered policy. Lets the frontend show teachers what will actually run."""
+    return {
+        "engines": [s.__dict__ for s in get_engine_status()],
+        "policy": asdict(OCRPolicy()),
+        "configured_engine": _resolve_ocr_engine(None, read_provider_settings()),
+        "recommended_pipeline": [
+            "native text layer (PDF/PPTX)",
+            "PP-OCRv6 text detection + recognition for scanned pages",
+            "Tesseract CPU baseline fallback",
+            "PaddleOCR-VL disabled until its backend and provenance merge are validated",
+        ],
+    }
 
 
 @app.get("/api/projects/{project_id}", response_model=ProjectState)
