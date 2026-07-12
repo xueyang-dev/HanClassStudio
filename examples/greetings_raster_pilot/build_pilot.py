@@ -15,15 +15,16 @@ from hcs_api import storage
 from hcs_api.asset_review import render_review_page
 from hcs_api.media import generate_configured_media
 from hcs_api.models import (
-    AssetManifest, ContentBlock, ImageProviderSettings, LessonBlueprint, LessonProfile, LessonSlide,
-    MediaRequirements, ProviderSettings, QualityReport, SlideComponent, SourceMaterial,
-    SourcePage, TextBlock,
+    ActivityPlan, AssetManifest, ContentBlock, EvidenceAlignmentReport, EvidencePlan, ImageProviderSettings,
+    LessonBlueprint, LessonProfile, LessonSlide, LearningStatePlan, MediaRequirements, ProviderSettings,
+    SlideComponent, SourceMaterial, SourcePage, TextBlock,
 )
-from hcs_api.pipeline import run_full_pipeline, write_blueprint_artifacts
+from hcs_api.pipeline import (
+    render_and_check, run_full_pipeline, write_blueprint_artifacts,
+    write_presentation_bindings, write_presentation_readiness,
+)
 from hcs_api.presentation_theme import presentation_theme_for_project
 from hcs_api.pptx_exporter import export_editable_pptx
-from hcs_api.quality import check_quality
-from hcs_api.renderer import render_lesson
 
 
 PROJECT_ID = "greetings_raster_pilot"
@@ -42,7 +43,7 @@ def build_pilot(real_raster: bool = False) -> Path:
 
     # Produce the authoritative learning/evidence/activity/presentation artifacts first.
     run_full_pipeline(
-        PROJECT_ID, root, ProviderSettings(), force_export=True,
+        PROJECT_ID, root, ProviderSettings(),
         enable_presentation_parity_shadow=True,
         enable_presentation_adapter_assessment=True,
         enable_presentation_content_shadow=True,
@@ -63,6 +64,25 @@ def build_pilot(real_raster: bool = False) -> Path:
 
     blueprint = _blueprint()
     write_blueprint_artifacts(PROJECT_ID, blueprint)
+    state_data = storage.read_json(PROJECT_ID, "learning/learning_state_plan.json")
+    evidence_data = storage.read_json(PROJECT_ID, "learning/evidence_plan.json")
+    activity_data = storage.read_json(PROJECT_ID, "learning/activity_plan.json")
+    state_plan = LearningStatePlan.model_validate(state_data) if state_data else None
+    evidence_plan = EvidencePlan.model_validate(evidence_data) if evidence_data else None
+    activity_plan = ActivityPlan.model_validate(activity_data) if activity_data else None
+    alignment_data = storage.read_json(PROJECT_ID, "quality/evidence_alignment_report.json")
+    alignment_report = EvidenceAlignmentReport.model_validate(alignment_data) if alignment_data else None
+    if not all((state_plan, evidence_plan, activity_plan, alignment_report)):
+        raise RuntimeError("Pilot requires State-Evidence artifacts before rebuilding the presentation.")
+    binding_plan = write_presentation_bindings(
+        PROJECT_ID, blueprint, evidence_plan, activity_plan, state_plan, profile.learner_level,
+    )
+    readiness = write_presentation_readiness(
+        PROJECT_ID, blueprint, evidence_plan, activity_plan, binding_plan,
+        alignment_report,
+    )
+    if binding_plan.state == "blocked" or readiness.state == "blocked":
+        raise RuntimeError("Pilot presentation gate is blocked; inspect binding and readiness reports.")
     settings = _provider_settings(real_raster)
     started = time.perf_counter()
     manifest = generate_configured_media(root, blueprint, settings, preserve_media_origin_trace=True)
@@ -71,12 +91,12 @@ def build_pilot(real_raster: bool = False) -> Path:
     generation_ms = round((time.perf_counter() - started) * 1000, 1)
     storage.write_model(PROJECT_ID, "asset_manifest.json", manifest)
 
-    render_lesson(root, profile, blueprint, manifest, QualityReport(state="pass"))
-    quality = check_quality(root, blueprint, manifest)
-    storage.write_model(PROJECT_ID, "quality_report.json", quality)
-    html_path = render_lesson(root, profile, blueprint, manifest, quality)
-    pptx_path = export_editable_pptx(PROJECT_ID, force=True)
-    zip_path = storage.zip_output(PROJECT_ID, force=True)
+    quality = render_and_check(PROJECT_ID, root, profile, blueprint, manifest)
+    if quality.state == "blocked":
+        raise RuntimeError("Pilot quality gate is blocked; inspect quality/quality_report.json.")
+    html_path = root / "courseware" / "lesson.html"
+    pptx_path = export_editable_pptx(PROJECT_ID)
+    zip_path = storage.zip_output(PROJECT_ID)
 
     raster_assets = [asset for asset in manifest.images if asset.id in RASTER_KEYS]
     report = _pilot_report(root, raster_assets, generation_ms, html_path, pptx_path, zip_path)

@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import hcs_api.storage as storage
+from hcs_api.models import AssetManifest, QualityReport
 
 
 SCRIPT = Path(__file__).parents[3] / "examples" / "greetings_raster_pilot" / "build_pilot.py"
@@ -50,6 +51,10 @@ def test_diagnostic_pilot_build_uses_pipeline_and_stays_offline(tmp_path: Path, 
     assert report["remote_provider_url_in_export"] is False
     assert report["teacher_had_to_edit_json_or_code"] is False
     assert report["verdict"] == "pending_teacher_visual_review"
+    assert storage.read_model(module.PROJECT_ID, "quality_report.json", QualityReport).state != "blocked"
+    assert "audio_ninhao" in {asset.id for asset in storage.read_model(module.PROJECT_ID, "asset_manifest.json", AssetManifest).audio}
+    assert storage.read_json(module.PROJECT_ID, "exports/export_manifest.json")["forced"] is False
+    assert storage.read_json(module.PROJECT_ID, "exports/pptx_export_manifest.json")["forced"] is False
     theme_report = storage.read_json(module.PROJECT_ID, "diagnostics/theme_decision_report.json")
     assert theme_report["decision_source"] == "inherited_from_existing_assets"
     assert theme_report["human_review_required"] is True
