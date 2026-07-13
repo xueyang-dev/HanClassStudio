@@ -140,6 +140,13 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
 
     quality_state = report.state if report else "warning"
     pptx_report = _build_pptx_quality_report(blueprint, report, force, prs, theme=theme)
+    forced_blockers: list[str] = []
+    for payload in (alignment_report, readiness_report, binding_report, report.model_dump(mode="json") if report else {}):
+        values = payload.get("blocking_reasons", payload.get("blocking", [])) if isinstance(payload, dict) else []
+        if isinstance(values, list):
+            forced_blockers.extend(str(item) for item in values)
+        if force and not values and isinstance(payload, dict) and str(payload.get("state", "")).lower() in {"blocked", "warning"}:
+            forced_blockers.append(f"gate state: {payload.get('state')}")
     write_json(project_id, "quality/pptx_quality_report.json", pptx_report)
     write_json(
         project_id,
@@ -156,6 +163,8 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
             "quality_state": quality_state,
             "evidence_alignment_state": alignment_report.get("state") if isinstance(alignment_report, dict) else None,
             "presentation_readiness_state": readiness_report.get("state") if isinstance(readiness_report, dict) else None,
+            "forced_blockers": forced_blockers if force else [],
+            "force_confirmation": "explicit force=true request" if force else None,
             "interaction_policy": "classroom_static_activity",
             "presentation_theme": {
                 "theme_id": theme.theme_id,

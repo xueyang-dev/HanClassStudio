@@ -172,7 +172,8 @@ def test_presentation_readiness_blocks_zip_export(tmp_path: Path, monkeypatch) -
     with pytest.raises(PermissionError, match="Presentation readiness gate"):
         storage.zip_output("blocked_readiness")
 
-    assert storage.zip_output("blocked_readiness", force=True).exists()
+    with pytest.raises(PermissionError, match="Blueprint artifact is missing"):
+        storage.zip_output("blocked_readiness", force=True)
 
 
 def test_renderer_does_not_import_learning_kernel() -> None:
