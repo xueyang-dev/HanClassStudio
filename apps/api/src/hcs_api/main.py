@@ -28,6 +28,9 @@ from .models import (
     MediaReviewAction,
     OCRProviderSettings,
     ProjectState,
+    PublicCapabilityConfig,
+    PublicProviderSection,
+    PublicProviderSettings,
     ProjectSummary,
     ProviderCapabilityDescriptor,
     ProviderSettings,
@@ -37,7 +40,7 @@ from .models import (
 )
 from .parser import parse_source
 from .source_understanding import OCRPolicy, get_engine_status
-from .providers import provider_capability_catalog
+from .providers import ProviderError, provider_capability_catalog
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
 from .pptx_exporter import export_editable_pptx
@@ -45,6 +48,7 @@ from .storage import (
     PROJECTS_DIR,
     RUNTIME_DIR,
     bump_project_revision,
+    project_revision,
     clear_stale_state,
     create_project_id,
     ensure_project,
@@ -57,6 +61,7 @@ from .storage import (
     read_json,
     read_model,
     read_provider_settings,
+    _render_artifact_reason,
     set_profile_state,
     write_json,
     write_model,
@@ -84,7 +89,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.mount("/runtime", StaticFiles(directory=RUNTIME_DIR), name="runtime")
+# Only project artifacts are public runtime assets.  Configuration lives beside
+# the projects under ``runtime/config`` and must never be exposed by the static
+# file server.
+app.mount("/runtime/projects", StaticFiles(directory=PROJECTS_DIR), name="runtime-projects")
 
 
 @app.get("/api/health")
@@ -565,17 +573,20 @@ def root() -> HTMLResponse:
 
     function fillSettings(settings) {
       loadedSettings = settings;
-      fields.llmProvider.value = settings.llm.provider || "openai_compatible";
+      fields.llmProvider.value = settings.llm.provider || "deterministic";
       fields.llmBaseUrl.value = settings.llm.base_url || "";
-      fields.llmApiKey.value = settings.llm.api_key || "";
+      fields.llmApiKey.value = "";
+      fields.llmApiKey.placeholder = settings.llm.api_key_present ? "已配置（留空保持）" : "sk-...";
       fields.llmModel.value = settings.llm.model || "";
       fields.imageProvider.value = settings.image.provider || "placeholder";
       fields.imageEndpointUrl.value = settings.image.endpoint_url || "";
-      fields.imageApiKey.value = settings.image.api_key || "";
+      fields.imageApiKey.value = "";
+      fields.imageApiKey.placeholder = settings.image.api_key_present ? "已配置（留空保持）" : "可留空";
       fields.imageModel.value = settings.image.model || "";
       fields.audioProvider.value = settings.audio.provider || "placeholder";
       fields.audioEndpointUrl.value = settings.audio.endpoint_url || "";
-      fields.audioApiKey.value = settings.audio.api_key || "";
+      fields.audioApiKey.value = "";
+      fields.audioApiKey.placeholder = settings.audio.api_key_present ? "已配置（留空保持）" : "可留空";
       fields.audioModel.value = settings.audio.model || "";
       fields.audioVoice.value = settings.audio.voice || "";
     }
@@ -653,9 +664,59 @@ def root() -> HTMLResponse:
     )
 
 
-@app.get("/api/settings/providers", response_model=ProviderSettings)
-def get_provider_settings() -> ProviderSettings:
-    return read_provider_settings()
+def _public_provider_settings(settings: ProviderSettings) -> PublicProviderSettings:
+    """Remove credentials before provider settings leave the backend.
+
+    The internal ProviderSettings model is still used by executors and for
+    writes.  This boundary is deliberately explicit so adding a new internal
+    field cannot accidentally expose it through a response model.
+    """
+
+    def section(value: object) -> PublicProviderSection:
+        data = value.model_dump(mode="json")
+        api_key = str(data.pop("api_key", "") or "")
+        return PublicProviderSection(**data, api_key_present=bool(api_key.strip()))
+
+    capabilities: dict[str, PublicCapabilityConfig] = {}
+    flat_api_key_present = {
+        "llm": bool(str(settings.llm.api_key or "").strip()),
+        "image": bool(str(settings.image.api_key or "").strip()),
+        "tts": bool(str(settings.audio.api_key or "").strip()),
+        "ocr": bool(str(settings.ocr.api_key or "").strip()),
+        "video": bool(str(settings.video.api_key or "").strip()),
+    }
+    raw_capabilities = settings.capabilities if isinstance(settings.capabilities, dict) else {}
+    for capability, raw in raw_capabilities.items():
+        if not isinstance(raw, dict) or not raw.get("providerId"):
+            continue
+        values = raw.get("values") if isinstance(raw.get("values"), dict) else {}
+        safe_values = {
+            str(key): str(value)
+            for key, value in values.items()
+            if str(key) not in {"api_key", "apiKey"}
+        }
+        capabilities[str(capability)] = PublicCapabilityConfig(
+            providerId=str(raw["providerId"]),
+            values=safe_values,
+            api_key_present=bool(
+                str(values.get("api_key", values.get("apiKey", "")) or "").strip()
+                or flat_api_key_present.get(str(capability), False)
+            ),
+        )
+
+    return PublicProviderSettings(
+        llm=section(settings.llm),
+        image=section(settings.image),
+        audio=section(settings.audio),
+        ocr=section(settings.ocr),
+        video=section(settings.video),
+        capabilities=capabilities,
+    )
+
+
+@app.get("/api/settings/providers", response_model=PublicProviderSettings)
+def get_provider_settings() -> PublicProviderSettings:
+    return _public_provider_settings(read_provider_settings())
 
 
 @app.get("/api/settings/providers/capabilities", response_model=list[ProviderCapabilityDescriptor])
@@ -755,8 +816,8 @@ def _resolve_ocr_engine(force_engine: str | None, settings: ProviderSettings) ->
     return _OCR_PROVIDER_TO_ENGINE.get(provider)
 
 
-@app.put("/api/settings/providers", response_model=ProviderSettings)
-def save_provider_settings(payload: dict) -> ProviderSettings:
+@app.put("/api/settings/providers", response_model=PublicProviderSettings)
+def save_provider_settings(payload: dict) -> PublicProviderSettings:
     """Merge only submitted settings so one surface cannot erase another."""
     current = read_provider_settings().model_dump(mode="json")
     for section in ("llm", "image", "audio", "ocr", "video"):
@@ -771,7 +832,7 @@ def save_provider_settings(payload: dict) -> ProviderSettings:
     settings = ProviderSettings.model_validate(current)
     _apply_capabilities(settings)
     write_provider_settings(settings)
-    return read_provider_settings()
+    return _public_provider_settings(read_provider_settings())
 
 
 @app.get("/api/component-registry")
@@ -809,13 +870,14 @@ async def upload_project(file: UploadFile = File(...), engine: str | None = Quer
 
 
 @app.post("/api/projects/{project_id}/ocr", response_model=ProjectState)
-def rerun_ocr(project_id: str, engine: str | None = Query(default=None)) -> ProjectState:
+def rerun_ocr(project_id: str, engine: str | None = Query(default=None), expected_revision: int | None = Query(default=None)) -> ProjectState:
     """Re-run the OCR / Source Document Understanding layer on the already
     uploaded file (e.g. after a teacher spots a misread, or to force a specific
     engine). Rewrites ``source_material.json`` and the inferred ``lesson_profile``
     and returns the refreshed project state.
     """
     _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
     root = ensure_project(project_id)
     uploads = root / "uploads"
     candidates = (
@@ -919,8 +981,9 @@ def validate_agent_project(project_id: str) -> AgentValidation:
 
 
 @app.put("/api/projects/{project_id}/profile", response_model=ProjectState)
-def save_profile(project_id: str, profile: LessonProfile) -> ProjectState:
+def save_profile(project_id: str, profile: LessonProfile, expected_revision: int | None = Query(default=None)) -> ProjectState:
     _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
     write_model(project_id, "lesson_profile.json", profile)
     set_profile_state(project_id, "confirmed")
     clear_stale_state(project_id, stages={"profile"})
@@ -930,15 +993,28 @@ def save_profile(project_id: str, profile: LessonProfile) -> ProjectState:
 
 
 @app.post("/api/projects/{project_id}/blueprint", response_model=ProjectState)
-def generate_blueprint(project_id: str) -> ProjectState:
+def generate_blueprint(project_id: str, expected_revision: int | None = Query(default=None)) -> ProjectState:
     _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
+    _assert_upstream_current(project_id, blocked_stages={"profile"}, action="generate blueprint")
     source = read_model(project_id, "source_material.json", SourceMaterial)
     profile = read_model(project_id, "lesson_profile.json", LessonProfile)
     if not source or not profile:
         raise HTTPException(status_code=400, detail="Project needs source material and lesson profile")
     _assert_llm_provider_supported(read_provider_settings())
     write_spec_artifacts(project_id, source, profile)
-    blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings())
+    try:
+        blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings())
+    except ProviderError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "provider_execution_failed",
+                "capability": "llm",
+                "provider_id": read_provider_settings().llm.provider,
+                "message": str(exc),
+            },
+        ) from exc
     write_blueprint_artifacts(project_id, blueprint)
     clear_stale_state(project_id, stages={"profile", "design", "presentation"})
     invalidate_downstream(project_id, "blueprint", "Blueprint changed; media, render, quality, and export are stale.")
@@ -947,8 +1023,10 @@ def generate_blueprint(project_id: str) -> ProjectState:
 
 
 @app.put("/api/projects/{project_id}/blueprint", response_model=ProjectState)
-def save_blueprint(project_id: str, blueprint: LessonBlueprint) -> ProjectState:
+def save_blueprint(project_id: str, blueprint: LessonBlueprint, expected_revision: int | None = Query(default=None)) -> ProjectState:
     _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
+    _assert_upstream_current(project_id, blocked_stages={"profile"}, action="save blueprint")
     write_blueprint_artifacts(project_id, blueprint)
     clear_stale_state(project_id, stages={"profile", "design", "presentation"})
     invalidate_downstream(project_id, "blueprint", "Blueprint changed; media, render, quality, and export are stale.")
@@ -957,16 +1035,30 @@ def save_blueprint(project_id: str, blueprint: LessonBlueprint) -> ProjectState:
 
 
 @app.post("/api/projects/{project_id}/media", response_model=ProjectState)
-def generate_media(project_id: str, force_regenerate: bool = Query(False)) -> ProjectState:
+def generate_media(project_id: str, force_regenerate: bool = Query(False), expected_revision: int | None = Query(default=None)) -> ProjectState:
     root = _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
+    _assert_upstream_current(project_id, blocked_stages={"profile", "design", "presentation"}, action="generate media")
     blueprint = read_model(project_id, "lesson_blueprint.json", LessonBlueprint)
     if not blueprint:
         raise HTTPException(status_code=400, detail="Generate a lesson blueprint first")
     _assert_media_provider_ready(read_provider_settings())
     invalidate_downstream(project_id, "media", "Media was regenerated; render, quality, and export are stale.")
-    manifest = generate_project_media(
-        root, blueprint, read_provider_settings(), force_regenerate=force_regenerate,
-    )
+    settings = read_provider_settings()
+    try:
+        manifest = generate_project_media(
+            root, blueprint, settings, force_regenerate=force_regenerate, strict_provider=True,
+        )
+    except ProviderError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "provider_execution_failed",
+                "capability": "image" if settings.image.provider != "placeholder" else "tts",
+                "provider_id": settings.image.provider if settings.image.provider != "placeholder" else settings.audio.provider,
+                "message": str(exc),
+            },
+        ) from exc
     write_model(project_id, "asset_manifest.json", manifest)
     write_json(project_id, "assets/data/attribution.json", {"schema": "hanclassstudio.attribution.v1", "items": []})
     clear_stale_state(project_id, stages={"profile", "design", "presentation", "media"})
@@ -988,8 +1080,10 @@ def media_review_page(project_id: str) -> HTMLResponse:
 
 
 @app.put("/api/projects/{project_id}/media/{asset_id}/review", response_model=AssetFile)
-def review_media(project_id: str, asset_id: str, action: MediaReviewAction) -> AssetFile:
+def review_media(project_id: str, asset_id: str, action: MediaReviewAction, expected_revision: int | None = Query(default=None)) -> AssetFile:
     root = _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
+    _assert_upstream_current(project_id, blocked_stages={"profile", "design", "presentation"}, action="review media")
     manifest = read_model(project_id, "asset_manifest.json", AssetManifest)
     if not manifest:
         raise HTTPException(status_code=404, detail="Asset manifest not found")
@@ -1006,9 +1100,11 @@ def review_media(project_id: str, asset_id: str, action: MediaReviewAction) -> A
 
 @app.post("/api/projects/{project_id}/media/{asset_id}/replacement", response_model=AssetFile)
 async def replace_media(
-    project_id: str, asset_id: str, file: UploadFile = File(...), notes: str = Form(""),
+    project_id: str, asset_id: str, file: UploadFile = File(...), notes: str = Form(""), expected_revision: int | None = Query(default=None),
 ) -> AssetFile:
     root = _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
+    _assert_upstream_current(project_id, blocked_stages={"profile", "design", "presentation"}, action="replace media")
     manifest = read_model(project_id, "asset_manifest.json", AssetManifest)
     if not manifest:
         raise HTTPException(status_code=404, detail="Asset manifest not found")
@@ -1026,26 +1122,66 @@ async def replace_media(
 
 
 @app.post("/api/projects/{project_id}/render", response_model=ProjectState)
-def render_project(project_id: str) -> ProjectState:
+def render_project(project_id: str, expected_revision: int | None = Query(default=None)) -> ProjectState:
     root = _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
+    _assert_upstream_current(project_id, blocked_stages={"profile", "design", "presentation"}, action="render")
     profile = read_model(project_id, "lesson_profile.json", LessonProfile)
     blueprint = read_model(project_id, "lesson_blueprint.json", LessonBlueprint)
     manifest = read_model(project_id, "asset_manifest.json", AssetManifest)
     if not profile or not blueprint:
         raise HTTPException(status_code=400, detail="Project needs profile and blueprint")
+    current_stale = set(get_project_state(project_id).stale_state.stale_stages)
+    if "media" in current_stale and manifest is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "upstream_stale",
+                "action": "render",
+                "stale_stages": ["media"],
+                "blocking_reasons": ["Media artifact is stale; regenerate media before rendering."],
+                "message": "Render is blocked until stale media is regenerated.",
+            },
+        )
     invalidate_downstream(project_id, "render", "Render was requested; the previous quality and export state is stale.")
     if not manifest:
-        manifest = generate_project_media(root, blueprint, read_provider_settings())
+        settings = read_provider_settings()
+        _assert_media_provider_ready(settings)
+        try:
+            manifest = generate_project_media(root, blueprint, settings, strict_provider=True)
+        except ProviderError as exc:
+            capability = "image" if settings.image.provider != "placeholder" else "tts"
+            provider_id = settings.image.provider if capability == "image" else settings.audio.provider
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "provider_execution_failed",
+                    "capability": capability,
+                    "provider_id": provider_id,
+                    "message": str(exc),
+                },
+            ) from exc
         write_model(project_id, "asset_manifest.json", manifest)
     clear_stale_state(project_id, stages={"profile", "design", "presentation", "media"})
     report = render_and_check(project_id, root, profile, blueprint, manifest)
     export_created = False
-    if (
-        report.state != "blocked"
-        and not _binding_gate_blocked(project_id)
-        and not _alignment_gate_blocked(project_id)
-        and not _presentation_readiness_blocked(project_id)
-    ):
+    # A fresh render replaces the render and quality dependencies.  The
+    # delivery marker can be cleared only when all four authoritative gate
+    # reports exist; otherwise a handoff render must remain visibly stale until
+    # the missing gates are run.
+    gate_paths = (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+        "quality/quality_report.json",
+    )
+    clear_stale_state(project_id, stages={"render", "quality"})
+    if all(read_json(project_id, path) is not None for path in gate_paths):
+        clear_stale_state(project_id, stages={"delivery"})
+    # Rendering is not itself proof that the complete four-layer export
+    # contract passed.  Only the authoritative ProjectState may authorize a
+    # current ZIP; missing gate reports remain ``not_run``.
+    if get_project_state(project_id).gate_summary.export_allowed:
         zip_output(project_id)
         export_created = True
     clear_stale_state(project_id, stages={"render", "quality", "delivery"} if export_created else {"render", "quality"})
@@ -1054,8 +1190,9 @@ def render_project(project_id: str) -> ProjectState:
 
 
 @app.post("/api/projects/{project_id}/pipeline", response_model=ProjectState)
-def run_project_pipeline(project_id: str) -> ProjectState:
+def run_project_pipeline(project_id: str, expected_revision: int | None = Query(default=None)) -> ProjectState:
     root = _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
     try:
         _assert_llm_provider_supported(read_provider_settings())
         _assert_media_provider_ready(read_provider_settings())
@@ -1077,6 +1214,19 @@ def run_project_pipeline(project_id: str) -> ProjectState:
             )
         bump_project_revision(project_id)
         return get_project_state(project_id)
+    except ProviderError as exc:
+        settings = read_provider_settings()
+        capability = "llm" if settings.llm.provider != "deterministic" else "image"
+        provider_id = settings.llm.provider if capability == "llm" else settings.image.provider
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "provider_execution_failed",
+                "capability": capability,
+                "provider_id": provider_id,
+                "message": str(exc),
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1085,11 +1235,16 @@ def run_project_pipeline(project_id: str) -> ProjectState:
 def export_project(project_id: str) -> FileResponse:
     _assert_project(project_id)
     state = get_project_state(project_id)
+    if (technical_reason := _technical_export_reason(project_id, state)) is not None:
+        raise HTTPException(status_code=409, detail=_export_technical_detail(state, technical_reason))
     if not state.gate_summary.export_allowed:
         raise HTTPException(status_code=409, detail=_export_gate_detail(state, forced=False))
     export_path = latest_export_path(project_id)
     if export_path is None:
-        export_path = zip_output(project_id)
+        try:
+            export_path = zip_output(project_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=_export_technical_detail(state, str(exc))) from exc
         bump_project_revision(project_id)
     return FileResponse(
         export_path,
@@ -1102,11 +1257,16 @@ def export_project(project_id: str) -> FileResponse:
 def force_export_project(project_id: str, force: bool = Query(default=False)) -> FileResponse:
     _assert_project(project_id)
     state = get_project_state(project_id)
+    if (technical_reason := _technical_export_reason(project_id, state)) is not None:
+        raise HTTPException(status_code=409, detail=_export_technical_detail(state, technical_reason))
     if not force and not state.gate_summary.export_allowed:
         raise HTTPException(status_code=409, detail=_export_gate_detail(state, forced=False))
     if force and not state.gate_summary.force_export_allowed:
         raise HTTPException(status_code=409, detail=_export_gate_detail(state, forced=True))
-    export_path = zip_output(project_id, force=force)
+    try:
+        export_path = zip_output(project_id, force=force)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=_export_technical_detail(state, str(exc))) from exc
     bump_project_revision(project_id)
     return FileResponse(
         export_path,
@@ -1119,6 +1279,8 @@ def force_export_project(project_id: str, force: bool = Query(default=False)) ->
 def export_project_editable_pptx(project_id: str, force: bool = Query(default=False), export_mode: str = Query(default="debug")) -> EditablePptxExportResponse:
     _assert_project(project_id)
     current_state = get_project_state(project_id)
+    if (technical_reason := _technical_export_reason(project_id, current_state)) is not None:
+        raise HTTPException(status_code=409, detail=_export_technical_detail(current_state, technical_reason))
     if not force and not current_state.gate_summary.export_allowed:
         raise HTTPException(status_code=409, detail=_export_gate_detail(current_state, forced=False))
     if force and not current_state.gate_summary.force_export_allowed:
@@ -1169,11 +1331,75 @@ def _export_gate_detail(state: ProjectState, *, forced: bool, message: str | Non
     }
 
 
+def _export_technical_detail(state: ProjectState, message: str) -> dict:
+    """Return a non-bypassable export blocker for missing/corrupt prerequisites."""
+    summary = state.gate_summary
+    reasons = list(summary.blocking_reasons)
+    if message not in reasons:
+        reasons.append(message)
+    return {
+        "code": "export_technical_blocked",
+        "message": message,
+        "blocking_reasons": reasons,
+        "warnings": summary.warnings,
+        "gate_summary": summary.model_dump(mode="json"),
+        "force_export_allowed": False,
+    }
+
+
+def _technical_export_reason(project_id: str, state: ProjectState) -> str | None:
+    """Return a blocker that a force flag is never allowed to bypass."""
+    if not state.artifacts.get("lesson_blueprint"):
+        return "Blueprint artifact is missing; export cannot proceed"
+    lesson_path = PROJECTS_DIR / project_id / "courseware" / "lesson.html"
+    if (reason := _render_artifact_reason(lesson_path)) is not None:
+        return f"{reason}; export cannot proceed"
+    return None
+
+
 def _assert_project(project_id: str) -> Path:
     root = PROJECTS_DIR / project_id
     if not root.exists():
         raise HTTPException(status_code=404, detail="Project not found")
     return root
+
+
+def _assert_expected_revision(project_id: str, expected_revision: int | None) -> None:
+    """Reject stale client writes while keeping legacy callers compatible."""
+    if expected_revision is None:
+        return
+    actual_revision = project_revision(project_id)
+    if expected_revision != actual_revision:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "project_revision_conflict",
+                "project_id": project_id,
+                "expected_revision": expected_revision,
+                "actual_revision": actual_revision,
+                "message": "Project changed elsewhere; refresh before saving again.",
+            },
+        )
+
+
+def _assert_upstream_current(project_id: str, *, blocked_stages: set[str], action: str) -> None:
+    state = get_project_state(project_id)
+    stale_stages = sorted(set(state.stale_state.stale_stages).intersection(blocked_stages))
+    if not stale_stages:
+        return
+    reasons = list(state.stale_state.reasons)
+    if not reasons:
+        reasons = [f"{stage} is stale" for stage in stale_stages]
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "upstream_stale",
+            "action": action,
+            "stale_stages": stale_stages,
+            "blocking_reasons": reasons,
+            "message": f"Cannot {action} until upstream stale stages are regenerated.",
+        },
+    )
 
 
 def _assert_media_provider_ready(settings: ProviderSettings) -> None:
@@ -1207,14 +1433,17 @@ def _assert_llm_provider_supported(settings: ProviderSettings) -> None:
         (item for item in provider_capability_catalog(settings) if item.capability == "llm" and item.provider_id == provider_id),
         None,
     )
-    if descriptor is None or not descriptor.implemented:
+    if descriptor is None or not descriptor.implemented or not descriptor.available or not descriptor.configured:
+        reason = descriptor.unavailable_reason if descriptor else "LLM provider is not in the backend capability catalog."
+        if descriptor and not descriptor.configured:
+            reason = "Provider credentials or required configuration are missing."
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "provider_capability_unavailable",
                 "capability": "llm",
                 "provider_id": provider_id,
-                "message": descriptor.unavailable_reason if descriptor else "LLM provider is not in the backend capability catalog.",
+                "message": reason,
             },
         )
 

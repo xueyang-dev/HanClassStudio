@@ -37,6 +37,11 @@ def _provider_definitions() -> list[dict[str, Any]]:
     """Canonical provider list. UI clients must render this list, not copy it."""
     return [
         {
+            "capability": "llm", "provider_id": "deterministic", "display_name": "Deterministic offline",
+            "category": "local", "description": "Offline-safe deterministic Blueprint generator",
+            "fields": [], "operations": ["blueprint"],
+        },
+        {
             "capability": "llm", "provider_id": "openai_compatible", "display_name": "OpenAI-compatible",
             "category": "cloud", "description": "OpenAI-compatible chat completion endpoint",
             "fields": [_field("base_url", "Base URL", "url", required=True, placeholder="https://api.openai.com/v1"),
@@ -179,6 +184,8 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
         implemented = item.get("implemented", True)
         available = implemented
         reason = item.get("unavailable_reason")
+        if provider_id == item["provider_id"] and not configured:
+            reason = "Provider credentials or required configuration are missing."
         if item["capability"] == "ocr" and item["provider_id"] in engine_status:
             available = bool(engine_status[item["provider_id"]])
             if not available:
@@ -198,7 +205,7 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             continue
         result.append(ProviderCapabilityDescriptor(
             capability=capability, provider_id=provider_id, display_name=provider_id,
-            category="cloud", configured=True, available=False,
+            category="cloud", configured=False, available=False,
             unavailable_reason="This provider is not implemented for this capability.",
         ))
     return result

@@ -8,7 +8,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 GenerationMode = Literal["faithful", "guided_redesign", "reimagined"]
 SourceType = Literal["pptx", "pdf", "image", "unknown"]
-QualityState = Literal["pass", "warning", "blocked"]
+QualityState = Literal["pass", "warning", "blocked", "stale"]
 StageState = Literal["not_started", "ready", "running", "completed", "warning", "blocked", "failed", "stale"]
 GateState = Literal["not_run", "running", "passed", "warning", "blocked", "failed", "stale"]
 
@@ -753,10 +753,10 @@ class EditablePptxExportResponse(BaseModel):
 
 
 class LLMProviderSettings(BaseModel):
-    provider: str = "openai_compatible"
-    base_url: str = "https://api.openai.com/v1"
+    provider: str = "deterministic"
+    base_url: str = ""
     api_key: str = ""
-    model: str = "gpt-4.1-mini"
+    model: str = "deterministic-v1"
 
 
 class ImageProviderSettings(BaseModel):
@@ -803,7 +803,42 @@ class ProviderSettings(BaseModel):
     # read user choices directly.
     capabilities: dict = Field(default_factory=dict)
 
-QualityState = Literal["pass", "warning", "blocked"]
+
+class PublicProviderSection(BaseModel):
+    """Provider settings safe to return to a client.
+
+    Credentials intentionally never cross this boundary.  ``api_key_present``
+    lets a client render configuration readiness without receiving a secret.
+    """
+
+    provider: str = ""
+    endpoint_url: str = ""
+    base_url: str = ""
+    model: str = ""
+    voice: str = ""
+    deploy_mode: str = "local"
+    langs: str = ""
+    use_gpu: bool = False
+    api_key_present: bool = False
+
+
+class PublicCapabilityConfig(BaseModel):
+    providerId: str
+    values: dict[str, str] = Field(default_factory=dict)
+    api_key_present: bool = False
+
+
+class PublicProviderSettings(BaseModel):
+    """The persisted provider contract with secrets removed."""
+
+    llm: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    image: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    audio: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    ocr: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    video: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    capabilities: dict[str, PublicCapabilityConfig] = Field(default_factory=dict)
+
+QualityState = Literal["pass", "warning", "blocked", "stale"]
 LearnerLevel = Literal["zero_beginner", "beginner", "elementary", "intermediate"]
 RouteHint = Literal["greeting_lesson", "vocabulary_lesson", "dialogue_lesson", "character_lesson", "grammar_pattern_lesson", "mixed_lesson"]
 StandardScheme = Literal["HSK", "CEFR", "JLPT", "TOPIK", "ACTFL", "custom"]

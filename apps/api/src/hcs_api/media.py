@@ -148,6 +148,7 @@ def generate_configured_media(
     settings: ProviderSettings,
     preserve_media_origin_trace: bool = False,
     force_regenerate: bool = False,
+    strict_provider: bool = False,
 ) -> AssetManifest:
     previous = previous_assets(project_root)
     # Existing courseware remains visually stable until a presentation theme is
@@ -190,9 +191,38 @@ def generate_configured_media(
         _upgrade_svg_illustrations(project_root, manifest, blueprint, settings, lesson_ctx, svg_keys, offline_safe, theme)
 
     _replace_audio_with_provider_assets(project_root, manifest, settings)
+    if strict_provider:
+        _assert_provider_media_success(manifest, settings, raster_keys)
     if decision is not None:
         persist_theme_decision(project_root, decision, manifest)
     return manifest
+
+
+def _assert_provider_media_success(
+    manifest: AssetManifest,
+    settings: ProviderSettings,
+    raster_keys: set[str],
+) -> None:
+    """Reject provider failures on production routes instead of hiding them.
+
+    The non-strict media helper remains useful for diagnostic/unit fixtures that
+    intentionally inspect a retained SVG fallback.  Production workflow calls
+    pass ``strict_provider=True`` so a selected external provider cannot report
+    success while leaving a placeholder asset behind.
+    """
+
+    if settings.image.provider != "placeholder":
+        failed = [
+            asset for asset in manifest.images
+            if asset.id in raster_keys and (
+                asset.fallback_used or asset.generation_failure or asset.path.endswith(".svg")
+            )
+        ]
+        if failed:
+            reason = failed[0].fallback_reason or (
+                failed[0].generation_failure.message if failed[0].generation_failure else "Provider returned no usable image"
+            )
+            raise ProviderError(f"Image provider {settings.image.provider} did not produce a usable asset: {reason}")
 
 
 def generate_raster_image(settings: ProviderSettings, prompt: str, aspect_ratio: str = "16:9") -> bytes | None:
@@ -453,10 +483,10 @@ def _replace_audio_with_provider_assets(
     for asset in manifest.audio:
         try:
             audio_bytes = generate_openai_tts(settings.audio, asset.text)
-        except ProviderError:
-            audio_bytes = None
+        except ProviderError as exc:
+            raise ProviderError(f"TTS provider {settings.audio.provider} failed: {exc}") from exc
         if not audio_bytes:
-            continue
+            raise ProviderError(f"TTS provider {settings.audio.provider} returned no audio")
         filename = f"{asset.id}.mp3"
         (audio_dir / filename).write_bytes(audio_bytes)
         asset.path = f"assets/audio/{filename}"
