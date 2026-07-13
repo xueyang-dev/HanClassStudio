@@ -16,5 +16,7 @@ apps/api/.venv/
 apps/api/output/
 output/
 apps/api/_prefetch_*.py
+test-results/
+playwright-report/
 
 .workbuddy/
