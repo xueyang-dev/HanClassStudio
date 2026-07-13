@@ -5,7 +5,7 @@ import os
 import shutil
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -16,12 +16,17 @@ from .models import (
     ArtifactEntry,
     ArtifactGroup,
     ArtifactTree,
+    GateStatus,
+    GateSummary,
     LessonBlueprint,
     LessonProfile,
     ProjectState,
+    ProjectSummary,
+    StageStatus,
     ProviderSettings,
     QualityReport,
     SourceMaterial,
+    StaleState,
 )
 
 
@@ -199,6 +204,101 @@ def read_model(project_id: str, filename: str, model_type: type[T]) -> T | None:
     return model_type.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def project_revision(project_id: str) -> int:
+    metadata = read_json(project_id, "assets/data/project_meta.json")
+    if not isinstance(metadata, dict):
+        return 0
+    try:
+        return max(0, int(metadata.get("project_revision", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def bump_project_revision(project_id: str) -> int:
+    revision = project_revision(project_id) + 1
+    write_json(
+        project_id,
+        "assets/data/project_meta.json",
+        {"project_revision": revision, "updated_at": datetime.now(timezone.utc).isoformat()},
+    )
+    return revision
+
+
+def set_profile_state(project_id: str, state: str) -> None:
+    if state not in {"inferred", "confirmed", "stale"}:
+        raise ValueError(f"Unsupported profile state: {state}")
+    write_json(
+        project_id,
+        "assets/data/profile_state.json",
+        {"state": state, "updated_at": datetime.now(timezone.utc).isoformat()},
+    )
+
+
+def read_profile_state(project_id: str, profile: LessonProfile | None) -> str:
+    metadata = read_json(project_id, "assets/data/profile_state.json")
+    state = metadata.get("state") if isinstance(metadata, dict) else None
+    if state in {"inferred", "confirmed", "stale"}:
+        return state
+    return "inferred" if profile else "inferred"
+
+
+def _stale_metadata(project_id: str) -> dict[str, Any]:
+    payload = read_json(project_id, "assets/data/stale_state.json")
+    return payload if isinstance(payload, dict) else {}
+
+
+def update_stale_state(project_id: str, *, stale_stages: set[str], reason: str) -> None:
+    current = _stale_metadata(project_id)
+    stages = {str(item) for item in current.get("stale_stages", []) if item}
+    stages.update(stale_stages)
+    reasons = [str(item) for item in current.get("reasons", []) if item]
+    if reason not in reasons:
+        reasons.append(reason)
+    write_json(
+        project_id,
+        "assets/data/stale_state.json",
+        {
+            "stale": bool(stages),
+            "stale_stages": sorted(stages),
+            "reasons": reasons[-20:],
+            "changed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def clear_stale_state(project_id: str, *, stages: set[str]) -> None:
+    current = _stale_metadata(project_id)
+    remaining = {str(item) for item in current.get("stale_stages", []) if item} - stages
+    reasons = [str(item) for item in current.get("reasons", []) if item]
+    write_json(
+        project_id,
+        "assets/data/stale_state.json",
+        {
+            "stale": bool(remaining),
+            "stale_stages": sorted(remaining),
+            "reasons": reasons if remaining else [],
+            "changed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def invalidate_downstream(project_id: str, dependency: str, reason: str) -> None:
+    """Mark current downstream artifacts stale without deleting historical evidence."""
+    downstream = {
+        "source": {"profile", "design", "presentation", "media", "render", "quality", "delivery"},
+        "ocr": {"profile", "design", "presentation", "media", "render", "quality", "delivery"},
+        "profile": {"design", "presentation", "media", "render", "quality", "delivery"},
+        "design": {"presentation", "media", "render", "quality", "delivery"},
+        "blueprint": {"media", "render", "quality", "delivery"},
+        "media": {"render", "quality", "delivery"},
+        "render": {"quality", "delivery"},
+    }
+    affected = downstream.get(dependency, set())
+    if "profile" in affected:
+        set_profile_state(project_id, "stale")
+    update_stale_state(project_id, stale_stages=affected, reason=reason)
+
+
 def remove_project(project_id: str) -> None:
     root = project_dir(project_id)
     if root.exists():
@@ -241,19 +341,305 @@ def get_project_state(project_id: str) -> ProjectState:
         status = "media_ready"
     if lesson_exists:
         status = "rendered"
+
+    stale_payload = read_json(project_id, "assets/data/stale_state.json")
+    stale_state = StaleState.model_validate(stale_payload) if isinstance(stale_payload, dict) else StaleState()
+    stale_stages = set(stale_state.stale_stages)
+    gate_summary = _gate_summary(
+        project_id,
+        blueprint=blueprint,
+        lesson_exists=lesson_exists,
+        stale=stale_state.stale,
+        stale_stages=stale_stages,
+    )
+    profile_state = "stale" if "profile" in stale_stages else read_profile_state(project_id, profile)
+    stages = _project_stages(
+        project_id,
+        source=source,
+        profile=profile,
+        profile_state=profile_state,
+        blueprint=blueprint,
+        manifest=manifest,
+        lesson_exists=lesson_exists,
+        export_exists=export_exists,
+        gate_summary=gate_summary,
+        stale_stages=stale_stages,
+    )
+    current_stage = next(
+        (stage.stage_id for stage in stages if stage.state not in {"completed", "warning"}),
+        "delivery",
+    )
+    artifacts = {
+        "source_material": source is not None,
+        "lesson_profile": profile is not None,
+        "lesson_blueprint": blueprint is not None,
+        "asset_manifest": manifest is not None,
+        "render": lesson_exists,
+        "quality_report": report is not None,
+        "export": export_exists,
+    }
+    provider_readiness = _provider_readiness()
+    file_times = [path.stat().st_mtime for path in root.rglob("*") if path.is_file()]
+    last_updated_at = (
+        datetime.fromtimestamp(max(file_times), tz=timezone.utc).isoformat()
+        if file_times
+        else None
+    )
     return ProjectState(
         project_id=project_id,
         status=status,
         route=spec_lock.get("route") if isinstance(spec_lock, dict) else None,
+        project_revision=project_revision(project_id),
+        current_stage=current_stage,
+        stages=stages,
+        profile_state=profile_state,
+        gate_summary=gate_summary,
+        artifacts=artifacts,
+        stale_state=stale_state,
+        provider_readiness=provider_readiness,
+        last_updated_at=last_updated_at,
         quality_state=report.state if report else None,
         source_material=source,
         lesson_profile=profile,
         lesson_blueprint=blueprint,
         asset_manifest=manifest,
         quality_report=report,
-        preview_url=f"/runtime/projects/{project_id}/courseware/lesson.html" if lesson_exists else None,
-        export_url=f"/api/projects/{project_id}/export" if export_exists else None,
+        preview_url=(
+            f"/runtime/projects/{project_id}/courseware/lesson.html"
+            if lesson_exists and not stale_state.stale and "render" not in stale_stages and "quality" not in stale_stages
+            else None
+        ),
+        export_url=(
+            f"/api/projects/{project_id}/export"
+            if export_exists and gate_summary.export_allowed and not stale_state.stale and "delivery" not in stale_stages
+            else None
+        ),
     )
+
+
+def list_project_summaries(limit: int = 20) -> list[ProjectSummary]:
+    ensure_runtime()
+    summaries: list[ProjectSummary] = []
+    for root in PROJECTS_DIR.iterdir():
+        if not root.is_dir():
+            continue
+        try:
+            state = get_project_state(root.name)
+        except Exception:
+            continue
+        summaries.append(
+            ProjectSummary(
+                project_id=state.project_id,
+                status=state.status,
+                current_stage=state.current_stage,
+                profile_state=state.profile_state,
+                project_revision=state.project_revision,
+                source_filename=state.source_material.original_filename if state.source_material else None,
+                last_updated_at=state.last_updated_at,
+            )
+        )
+    summaries.sort(key=lambda item: item.last_updated_at or "", reverse=True)
+    return summaries[: max(0, limit)]
+
+
+def _gate_status(project_id: str, relative_path: str) -> GateStatus:
+    payload = read_json(project_id, relative_path)
+    if not isinstance(payload, dict) or not payload.get("state"):
+        return GateStatus()
+    raw_state = str(payload.get("state", "")).lower()
+    state_map = {
+        "pass": "passed",
+        "passed": "passed",
+        "warning": "warning",
+        "blocked": "blocked",
+        "failed": "failed",
+        "running": "running",
+        "stale": "stale",
+        "not_run": "not_run",
+    }
+    state = state_map.get(raw_state, "failed")
+    blocking = payload.get("blocking_reasons", payload.get("blocking", []))
+    warnings = payload.get("warnings", [])
+    return GateStatus(
+        state=state,
+        blocking_reasons=[str(item) for item in blocking] if isinstance(blocking, list) else [],
+        warnings=[str(item) for item in warnings] if isinstance(warnings, list) else [],
+        stale=bool(payload.get("stale", False)) or state == "stale",
+    )
+
+
+def _gate_summary(
+    project_id: str,
+    *,
+    blueprint: LessonBlueprint | None,
+    lesson_exists: bool,
+    stale: bool,
+    stale_stages: set[str] | None = None,
+) -> GateSummary:
+    stale_stages = stale_stages or set()
+    evidence = _gate_status(project_id, "quality/evidence_alignment_report.json")
+    readiness = _gate_status(project_id, "quality/presentation_readiness_report.json")
+    binding = _gate_status(project_id, "presentation/binding_quality_report.json")
+    quality = _gate_status(project_id, "quality/quality_report.json")
+    if stale_stages.intersection({"source", "ocr", "profile", "design"}):
+        evidence = _mark_gate_stale(evidence)
+    if stale_stages.intersection({"presentation", "media"}):
+        readiness = _mark_gate_stale(readiness)
+        binding = _mark_gate_stale(binding)
+    if stale_stages.intersection({"render", "quality"}):
+        quality = _mark_gate_stale(quality)
+    gates = [evidence, readiness, binding, quality]
+    states = [gate.state for gate in gates]
+    if stale or any(gate.stale for gate in gates):
+        overall_state = "stale"
+    elif any(state == "failed" for state in states):
+        overall_state = "failed"
+    elif any(state == "blocked" for state in states):
+        overall_state = "blocked"
+    elif any(state == "running" for state in states):
+        overall_state = "running"
+    elif any(state == "warning" for state in states):
+        overall_state = "warning"
+    elif all(state == "not_run" for state in states):
+        overall_state = "not_run"
+    elif all(state in {"passed", "not_run"} for state in states):
+        overall_state = "passed"
+    else:
+        overall_state = "warning"
+    blocking_reasons = [reason for gate in gates for reason in gate.blocking_reasons]
+    warnings = [warning for gate in gates for warning in gate.warnings]
+    blocked_or_stale = any(gate.state in {"blocked", "failed", "stale"} or gate.stale for gate in gates)
+    # The quality report is the minimum required gate for legacy render paths.
+    # The other three gates are optional until their producers have run, but an
+    # explicit blocked/failed/stale result always vetoes export.
+    quality_ready = quality.state in {"passed", "warning"}
+    export_allowed = bool(blueprint and lesson_exists and quality_ready and not stale and not blocked_or_stale)
+    force_export_allowed = bool((blueprint or lesson_exists) and not stale)
+    return GateSummary(
+        evidence_alignment=evidence,
+        presentation_readiness=readiness,
+        presentation_binding=binding,
+        quality_report=quality,
+        overall_state=overall_state,
+        export_allowed=export_allowed,
+        force_export_allowed=force_export_allowed,
+        blocking_reasons=blocking_reasons,
+        warnings=warnings,
+        stale=stale or any(gate.stale for gate in gates),
+    )
+
+
+def _mark_gate_stale(gate: GateStatus) -> GateStatus:
+    return gate.model_copy(update={"state": "stale", "stale": True})
+
+
+def _project_stages(
+    project_id: str,
+    *,
+    source: SourceMaterial | None,
+    profile: LessonProfile | None,
+    profile_state: str,
+    blueprint: LessonBlueprint | None,
+    manifest: AssetManifest | None,
+    lesson_exists: bool,
+    export_exists: bool,
+    gate_summary: GateSummary,
+    stale_stages: set[str] | None = None,
+) -> list[StageStatus]:
+    stale_stages = stale_stages or set()
+    learning_artifacts = [
+        "learning/learning_state_plan.json",
+        "learning/evidence_plan.json",
+        "learning/activity_plan.json",
+    ]
+    has_learning = all((project_dir(project_id) / path).exists() for path in learning_artifacts)
+    quality_state = gate_summary.quality_report.state
+    quality_stage_state = {
+        "not_run": "not_started",
+        "running": "running",
+        "passed": "completed",
+        "warning": "warning",
+        "blocked": "blocked",
+        "failed": "failed",
+        "stale": "stale",
+    }[quality_state]
+    delivery_state: StageState
+    if gate_summary.stale:
+        delivery_state = "stale"
+    elif gate_summary.overall_state in {"blocked", "failed"}:
+        delivery_state = "blocked"
+    elif export_exists:
+        delivery_state = "completed"
+    elif gate_summary.export_allowed:
+        delivery_state = "ready"
+    else:
+        delivery_state = "not_started" if not lesson_exists else "ready"
+    stages = [
+        StageStatus(
+            stage_id="material",
+            state="completed" if source else "ready",
+            required_artifacts=["sources/source_material.json"],
+            available_actions=["upload", "rerun_ocr"] if source else ["upload"],
+        ),
+        StageStatus(
+            stage_id="profile",
+            state="completed" if profile and profile_state == "confirmed" else ("ready" if profile else "not_started"),
+            required_artifacts=["assets/data/lesson_profile.json", "assets/data/profile_state.json"],
+            available_actions=["confirm_profile"] if profile else ["infer_profile"],
+        ),
+        StageStatus(
+            stage_id="design",
+            state="completed" if has_learning else ("ready" if profile else "not_started"),
+            required_artifacts=learning_artifacts,
+            available_actions=["generate_blueprint"] if profile else [],
+        ),
+        StageStatus(
+            stage_id="presentation",
+            state="completed" if blueprint and not gate_summary.presentation_binding.state in {"blocked", "failed"} else ("blocked" if gate_summary.presentation_binding.state in {"blocked", "failed"} else ("ready" if blueprint else "not_started")),
+            required_artifacts=["blueprints/lesson_blueprint.json", "presentation/activity_bindings.json"],
+            blockers=gate_summary.presentation_binding.blocking_reasons,
+            available_actions=["edit_blueprint", "generate_media"] if blueprint else ["generate_blueprint"],
+        ),
+        StageStatus(
+            stage_id="quality",
+            state=quality_stage_state,
+            required_artifacts=["quality/quality_report.json"],
+            blockers=gate_summary.blocking_reasons,
+            warnings=gate_summary.warnings,
+            available_actions=["run_quality", "render"] if lesson_exists else ["render"],
+        ),
+        StageStatus(
+            stage_id="delivery",
+            state=delivery_state,
+            required_artifacts=["courseware/lesson.html", "exports/"],
+            blockers=gate_summary.blocking_reasons,
+            warnings=gate_summary.warnings,
+            available_actions=["export", "force_export"] if gate_summary.force_export_allowed else [],
+        ),
+    ]
+    stale_aliases = {
+        "profile": {"profile"},
+        "design": {"design"},
+        "presentation": {"presentation", "media"},
+        "quality": {"render", "quality"},
+        "delivery": {"delivery"},
+    }
+    for stage in stages:
+        if stale_stages.intersection(stale_aliases.get(stage.stage_id, set())):
+            stage.state = "stale"
+            stage.stale = True
+    return stages
+
+
+def _provider_readiness() -> list[Any]:
+    try:
+        from .providers import provider_capability_catalog
+
+        return provider_capability_catalog(read_provider_settings())
+    except Exception:
+        # Project reads must remain available when an optional runtime probe is
+        # unavailable; the provider endpoint still exposes the detailed error.
+        return []
 
 
 def latest_export_path(project_id: str) -> Path | None:

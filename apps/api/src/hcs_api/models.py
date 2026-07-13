@@ -9,6 +9,8 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 GenerationMode = Literal["faithful", "guided_redesign", "reimagined"]
 SourceType = Literal["pptx", "pdf", "image", "unknown"]
 QualityState = Literal["pass", "warning", "blocked"]
+StageState = Literal["not_started", "ready", "running", "completed", "warning", "blocked", "failed", "stale"]
+GateState = Literal["not_run", "running", "passed", "warning", "blocked", "failed", "stale"]
 
 
 def utc_now_iso() -> str:
@@ -604,10 +606,76 @@ class QualityReport(BaseModel):
         return len(self.blocking) + len(self.warnings)
 
 
+class ProviderCapabilityDescriptor(BaseModel):
+    """The executable/configurable provider contract consumed by WebUI clients."""
+
+    capability: Literal["llm", "image", "tts", "ocr", "video"]
+    provider_id: str
+    display_name: str
+    category: Literal["local", "cloud"]
+    description: str = ""
+    implemented: bool = False
+    configurable: bool = False
+    configured: bool = False
+    available: bool = False
+    experimental: bool = False
+    unavailable_reason: str | None = None
+    configuration_schema: list[dict[str, Any]] = Field(default_factory=list)
+    supported_operations: list[str] = Field(default_factory=list)
+
+
+class StageStatus(BaseModel):
+    stage_id: str
+    state: StageState = "not_started"
+    started_at: str | None = None
+    completed_at: str | None = None
+    stale: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    required_artifacts: list[str] = Field(default_factory=list)
+    available_actions: list[str] = Field(default_factory=list)
+
+
+class GateStatus(BaseModel):
+    state: GateState = "not_run"
+    blocking_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    stale: bool = False
+
+
+class GateSummary(BaseModel):
+    evidence_alignment: GateStatus = Field(default_factory=GateStatus)
+    presentation_readiness: GateStatus = Field(default_factory=GateStatus)
+    presentation_binding: GateStatus = Field(default_factory=GateStatus)
+    quality_report: GateStatus = Field(default_factory=GateStatus)
+    overall_state: GateState = "not_run"
+    export_allowed: bool = False
+    force_export_allowed: bool = False
+    blocking_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    stale: bool = False
+
+
+class StaleState(BaseModel):
+    stale: bool = False
+    stale_stages: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    changed_at: str | None = None
+
+
 class ProjectState(BaseModel):
     project_id: str
     status: str
     route: str | None = None
+    project_revision: int = 0
+    current_stage: str = "material"
+    stages: list[StageStatus] = Field(default_factory=list)
+    profile_state: Literal["inferred", "confirmed", "stale"] = "inferred"
+    gate_summary: GateSummary = Field(default_factory=GateSummary)
+    artifacts: dict[str, Any] = Field(default_factory=dict)
+    stale_state: StaleState = Field(default_factory=StaleState)
+    provider_readiness: list[ProviderCapabilityDescriptor] = Field(default_factory=list)
+    last_updated_at: str | None = None
     quality_state: QualityState | None = None
     source_material: SourceMaterial | None = None
     lesson_profile: LessonProfile | None = None
@@ -616,6 +684,28 @@ class ProjectState(BaseModel):
     quality_report: QualityReport | None = None
     preview_url: str | None = None
     export_url: str | None = None
+
+
+class ProjectSummary(BaseModel):
+    project_id: str
+    status: str
+    current_stage: str = "material"
+    profile_state: Literal["inferred", "confirmed", "stale"] = "inferred"
+    project_revision: int = 0
+    source_filename: str | None = None
+    last_updated_at: str | None = None
+
+
+class StateFirstTeacherSummary(BaseModel):
+    project_id: str
+    project_revision: int = 0
+    learning_state_plan: dict[str, Any] | None = None
+    evidence_plan: dict[str, Any] | None = None
+    activity_plan: dict[str, Any] | None = None
+    evidence_alignment: dict[str, Any] | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    available_actions: list[str] = Field(default_factory=list)
 
 
 class ArtifactEntry(BaseModel):

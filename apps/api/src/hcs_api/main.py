@@ -22,32 +22,42 @@ from .models import (
     AudioProviderSettings,
     EditablePptxExportResponse,
     ImageProviderSettings,
+    LLMProviderSettings,
     LessonBlueprint,
     LessonProfile,
     MediaReviewAction,
     OCRProviderSettings,
     ProjectState,
+    ProjectSummary,
+    ProviderCapabilityDescriptor,
     ProviderSettings,
     SourceMaterial,
+    StateFirstTeacherSummary,
     VideoProviderSettings,
 )
 from .parser import parse_source
 from .source_understanding import OCRPolicy, get_engine_status
+from .providers import provider_capability_catalog
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
 from .pptx_exporter import export_editable_pptx
 from .storage import (
     PROJECTS_DIR,
     RUNTIME_DIR,
+    bump_project_revision,
+    clear_stale_state,
     create_project_id,
     ensure_project,
     ensure_runtime,
     get_artifact_tree,
     latest_export_path,
+    invalidate_downstream,
+    list_project_summaries,
     get_project_state,
     read_json,
     read_model,
     read_provider_settings,
+    set_profile_state,
     write_json,
     write_model,
     write_provider_settings,
@@ -65,6 +75,10 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:4173",
         "http://127.0.0.1:4173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:4174",
+        "http://127.0.0.1:4174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -408,10 +422,7 @@ def root() -> HTMLResponse:
             <label>
               Provider
               <select id="llmProvider">
-                <option value="openai_compatible">OpenAI-compatible</option>
-                <option value="ollama">Ollama</option>
-                <option value="lm_studio">LM Studio</option>
-                <option value="custom">Custom</option>
+                <option value="">加载 Provider 目录…</option>
               </select>
             </label>
             <label>
@@ -433,11 +444,7 @@ def root() -> HTMLResponse:
             <label>
               Provider
               <select id="imageProvider">
-                <option value="placeholder">占位 SVG</option>
-                <option value="comfyui">ComfyUI</option>
-                <option value="openai_images">OpenAI Images</option>
-                <option value="stable_diffusion">Stable Diffusion API</option>
-                <option value="custom">Custom</option>
+                <option value="">加载 Provider 目录…</option>
               </select>
             </label>
             <label>
@@ -459,11 +466,7 @@ def root() -> HTMLResponse:
             <label>
               Provider
               <select id="audioProvider">
-                <option value="placeholder">占位音频</option>
-                <option value="openai_tts">OpenAI TTS</option>
-                <option value="edge_tts">Edge TTS</option>
-                <option value="local_tts">Local TTS</option>
-                <option value="custom">Custom</option>
+                <option value="">加载 Provider 目录…</option>
               </select>
             </label>
             <label>
@@ -520,6 +523,8 @@ def root() -> HTMLResponse:
     </p>
   </main>
   <script>
+    let loadedSettings = null;
+    let providerCatalog = [];
     const fields = {
       llmProvider: document.getElementById("llmProvider"),
       llmBaseUrl: document.getElementById("llmBaseUrl"),
@@ -542,7 +547,24 @@ def root() -> HTMLResponse:
       fields.message.style.color = isError ? "var(--coral)" : "var(--teal-dark)";
     }
 
+    function renderProviderOptions(settings) {
+      const targets = { llmProvider: "llm", imageProvider: "image", audioProvider: "tts" };
+      Object.entries(targets).forEach(([fieldId, capability]) => {
+        const select = fields[fieldId];
+        const current = settings && settings[capability === "tts" ? "audio" : capability] && settings[capability === "tts" ? "audio" : capability].provider;
+        const options = providerCatalog.filter((item) => item.capability === capability && ((item.configurable && item.implemented && item.available) || item.provider_id === current));
+        select.replaceChildren(...options.map((item) => {
+          const option = document.createElement("option");
+          option.value = item.provider_id;
+          option.textContent = item.implemented && item.available ? item.display_name : `${item.display_name} (unavailable)`;
+          option.disabled = !item.implemented || !item.available;
+          return option;
+        }));
+      });
+    }
+
     function fillSettings(settings) {
+      loadedSettings = settings;
       fields.llmProvider.value = settings.llm.provider || "openai_compatible";
       fields.llmBaseUrl.value = settings.llm.base_url || "";
       fields.llmApiKey.value = settings.llm.api_key || "";
@@ -559,7 +581,8 @@ def root() -> HTMLResponse:
     }
 
     function readSettings() {
-      return {
+      const next = {
+        ...(loadedSettings || {}),
         llm: {
           provider: fields.llmProvider.value,
           base_url: fields.llmBaseUrl.value.trim(),
@@ -580,13 +603,26 @@ def root() -> HTMLResponse:
           voice: fields.audioVoice.value.trim()
         }
       };
+      next.capabilities = {
+        ...((loadedSettings && loadedSettings.capabilities) || {}),
+        llm: { providerId: next.llm.provider, values: { base_url: next.llm.base_url, api_key: next.llm.api_key, model: next.llm.model } },
+        image: { providerId: next.image.provider, values: { baseUrl: next.image.endpoint_url, apiKey: next.image.api_key, model: next.image.model } },
+        tts: { providerId: next.audio.provider, values: { baseUrl: next.audio.endpoint_url, apiKey: next.audio.api_key, model: next.audio.model, voice: next.audio.voice } }
+      };
+      return next;
     }
 
     async function loadSettings() {
       try {
-        const response = await fetch("/api/settings/providers");
-        if (!response.ok) throw new Error("读取设置失败");
-        fillSettings(await response.json());
+        const [settingsResponse, catalogResponse] = await Promise.all([
+          fetch("/api/settings/providers"),
+          fetch("/api/settings/providers/capabilities")
+        ]);
+        if (!settingsResponse.ok || !catalogResponse.ok) throw new Error("读取设置失败");
+        providerCatalog = await catalogResponse.json();
+        const settings = await settingsResponse.json();
+        renderProviderOptions(settings);
+        fillSettings(settings);
         setMessage("已加载本地模型设置");
       } catch (error) {
         setMessage(error.message || "读取设置失败", true);
@@ -622,11 +658,15 @@ def get_provider_settings() -> ProviderSettings:
     return read_provider_settings()
 
 
+@app.get("/api/settings/providers/capabilities", response_model=list[ProviderCapabilityDescriptor])
+def get_provider_capabilities() -> list[ProviderCapabilityDescriptor]:
+    return provider_capability_catalog(read_provider_settings())
+
+
 # Frontend provider ids that are cloud-hosted (vs. local runtimes). Used to derive
 # deploy_mode when reconstructing the flat settings from the raw capability config.
 _CLOUD_PROVIDER_IDS = {
-    "openai", "anthropic", "azure_openai", "google", "ollama", "lm_studio",
-    "openai_tts", "elevenlabs", "runway", "azure_doc",
+    "openai_compatible", "custom", "openai_images", "experimental_openai_images", "openai_tts", "runway",
 }
 # OCR provider id -> concrete OCR engine name (None = cloud-only, no local engine yet).
 _OCR_PROVIDER_TO_ENGINE = {
@@ -647,48 +687,63 @@ def _apply_capabilities(settings: ProviderSettings) -> None:
     if not caps:
         return
 
-    img = caps.get("image") or {}
-    img_v = img.get("values", {})
-    settings.image = ImageProviderSettings(  # type: ignore[name-defined]
-        provider=img.get("providerId", ""),
-        endpoint_url=img_v.get("endpoint") or img_v.get("baseUrl") or "",
-        api_key=img_v.get("apiKey", ""),
-        model=img_v.get("model") or img_v.get("deployment") or "",
-    )
+    llm = caps.get("llm") or {}
+    llm_v = llm.get("values", {})
+    if llm.get("providerId"):
+        settings.llm = LLMProviderSettings(
+            provider=llm.get("providerId", ""),
+            base_url=llm_v.get("base_url") or llm_v.get("baseUrl") or settings.llm.base_url,
+            api_key=llm_v.get("api_key") or llm_v.get("apiKey") or settings.llm.api_key,
+            model=llm_v.get("model") or settings.llm.model,
+        )
 
-    tts = caps.get("tts") or {}
-    tts_v = tts.get("values", {})
-    settings.audio = AudioProviderSettings(  # type: ignore[name-defined]
-        provider=tts.get("providerId", ""),
-        endpoint_url=tts_v.get("endpoint") or tts_v.get("baseUrl") or "",
-        api_key=tts_v.get("apiKey", ""),
-        model=tts_v.get("model", ""),
-        voice=tts_v.get("voice") or tts_v.get("voiceId") or "",
-    )
+    if "image" in caps:
+        img = caps.get("image") or {}
+        img_v = img.get("values", {})
+        settings.image = ImageProviderSettings(  # type: ignore[name-defined]
+            provider=img.get("providerId") or settings.image.provider,
+            endpoint_url=img_v.get("endpoint") or img_v.get("baseUrl") or img_v.get("base_url") or settings.image.endpoint_url,
+            api_key=img_v.get("apiKey") or img_v.get("api_key") or settings.image.api_key,
+            model=img_v.get("model") or img_v.get("deployment") or settings.image.model,
+        )
 
-    ocr = caps.get("ocr") or {}
-    ocr_v = ocr.get("values", {})
-    ocr_id = ocr.get("providerId", "")
-    settings.ocr = OCRProviderSettings(
-        provider=ocr_id,
-        deploy_mode="cloud" if ocr_id in _CLOUD_PROVIDER_IDS else "local",
-        api_key=ocr_v.get("apiKey", ""),
-        endpoint_url=ocr_v.get("endpoint", ""),
-        model=ocr_v.get("model", ""),
-        langs=ocr_v.get("langs", ""),
-        use_gpu=str(ocr_v.get("useGpu", "false")).lower() == "true",
-    )
+    if "tts" in caps:
+        tts = caps.get("tts") or {}
+        tts_v = tts.get("values", {})
+        settings.audio = AudioProviderSettings(  # type: ignore[name-defined]
+            provider=tts.get("providerId") or settings.audio.provider,
+            endpoint_url=tts_v.get("endpoint") or tts_v.get("baseUrl") or tts_v.get("base_url") or settings.audio.endpoint_url,
+            api_key=tts_v.get("apiKey") or tts_v.get("api_key") or settings.audio.api_key,
+            model=tts_v.get("model") or settings.audio.model,
+            voice=tts_v.get("voice") or tts_v.get("voiceId") or settings.audio.voice,
+        )
 
-    vid = caps.get("video") or {}
-    vid_v = vid.get("values", {})
-    vid_id = vid.get("providerId", "")
-    settings.video = VideoProviderSettings(
-        provider=vid_id,
-        deploy_mode="cloud" if vid_id in _CLOUD_PROVIDER_IDS else "local",
-        api_key=vid_v.get("apiKey", ""),
-        endpoint_url=vid_v.get("endpoint", ""),
-        model=vid_v.get("model", ""),
-    )
+    if "ocr" in caps:
+        ocr = caps.get("ocr") or {}
+        ocr_v = ocr.get("values", {})
+        ocr_id = ocr.get("providerId") or settings.ocr.provider
+        use_gpu_value = ocr_v.get("useGpu", ocr_v.get("use_gpu"))
+        settings.ocr = OCRProviderSettings(
+            provider=ocr_id,
+            deploy_mode="cloud" if ocr_id in _CLOUD_PROVIDER_IDS else "local",
+            api_key=ocr_v.get("apiKey") or ocr_v.get("api_key") or settings.ocr.api_key,
+            endpoint_url=ocr_v.get("endpoint") or ocr_v.get("endpoint_url") or settings.ocr.endpoint_url,
+            model=ocr_v.get("model") or settings.ocr.model,
+            langs=ocr_v.get("langs") or settings.ocr.langs,
+            use_gpu=(str(use_gpu_value).lower() == "true") if use_gpu_value is not None else settings.ocr.use_gpu,
+        )
+
+    if "video" in caps:
+        vid = caps.get("video") or {}
+        vid_v = vid.get("values", {})
+        vid_id = vid.get("providerId") or settings.video.provider
+        settings.video = VideoProviderSettings(
+            provider=vid_id,
+            deploy_mode="cloud" if vid_id in _CLOUD_PROVIDER_IDS else "local",
+            api_key=vid_v.get("apiKey") or vid_v.get("api_key") or settings.video.api_key,
+            endpoint_url=vid_v.get("endpoint") or vid_v.get("endpoint_url") or settings.video.endpoint_url,
+            model=vid_v.get("model") or settings.video.model,
+        )
 
 
 def _resolve_ocr_engine(force_engine: str | None, settings: ProviderSettings) -> str | None:
@@ -701,7 +756,19 @@ def _resolve_ocr_engine(force_engine: str | None, settings: ProviderSettings) ->
 
 
 @app.put("/api/settings/providers", response_model=ProviderSettings)
-def save_provider_settings(settings: ProviderSettings) -> ProviderSettings:
+def save_provider_settings(payload: dict) -> ProviderSettings:
+    """Merge only submitted settings so one surface cannot erase another."""
+    current = read_provider_settings().model_dump(mode="json")
+    for section in ("llm", "image", "audio", "ocr", "video"):
+        if isinstance(payload.get(section), dict):
+            incoming = payload[section]
+            merged = {**current.get(section, {}), **incoming}
+            if not str(incoming.get("api_key", "")).strip() and str(current.get(section, {}).get("api_key", "")).strip():
+                merged["api_key"] = current[section]["api_key"]
+            current[section] = merged
+    if "capabilities" in payload:
+        current["capabilities"] = payload["capabilities"] or {}
+    settings = ProviderSettings.model_validate(current)
     _apply_capabilities(settings)
     write_provider_settings(settings)
     return read_provider_settings()
@@ -736,6 +803,8 @@ async def upload_project(file: UploadFile = File(...), engine: str | None = Quer
     profile = infer_profile(source)
     write_model(project_id, "source_material.json", source)
     write_model(project_id, "lesson_profile.json", profile)
+    set_profile_state(project_id, "inferred")
+    bump_project_revision(project_id)
     return get_project_state(project_id)
 
 
@@ -766,6 +835,9 @@ def rerun_ocr(project_id: str, engine: str | None = Query(default=None)) -> Proj
     profile = infer_profile(source)
     write_model(project_id, "source_material.json", source)
     write_model(project_id, "lesson_profile.json", profile)
+    set_profile_state(project_id, "inferred")
+    invalidate_downstream(project_id, "ocr", "OCR was rerun; downstream design and outputs are stale.")
+    bump_project_revision(project_id)
     return get_project_state(project_id)
 
 
@@ -786,6 +858,11 @@ def ocr_status() -> dict:
     }
 
 
+@app.get("/api/projects", response_model=list[ProjectSummary])
+def list_projects(limit: int = Query(default=20, ge=1, le=100)) -> list[ProjectSummary]:
+    return list_project_summaries(limit)
+
+
 @app.get("/api/projects/{project_id}", response_model=ProjectState)
 def read_project(project_id: str) -> ProjectState:
     _assert_project(project_id)
@@ -796,6 +873,37 @@ def read_project(project_id: str) -> ProjectState:
 def read_project_artifacts(project_id: str) -> ArtifactTree:
     _assert_project(project_id)
     return get_artifact_tree(project_id)
+
+
+@app.get("/api/projects/{project_id}/design/summary", response_model=StateFirstTeacherSummary)
+def read_design_summary(project_id: str) -> StateFirstTeacherSummary:
+    _assert_project(project_id)
+    allowed_paths = {
+        "learning_state_plan": "learning/learning_state_plan.json",
+        "evidence_plan": "learning/evidence_plan.json",
+        "activity_plan": "learning/activity_plan.json",
+        "evidence_alignment": "quality/evidence_alignment_report.json",
+    }
+    payloads = {key: read_json(project_id, path) for key, path in allowed_paths.items()}
+    if not any(value is not None for value in payloads.values()):
+        raise HTTPException(status_code=404, detail={
+            "code": "state_first_unavailable",
+            "message": "Run the teaching design stage before opening its summary.",
+        })
+    alignment = payloads["evidence_alignment"] if isinstance(payloads["evidence_alignment"], dict) else {}
+    blockers = alignment.get("blocking", []) if isinstance(alignment.get("blocking", []), list) else []
+    warnings = alignment.get("warnings", []) if isinstance(alignment.get("warnings", []), list) else []
+    return StateFirstTeacherSummary(
+        project_id=project_id,
+        project_revision=get_project_state(project_id).project_revision,
+        learning_state_plan=payloads["learning_state_plan"] if isinstance(payloads["learning_state_plan"], dict) else None,
+        evidence_plan=payloads["evidence_plan"] if isinstance(payloads["evidence_plan"], dict) else None,
+        activity_plan=payloads["activity_plan"] if isinstance(payloads["activity_plan"], dict) else None,
+        evidence_alignment=payloads["evidence_alignment"] if isinstance(payloads["evidence_alignment"], dict) else None,
+        blockers=[str(item) for item in blockers],
+        warnings=[str(item) for item in warnings],
+        available_actions=["review_alignment", "generate_blueprint"] if blockers else ["generate_blueprint", "review_alignment"],
+    )
 
 
 @app.post("/api/projects/{project_id}/agent/package", response_model=AgentPackage)
@@ -814,6 +922,10 @@ def validate_agent_project(project_id: str) -> AgentValidation:
 def save_profile(project_id: str, profile: LessonProfile) -> ProjectState:
     _assert_project(project_id)
     write_model(project_id, "lesson_profile.json", profile)
+    set_profile_state(project_id, "confirmed")
+    clear_stale_state(project_id, stages={"profile"})
+    invalidate_downstream(project_id, "profile", "Confirmed learner profile changed; downstream artifacts need regeneration.")
+    bump_project_revision(project_id)
     return get_project_state(project_id)
 
 
@@ -824,9 +936,13 @@ def generate_blueprint(project_id: str) -> ProjectState:
     profile = read_model(project_id, "lesson_profile.json", LessonProfile)
     if not source or not profile:
         raise HTTPException(status_code=400, detail="Project needs source material and lesson profile")
+    _assert_llm_provider_supported(read_provider_settings())
     write_spec_artifacts(project_id, source, profile)
     blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings())
     write_blueprint_artifacts(project_id, blueprint)
+    clear_stale_state(project_id, stages={"profile", "design", "presentation"})
+    invalidate_downstream(project_id, "blueprint", "Blueprint changed; media, render, quality, and export are stale.")
+    bump_project_revision(project_id)
     return get_project_state(project_id)
 
 
@@ -834,6 +950,9 @@ def generate_blueprint(project_id: str) -> ProjectState:
 def save_blueprint(project_id: str, blueprint: LessonBlueprint) -> ProjectState:
     _assert_project(project_id)
     write_blueprint_artifacts(project_id, blueprint)
+    clear_stale_state(project_id, stages={"profile", "design", "presentation"})
+    invalidate_downstream(project_id, "blueprint", "Blueprint changed; media, render, quality, and export are stale.")
+    bump_project_revision(project_id)
     return get_project_state(project_id)
 
 
@@ -843,12 +962,22 @@ def generate_media(project_id: str, force_regenerate: bool = Query(False)) -> Pr
     blueprint = read_model(project_id, "lesson_blueprint.json", LessonBlueprint)
     if not blueprint:
         raise HTTPException(status_code=400, detail="Generate a lesson blueprint first")
+    _assert_media_provider_ready(read_provider_settings())
+    invalidate_downstream(project_id, "media", "Media was regenerated; render, quality, and export are stale.")
     manifest = generate_project_media(
         root, blueprint, read_provider_settings(), force_regenerate=force_regenerate,
     )
     write_model(project_id, "asset_manifest.json", manifest)
     write_json(project_id, "assets/data/attribution.json", {"schema": "hanclassstudio.attribution.v1", "items": []})
+    clear_stale_state(project_id, stages={"profile", "design", "presentation", "media"})
+    bump_project_revision(project_id)
     return get_project_state(project_id)
+
+
+@app.get("/api/projects/{project_id}/media", response_model=AssetManifest)
+def read_media_manifest(project_id: str) -> AssetManifest:
+    _assert_project(project_id)
+    return read_model(project_id, "asset_manifest.json", AssetManifest) or AssetManifest()
 
 
 @app.get("/api/projects/{project_id}/media/review", response_class=HTMLResponse)
@@ -869,6 +998,9 @@ def review_media(project_id: str, asset_id: str, action: MediaReviewAction) -> A
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     write_model(project_id, "asset_manifest.json", manifest)
+    invalidate_downstream(project_id, "media", "A teacher-reviewed media asset changed; render, quality, and export are stale.")
+    clear_stale_state(project_id, stages={"presentation", "media"})
+    bump_project_revision(project_id)
     return asset
 
 
@@ -887,6 +1019,9 @@ async def replace_media(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     write_model(project_id, "asset_manifest.json", manifest)
+    invalidate_downstream(project_id, "media", "A teacher replacement changed media; render, quality, and export are stale.")
+    clear_stale_state(project_id, stages={"presentation", "media"})
+    bump_project_revision(project_id)
     return asset
 
 
@@ -898,10 +1033,13 @@ def render_project(project_id: str) -> ProjectState:
     manifest = read_model(project_id, "asset_manifest.json", AssetManifest)
     if not profile or not blueprint:
         raise HTTPException(status_code=400, detail="Project needs profile and blueprint")
+    invalidate_downstream(project_id, "render", "Render was requested; the previous quality and export state is stale.")
     if not manifest:
         manifest = generate_project_media(root, blueprint, read_provider_settings())
         write_model(project_id, "asset_manifest.json", manifest)
+    clear_stale_state(project_id, stages={"profile", "design", "presentation", "media"})
     report = render_and_check(project_id, root, profile, blueprint, manifest)
+    export_created = False
     if (
         report.state != "blocked"
         and not _binding_gate_blocked(project_id)
@@ -909,6 +1047,9 @@ def render_project(project_id: str) -> ProjectState:
         and not _presentation_readiness_blocked(project_id)
     ):
         zip_output(project_id)
+        export_created = True
+    clear_stale_state(project_id, stages={"render", "quality", "delivery"} if export_created else {"render", "quality"})
+    bump_project_revision(project_id)
     return get_project_state(project_id)
 
 
@@ -916,7 +1057,26 @@ def render_project(project_id: str) -> ProjectState:
 def run_project_pipeline(project_id: str) -> ProjectState:
     root = _assert_project(project_id)
     try:
-        return run_full_pipeline(project_id, root, read_provider_settings())
+        _assert_llm_provider_supported(read_provider_settings())
+        _assert_media_provider_ready(read_provider_settings())
+        state = run_full_pipeline(project_id, root, read_provider_settings())
+        gate_paths = (
+            "quality/evidence_alignment_report.json",
+            "quality/presentation_readiness_report.json",
+            "presentation/binding_quality_report.json",
+            "quality/quality_report.json",
+        )
+        has_blocked_gate = any(
+            isinstance(report, dict) and report.get("state") in {"blocked", "failed"}
+            for report in (read_json(project_id, path) for path in gate_paths)
+        )
+        if not has_blocked_gate:
+            clear_stale_state(
+                project_id,
+                stages={"profile", "design", "presentation", "media", "render", "quality", "delivery"},
+            )
+        bump_project_revision(project_id)
+        return get_project_state(project_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -925,15 +1085,12 @@ def run_project_pipeline(project_id: str) -> ProjectState:
 def export_project(project_id: str) -> FileResponse:
     _assert_project(project_id)
     state = get_project_state(project_id)
-    if state.quality_report and state.quality_report.state == "blocked":
-        raise HTTPException(status_code=409, detail="Quality gate is blocked; use forced export for demo output")
-    if _alignment_gate_blocked(project_id):
-        raise HTTPException(status_code=409, detail="Evidence alignment gate is blocked; use forced export for demo output")
-    if _presentation_readiness_blocked(project_id):
-        raise HTTPException(status_code=409, detail="Presentation readiness gate is blocked; use forced export for demo output")
-    if _binding_gate_blocked(project_id):
-        raise HTTPException(status_code=409, detail="Presentation binding gate is blocked; use forced export for demo output")
-    export_path = latest_export_path(project_id) or zip_output(project_id)
+    if not state.gate_summary.export_allowed:
+        raise HTTPException(status_code=409, detail=_export_gate_detail(state, forced=False))
+    export_path = latest_export_path(project_id)
+    if export_path is None:
+        export_path = zip_output(project_id)
+        bump_project_revision(project_id)
     return FileResponse(
         export_path,
         filename=export_path.name,
@@ -945,15 +1102,12 @@ def export_project(project_id: str) -> FileResponse:
 def force_export_project(project_id: str, force: bool = Query(default=False)) -> FileResponse:
     _assert_project(project_id)
     state = get_project_state(project_id)
-    if state.quality_report and state.quality_report.state == "blocked" and not force:
-        raise HTTPException(status_code=409, detail="Quality gate is blocked; pass force=true to export anyway")
-    if _alignment_gate_blocked(project_id) and not force:
-        raise HTTPException(status_code=409, detail="Evidence alignment gate is blocked; pass force=true to export anyway")
-    if _presentation_readiness_blocked(project_id) and not force:
-        raise HTTPException(status_code=409, detail="Presentation readiness gate is blocked; pass force=true to export anyway")
-    if _binding_gate_blocked(project_id) and not force:
-        raise HTTPException(status_code=409, detail="Presentation binding gate is blocked; pass force=true to export anyway")
+    if not force and not state.gate_summary.export_allowed:
+        raise HTTPException(status_code=409, detail=_export_gate_detail(state, forced=False))
+    if force and not state.gate_summary.force_export_allowed:
+        raise HTTPException(status_code=409, detail=_export_gate_detail(state, forced=True))
     export_path = zip_output(project_id, force=force)
+    bump_project_revision(project_id)
     return FileResponse(
         export_path,
         filename=export_path.name,
@@ -964,12 +1118,19 @@ def force_export_project(project_id: str, force: bool = Query(default=False)) ->
 @app.post("/api/projects/{project_id}/export/pptx-editable", response_model=EditablePptxExportResponse)
 def export_project_editable_pptx(project_id: str, force: bool = Query(default=False), export_mode: str = Query(default="debug")) -> EditablePptxExportResponse:
     _assert_project(project_id)
+    current_state = get_project_state(project_id)
+    if not force and not current_state.gate_summary.export_allowed:
+        raise HTTPException(status_code=409, detail=_export_gate_detail(current_state, forced=False))
+    if force and not current_state.gate_summary.force_export_allowed:
+        raise HTTPException(status_code=409, detail=_export_gate_detail(current_state, forced=True))
     try:
         export_path = export_editable_pptx(project_id, force=force, export_mode=export_mode)
     except PermissionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        state = get_project_state(project_id)
+        raise HTTPException(status_code=409, detail=_export_gate_detail(state, forced=force, message=str(exc))) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    bump_project_revision(project_id)
     state = get_project_state(project_id)
     # Read classroom quality report for classroom mode
     classroom_report = None
@@ -988,11 +1149,74 @@ def export_project_editable_pptx(project_id: str, force: bool = Query(default=Fa
     )
 
 
+def _export_gate_detail(state: ProjectState, *, forced: bool, message: str | None = None) -> dict:
+    """Return one structured blocker shape for every export surface."""
+    summary = state.gate_summary
+    reasons = list(summary.blocking_reasons)
+    for gate_name in ("evidence_alignment", "presentation_readiness", "presentation_binding", "quality_report"):
+        gate = getattr(summary, gate_name)
+        if gate.state in {"not_run", "running", "failed", "stale"}:
+            reasons.append(f"{gate_name} gate is {gate.state}")
+    if not reasons:
+        reasons.append("Export prerequisites are not satisfied")
+    return {
+        "code": "export_gate_blocked",
+        "message": message or ("Forced export is unavailable" if forced else "Export is blocked by the project gates"),
+        "blocking_reasons": reasons,
+        "warnings": summary.warnings,
+        "gate_summary": summary.model_dump(mode="json"),
+        "force_export_allowed": summary.force_export_allowed,
+    }
+
+
 def _assert_project(project_id: str) -> Path:
     root = PROJECTS_DIR / project_id
     if not root.exists():
         raise HTTPException(status_code=404, detail="Project not found")
     return root
+
+
+def _assert_media_provider_ready(settings: ProviderSettings) -> None:
+    selected = {"image": settings.image.provider, "tts": settings.audio.provider}
+    catalog = provider_capability_catalog(settings)
+    for capability, provider_id in selected.items():
+        if not provider_id or provider_id == "placeholder":
+            continue
+        descriptor = next(
+            (item for item in catalog if item.capability == capability and item.provider_id == provider_id),
+            None,
+        )
+        if descriptor is None or not descriptor.implemented or not descriptor.available or not descriptor.configured:
+            reason = descriptor.unavailable_reason if descriptor else "Provider is not in the backend capability catalog."
+            if descriptor and not descriptor.configured:
+                reason = "Provider credentials or required configuration are missing."
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "provider_capability_unavailable",
+                    "capability": capability,
+                    "provider_id": provider_id,
+                    "message": reason,
+                },
+            )
+
+
+def _assert_llm_provider_supported(settings: ProviderSettings) -> None:
+    provider_id = settings.llm.provider
+    descriptor = next(
+        (item for item in provider_capability_catalog(settings) if item.capability == "llm" and item.provider_id == provider_id),
+        None,
+    )
+    if descriptor is None or not descriptor.implemented:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "provider_capability_unavailable",
+                "capability": "llm",
+                "provider_id": provider_id,
+                "message": descriptor.unavailable_reason if descriptor else "LLM provider is not in the backend capability catalog.",
+            },
+        )
 
 
 def _binding_gate_blocked(project_id: str) -> bool:
