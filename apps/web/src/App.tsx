@@ -94,7 +94,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { PIPELINE_STEP_KEYS as pipelineStepKeys, pipelineStepsFromProject, type PipelineStepStatus } from "./state";
+import { PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus } from "./state";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
@@ -126,7 +126,11 @@ function isCapabilityConfigured(config: CapabilityConfig | undefined, capability
 function readStoredProviderConfig(): ProviderConfig {
   try {
     const raw = localStorage.getItem(PROVIDER_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as ProviderConfig) : {};
+    const parsed = raw ? (JSON.parse(raw) as ProviderConfig) : {};
+    const sanitized = sanitizeProviderConfig(parsed);
+    // Remove credentials left by older builds as soon as the app starts.
+    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(sanitized));
+    return sanitized;
   } catch {
     return {};
   }
@@ -134,7 +138,7 @@ function readStoredProviderConfig(): ProviderConfig {
 
 function writeStoredProviderConfig(config: ProviderConfig) {
   try {
-    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(config));
+    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(sanitizeProviderConfig(config)));
   } catch {
     // ignore storage failures
   }
@@ -261,6 +265,11 @@ export function App() {
   const [forceExportType, setForceExportType] = useState<"html" | "pptx" | null>(null);
   const providerSettingsRef = useRef<BackendProviderSettings | null>(null);
   const settingsLoadedRef = useRef(false);
+  const settingsSaveSequenceRef = useRef(0);
+  const settingsSaveControllerRef = useRef<AbortController | null>(null);
+  const activeProjectIdRef = useRef<string | null>(null);
+  const projectLoadSequenceRef = useRef(0);
+  const artifactRequestSequenceRef = useRef(0);
 
   const availableSteps = useMemo<Record<StepId, boolean>>(() => {
     const canOpen = (stageId: string) => {
@@ -316,9 +325,11 @@ export function App() {
     const params = new URLSearchParams(window.location.search);
     const projectId = params.get("project_id");
     if (projectId) {
+      const loadSequence = ++projectLoadSequenceRef.current;
+      activeProjectIdRef.current = projectId;
       void fetchProject(projectId)
         .then((next) => {
-          if (cancelled) return;
+          if (cancelled || loadSequence !== projectLoadSequenceRef.current) return;
           updateProject(next);
           setActiveStep(asStepId(params.get("stage")) ?? asStepId(next.current_stage) ?? "material");
         })
@@ -398,16 +409,31 @@ export function App() {
   // debounced, and skipped until the initial load has resolved).
   useEffect(() => {
     if (!settingsLoadedRef.current) return;
+    const sequence = ++settingsSaveSequenceRef.current;
+    settingsSaveControllerRef.current?.abort();
+    const controller = new AbortController();
+    settingsSaveControllerRef.current = controller;
+    setSettingsSynced(false);
     const handle = setTimeout(() => {
-      putProviderSettings(configToBackend(providerConfig, providerSettingsRef.current))
+      putProviderSettings(configToBackend(providerConfig, providerSettingsRef.current), { signal: controller.signal })
         .then((next) => {
+          if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           providerSettingsRef.current = next;
           setSettingsSynced(true);
-          return fetchProviderCapabilities().then(setProviderCatalog).catch(() => undefined);
+          return fetchProviderCapabilities().then((catalog) => {
+            if (isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) setProviderCatalog(catalog);
+          }).catch(() => undefined);
         })
-        .catch(() => setSettingsSynced(false));
+        .catch((error: unknown) => {
+          if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
+          setSettingsSynced(false);
+          setError(error instanceof Error ? error.message : String(error));
+        });
     }, 400);
-    return () => clearTimeout(handle);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
   }, [providerConfig]);
 
   useEffect(() => {
@@ -439,10 +465,16 @@ export function App() {
   }, []);
 
   async function refreshArtifacts(projectId: string) {
+    const requestSequence = ++artifactRequestSequenceRef.current;
     try {
-      setArtifactTree(await listProjectArtifacts(projectId));
+      const next = await listProjectArtifacts(projectId);
+      if (requestSequence === artifactRequestSequenceRef.current && activeProjectIdRef.current === projectId) {
+        setArtifactTree(next);
+      }
     } catch {
-      setArtifactTree(null);
+      if (requestSequence === artifactRequestSequenceRef.current && activeProjectIdRef.current === projectId) {
+        setArtifactTree(null);
+      }
     }
   }
 
@@ -455,10 +487,13 @@ export function App() {
   }
 
   async function openProject(projectId: string, stage?: string) {
+    const loadSequence = ++projectLoadSequenceRef.current;
+    activeProjectIdRef.current = projectId;
     setBusy(t("busy.openingProject"));
     setError("");
     try {
       const next = await fetchProject(projectId);
+      if (loadSequence !== projectLoadSequenceRef.current) return;
       updateProject(next);
       setActiveStep(asStepId(stage) ?? asStepId(next.current_stage) ?? "material");
     } catch (err) {
@@ -481,8 +516,15 @@ export function App() {
   }
 
   function updateProject(next: ProjectState) {
+    if (activeProjectIdRef.current && activeProjectIdRef.current !== next.project_id) return;
+    activeProjectIdRef.current = next.project_id;
     setProject(next);
     setPipelineSteps(pipelineStepsFromProject(next));
+    setDesignSummary(null);
+    setAgentPackage(null);
+    setAgentValidation(null);
+    setPptxExport(null);
+    setArtifactTree(null);
     if (next.lesson_profile) {
       setProfile(next.lesson_profile);
       // Detect which fields differ from emptyProfile defaults → auto-filled by backend
@@ -494,13 +536,20 @@ export function App() {
       }
       setAutoFilledFields(filled);
       setUserEditedFields(new Set()); // reset user edits on new upload
+    } else {
+      setProfile(emptyProfile);
+      setAutoFilledFields(new Set());
+      setUserEditedFields(new Set());
     }
-    if (next.lesson_blueprint) setBlueprint(next.lesson_blueprint);
+    setBlueprint(next.lesson_blueprint ?? null);
     void refreshArtifacts(next.project_id);
     if (next.preview_url) {
       setPreviewError("");
       setPreviewLoading(true);
       setPreviewKey((key) => key + 1);
+    } else {
+      setPreviewError("");
+      setPreviewLoading(false);
     }
     void refreshRecentProjects();
   }
@@ -522,6 +571,8 @@ export function App() {
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    activeProjectIdRef.current = null;
+    projectLoadSequenceRef.current += 1;
     setPipelineSteps(initialPipelineSteps());
     setArtifactTree(null);
     setAgentPackage(null);
@@ -538,7 +589,7 @@ export function App() {
     setBusy(t("ocr.busy"));
     setError("");
     try {
-      const next = await rerunOcr(project.project_id, engine);
+      const next = await rerunOcr(project.project_id, engine, project.project_revision);
       updateProject(next);
     } catch (err) {
       setError(readableError(err, t));
@@ -552,7 +603,7 @@ export function App() {
     setBusy(t("busy.reviewingMedia"));
     setError("");
     try {
-      await reviewMedia(project.project_id, assetId, { state, candidate_id: candidateId });
+      await reviewMedia(project.project_id, assetId, { state, candidate_id: candidateId }, project.project_revision);
       updateProject(await fetchProject(project.project_id));
     } catch (err) {
       setError(readableError(err, t));
@@ -566,7 +617,7 @@ export function App() {
     setBusy(t("busy.replacingMedia"));
     setError("");
     try {
-      await replaceMedia(project.project_id, assetId, file);
+      await replaceMedia(project.project_id, assetId, file, "", project.project_revision);
       updateProject(await fetchProject(project.project_id));
     } catch (err) {
       setError(readableError(err, t));
@@ -577,7 +628,7 @@ export function App() {
 
   async function handleForceRegenerateMedia() {
     if (!project) return;
-    await run(t("busy.regeneratingMedia"), () => generateMedia(project.project_id, true), "quality");
+    await run(t("busy.regeneratingMedia"), () => generateMedia(project.project_id, true, project.project_revision), "quality");
   }
 
   async function handleSaveProfile(nextStep?: StepId) {
@@ -585,7 +636,7 @@ export function App() {
     await run(
       t("busy.savingProfile"),
       async () => {
-        const next = await saveProfile(project.project_id, profile);
+        const next = await saveProfile(project.project_id, profile, project.project_revision);
         return next;
       },
       nextStep
@@ -598,27 +649,12 @@ export function App() {
     setError("");
     setPipelineSteps(markPipelineStep("pipeline.contract"));
     try {
-      const saved = await saveProfile(project.project_id, profile);
+      const saved = await saveProfile(project.project_id, profile, project.project_revision);
       updateProject(saved);
       setPipelineSteps(markPipelineStep("pipeline.contract", "done"));
       setPipelineSteps(markPipelineStep("pipeline.blueprint"));
-      const next = await runPipeline(project.project_id);
-      const nextSteps = initialPipelineSteps();
-      const stageState = (stageId: string) => next.stages?.find((stage) => stage.stage_id === stageId)?.state;
-      const pipelineStageMap: Record<string, string> = {
-        "pipeline.contract": "profile",
-        "pipeline.blueprint": "design",
-        "pipeline.media": "presentation",
-        "pipeline.render": "quality",
-        "pipeline.quality": "quality",
-        "pipeline.export": "delivery",
-      };
-      for (const label of pipelineStepKeys) {
-        const state = stageState(pipelineStageMap[label]);
-        if (state === "completed" || state === "warning") nextSteps[label] = "done";
-        else if (state === "blocked" || state === "failed" || state === "stale") nextSteps[label] = "error";
-      }
-      setPipelineSteps(nextSteps);
+      const next = await runPipeline(project.project_id, saved.project_revision);
+      setPipelineSteps(pipelineStepsFromProject(next));
       updateProject(next);
       const backendStage = next.current_stage as StepId | undefined;
       if (backendStage && steps.some((step) => step.id === backendStage)) {
@@ -911,8 +947,8 @@ export function App() {
             <div className="action-row">
               {!blueprint && (
                 <button type="button" className="primary" disabled={!project || !!busy} onClick={() => project && run(t("busy.generatingOutline"), async () => {
-                  const saved = await saveProfile(project.project_id, profile);
-                  return generateBlueprint(project.project_id);
+                  const saved = await saveProfile(project.project_id, profile, project.project_revision);
+                  return generateBlueprint(project.project_id, saved.project_revision);
                 }, "presentation")}>
                   <Play size={18} aria-hidden="true" />{t("btn.generateOutline")}
                 </button>
@@ -921,7 +957,7 @@ export function App() {
                 type="button"
                 className="secondary"
                 disabled={!project || !blueprint || !!busy}
-                onClick={() => project && blueprint && run(t("busy.savingOutline"), () => saveBlueprint(project.project_id, blueprint))}
+                onClick={() => project && blueprint && run(t("busy.savingOutline"), () => saveBlueprint(project.project_id, blueprint, project.project_revision))}
               >
                 <Save size={18} aria-hidden="true" />
                 {t("btn.saveOutline")}
@@ -936,8 +972,8 @@ export function App() {
                   run(
                     t("busy.generatingMedia"),
                     async () => {
-                      await saveBlueprint(project.project_id, blueprint);
-                      return generateMedia(project.project_id);
+                      const saved = await saveBlueprint(project.project_id, blueprint, project.project_revision);
+                      return generateMedia(project.project_id, false, saved.project_revision);
                     },
                     "quality"
                   )
@@ -959,7 +995,7 @@ export function App() {
                 type="button"
                 className="secondary"
                 disabled={!project || !!busy}
-                onClick={() => project && run(t("busy.generatingMedia"), () => generateMedia(project.project_id))}
+                onClick={() => project && run(t("busy.generatingMedia"), () => generateMedia(project.project_id, false, project.project_revision))}
               >
                 <Image size={18} aria-hidden="true" />
                 {t("btn.regenerateMedia")}
@@ -971,7 +1007,7 @@ export function App() {
                 onClick={() => {
                   setPreviewError("");
                   setPreviewLoading(true);
-                  project && run(t("busy.rendering"), () => renderProject(project.project_id));
+                  project && run(t("busy.rendering"), () => renderProject(project.project_id, project.project_revision));
                 }}
               >
                 <MonitorPlay size={18} aria-hidden="true" />

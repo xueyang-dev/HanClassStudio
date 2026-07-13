@@ -1,4 +1,4 @@
-import { exportActionsFromProject, pipelineStepsFromProject } from "./state";
+import { exportActionsFromProject, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -42,7 +42,45 @@ equal(pipeline["pipeline.media"], "error");
 equal(pipeline["pipeline.quality"], "pending");
 equal(pipeline["pipeline.export"], "pending");
 
+const renderedButQualityNotRun = pipelineStepsFromProject({
+  ...project,
+  artifacts: { render: true },
+  stale_state: { stale: false, stale_stages: [], reasons: [] },
+  stages: [
+    ...project.stages!.filter((stage) => stage.stage_id !== "quality"),
+    { stage_id: "quality", state: "completed", stale: false, blockers: [], warnings: [], required_artifacts: [], available_actions: [] },
+  ],
+  gate_summary: {
+    ...project.gate_summary!,
+    quality_report: { state: "not_run", blocking_reasons: [], warnings: [], stale: false },
+  },
+});
+equal(renderedButQualityNotRun["pipeline.render"], "done");
+equal(renderedButQualityNotRun["pipeline.quality"], "pending");
+
 const actions = exportActionsFromProject(project);
 deepEqual(actions, { normal: false, force: true, qualityState: "not_run" });
+
+const notRunExport = exportActionsFromProject({
+  ...project,
+  gate_summary: {
+    ...project.gate_summary!,
+    force_export_allowed: false,
+  },
+});
+deepEqual(notRunExport, { normal: false, force: false, qualityState: "not_run" });
+
+const persisted = sanitizeProviderConfig({
+  llm: { providerId: "openai_compatible", values: { api_key: "secret", model: "teacher" } },
+  image: { providerId: "placeholder", values: { apiKey: "another-secret", model: "svg" } },
+});
+deepEqual(persisted, {
+  llm: { providerId: "openai_compatible", values: { model: "teacher" } },
+  image: { providerId: "placeholder", values: { model: "svg" } },
+});
+
+equal(isCurrentRequest(2, 2), true);
+equal(isCurrentRequest(1, 2), false);
+equal(isCurrentRequest(2, 2, true), false);
 
 console.log("frontend state contract tests passed");

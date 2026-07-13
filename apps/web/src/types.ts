@@ -1,5 +1,5 @@
 export type GenerationMode = "faithful" | "guided_redesign" | "reimagined";
-export type QualityState = "pass" | "warning" | "blocked";
+export type QualityState = "pass" | "warning" | "blocked" | "stale";
 export type StageState = "not_started" | "ready" | "running" | "completed" | "warning" | "blocked" | "failed" | "stale";
 export type GateState = "not_run" | "running" | "passed" | "warning" | "blocked" | "failed" | "stale";
 
@@ -271,6 +271,7 @@ export interface GateSummary {
 
 export interface StaleState {
   stale: boolean;
+  stale_stages?: string[];
   reasons: string[];
   changed_at?: string | null;
 }
