@@ -11,6 +11,11 @@
     "install:web": "npm --prefix apps/web install",
     "build:web": "npm --prefix apps/web run build",
     "test:api": "PYTHONPATH=apps/api/src uv run --project apps/api python -m pytest apps/api/tests",
-    "test": "npm run test:api && npm run build:web"
+    "test:web-state": "npm --prefix apps/web run test:state",
+    "test:e2e": "playwright test",
+    "test": "npm run test:api && npm run build:web && npm run test:web-state"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
   }
 }

@@ -11,7 +11,8 @@ from pptx import Presentation
 import hcs_api.main as main
 import hcs_api.storage as storage
 from hcs_api.main import app
-from hcs_api.models import ContentBlock, LessonBlueprint, LessonSlide, QualityReport, SlideComponent
+from hcs_api.models import AssetCandidate, AssetFile, AssetManifest, ContentBlock, ImageProviderSettings, LLMProviderSettings, LessonBlueprint, LessonProfile, LessonSlide, ProviderSettings, QualityReport, SlideComponent, SourceMaterial
+from hcs_api.providers import ProviderError
 from hcs_api.strategist import build_interaction_plan, build_media_plan
 
 
@@ -32,6 +33,31 @@ def test_health_route() -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_upload_rejects_formats_outside_frontend_accept_contract(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", runtime_dir / "projects")
+    monkeypatch.setattr(main, "PROJECTS_DIR", runtime_dir / "projects")
+    response = TestClient(app).post(
+        "/api/projects/upload",
+        files={"file": ("lesson.txt", b"not a course source", "text/plain")},
+    )
+    assert response.status_code == 400
+    assert "supported" in response.json()["detail"]
+
+
+def test_cors_allows_vite_fallback_port() -> None:
+    response = TestClient(app).options(
+        "/api/health",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
 
 
 def test_agent_skill_docs_exist() -> None:
@@ -71,19 +97,106 @@ def test_provider_settings_round_trip(tmp_path, monkeypatch) -> None:
     save_response = client.put("/api/settings/providers", json=payload)
     assert save_response.status_code == 200
     saved = save_response.json()
-    # The flat llm/image/audio fields must round-trip unchanged. The model also
-    # carries ocr/video/capabilities (derived from the frontend capability config),
-    # so we assert the flat contract rather than exact full-document equality.
+    # The response contract must preserve non-secret fields while never
+    # returning the submitted credentials.
     for key in ("llm", "image", "audio"):
-        assert saved[key] == payload[key], f"{key} did not round-trip"
+        assert saved[key]["provider"] == payload[key]["provider"]
+        assert saved[key]["api_key_present"] is bool(payload[key]["api_key"])
+        assert "api_key" not in saved[key]
     assert "capabilities" in saved and "ocr" in saved and "video" in saved
+    assert '"api_key"' not in json.dumps(saved)
 
     get_response = client.get("/api/settings/providers")
     assert get_response.status_code == 200
     fetched = get_response.json()
     for key in ("llm", "image", "audio"):
-        assert fetched[key] == payload[key], f"{key} did not round-trip on GET"
+        assert fetched[key]["provider"] == payload[key]["provider"]
+        assert fetched[key]["api_key_present"] is bool(payload[key]["api_key"])
+        assert "api_key" not in fetched[key]
     assert "capabilities" in fetched and "ocr" in fetched and "video" in fetched
+    assert '"api_key"' not in json.dumps(fetched)
+
+
+def test_provider_settings_never_expose_config_file_or_credentials(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", tmp_path / "config" / "provider_settings.json")
+    client = TestClient(app)
+    secret = "audit-secret-never-returned"
+    response = client.put(
+        "/api/settings/providers",
+        json={"llm": {"provider": "openai_compatible", "api_key": secret}},
+    )
+    assert response.status_code == 200
+    assert secret not in response.text
+    assert "api_key" not in response.json()["llm"]
+    assert response.json()["llm"]["api_key_present"] is True
+
+    fetched = client.get("/api/settings/providers")
+    assert fetched.status_code == 200
+    assert secret not in fetched.text
+    assert '"api_key"' not in json.dumps(fetched.json())
+    assert fetched.json()["llm"]["api_key_present"] is True
+
+    # The runtime static mount is limited to project artifacts, never config.
+    assert client.get("/runtime/config/provider_settings.json").status_code == 404
+
+
+def test_provider_capability_contract_marks_unimplemented_provider_unavailable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", tmp_path / "config" / "provider_settings.json")
+    client = TestClient(app)
+    response = client.get("/api/settings/providers/capabilities")
+    assert response.status_code == 200
+    descriptors = response.json()
+    assert {item["capability"] for item in descriptors} == {"llm", "image", "tts", "ocr", "video"}
+    deterministic = next(item for item in descriptors if item["provider_id"] == "deterministic")
+    assert deterministic["implemented"] is True
+    assert deterministic["configured"] is True
+    assert deterministic["available"] is True
+    runway = next(item for item in descriptors if item["provider_id"] == "runway")
+    assert runway["implemented"] is False
+    assert runway["configurable"] is False
+    assert runway["available"] is False
+    assert runway["unavailable_reason"]
+    image_ids = {item["provider_id"] for item in descriptors if item["capability"] == "image" and item["configurable"]}
+    assert image_ids == {"placeholder", "openai_images", "experimental_openai_images"}
+
+
+def test_provider_settings_partial_update_preserves_omitted_sections(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", tmp_path / "config" / "provider_settings.json")
+    client = TestClient(app)
+    initial = {
+        "llm": {"provider": "openai_compatible", "base_url": "https://llm.test/v1", "api_key": "keep-me", "model": "teacher-model"},
+        "image": {"provider": "placeholder", "endpoint_url": "", "api_key": "", "model": "placeholder-svg"},
+        "audio": {"provider": "placeholder", "endpoint_url": "", "api_key": "", "model": "placeholder-tone", "voice": "default"},
+    }
+    assert client.put("/api/settings/providers", json=initial).status_code == 200
+    updated = client.put("/api/settings/providers", json={"image": {"provider": "placeholder"}})
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["llm"]["provider"] == initial["llm"]["provider"]
+    assert body["llm"]["model"] == initial["llm"]["model"]
+    assert body["llm"]["api_key_present"] is True
+    assert body["audio"]["provider"] == initial["audio"]["provider"]
+    assert body["audio"]["model"] == initial["audio"]["model"]
+
+
+def test_provider_capability_empty_api_key_does_not_erase_existing_secret(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", tmp_path / "config" / "provider_settings.json")
+    client = TestClient(app)
+    initial = {
+        "llm": {"provider": "openai_compatible", "base_url": "https://llm.test/v1", "api_key": "secret", "model": "teacher"},
+    }
+    assert client.put("/api/settings/providers", json=initial).status_code == 200
+    updated = client.put(
+        "/api/settings/providers",
+        json={"capabilities": {"llm": {"providerId": "openai_compatible", "values": {"api_key": "", "model": "teacher-2"}}}},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["llm"]["api_key_present"] is True
+    assert '"api_key"' not in json.dumps(updated.json())
 
 
 def test_project_pipeline_route_runs_full_generation(tmp_path, monkeypatch) -> None:
@@ -133,6 +246,13 @@ def test_project_pipeline_route_runs_full_generation(tmp_path, monkeypatch) -> N
     assert body["status"] == "rendered"
     assert body["route"] == "main-generation"
     assert body["quality_state"] == "warning"
+    summary_response = client.get(f"/api/projects/{project_id}/design/summary")
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["learning_state_plan"] is not None
+    assert summary["evidence_plan"] is not None
+    assert summary["activity_plan"] is not None
+    assert "available_actions" in summary
     assert body["lesson_blueprint"]["slides"]
     assert body["asset_manifest"]["audio"]
     assert body["preview_url"] == f"/runtime/projects/{project_id}/courseware/lesson.html"
@@ -145,6 +265,577 @@ def test_project_pipeline_route_runs_full_generation(tmp_path, monkeypatch) -> N
     assert (project_root / "courseware" / "lesson.html").exists()
     assert (project_root / "courseware" / "render_manifest.json").exists()
     assert (project_root / "quality" / "quality_report.json").exists()
+
+    rerender_response = client.post(
+        f"/api/projects/{project_id}/render?expected_revision={body['project_revision']}"
+    )
+    assert rerender_response.status_code == 200
+    rerendered = rerender_response.json()
+    assert rerendered["gate_summary"]["export_allowed"] is True
+    assert rerendered["export_url"] == f"/api/projects/{project_id}/export"
+
+
+def test_project_state_exposes_authoritative_stage_and_gate_contract(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    project_id = "state-contract"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="warning", warnings=["review media"]))
+
+    response = TestClient(app).get(f"/api/projects/{project_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_revision"] == 0
+    assert body["profile_state"] == "inferred"
+    assert {stage["stage_id"] for stage in body["stages"]} == {
+        "material", "profile", "design", "presentation", "quality", "delivery"
+    }
+    assert body["gate_summary"]["quality_report"]["state"] == "warning"
+    assert body["gate_summary"]["overall_state"] == "warning"
+    assert body["gate_summary"]["export_allowed"] is False
+    assert body["gate_summary"]["force_export_allowed"] is False
+
+
+def test_gate_summary_requires_all_four_gates_and_render_before_export(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "all-gates"
+    root = storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="完整门控", slides=[]))
+    (root / "courseware" / "lesson.html").write_text("<html>ready</html>", encoding="utf-8")
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+
+    before = TestClient(app).get(f"/api/projects/{project_id}")
+    assert before.status_code == 200
+    before_body = before.json()
+    assert before_body["gate_summary"]["overall_state"] == "not_run"
+    assert before_body["gate_summary"]["export_allowed"] is False
+    assert before_body["gate_summary"]["force_export_allowed"] is False
+    assert before_body["gate_summary"]["evidence_alignment"]["state"] == "not_run"
+    assert before_body["gate_summary"]["presentation_readiness"]["state"] == "not_run"
+    assert before_body["gate_summary"]["presentation_binding"]["state"] == "not_run"
+
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        storage.write_json(project_id, relative, {"state": "pass"})
+
+    after = TestClient(app).get(f"/api/projects/{project_id}")
+    assert after.status_code == 200
+    after_body = after.json()
+    assert after_body["gate_summary"]["overall_state"] == "passed"
+    assert after_body["gate_summary"]["export_allowed"] is True
+    assert TestClient(app).get(f"/api/projects/{project_id}/export").status_code == 200
+
+
+def test_presentation_stage_stays_blocked_when_readiness_gate_blocks(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "readiness-stage-blocked"
+    root = storage.ensure_project(project_id)
+    storage.write_model(project_id, "source_material.json", SourceMaterial(source_type="pptx", original_filename="lesson.pptx"))
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="课程"))
+    storage.set_profile_state(project_id, "confirmed")
+    for relative in ("learning/learning_state_plan.json", "learning/evidence_plan.json", "learning/activity_plan.json"):
+        storage.write_json(project_id, relative, {"schema": "test"})
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="课程", slides=[]))
+    (root / "courseware" / "lesson.html").write_text("<html>ready</html>", encoding="utf-8")
+    storage.write_json(project_id, "quality/evidence_alignment_report.json", {"state": "pass"})
+    storage.write_json(project_id, "quality/presentation_readiness_report.json", {"state": "blocked", "blocking_reasons": ["missing activity evidence"]})
+    storage.write_json(project_id, "presentation/binding_quality_report.json", {"state": "pass"})
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+    storage.bump_project_revision(project_id)
+
+    body = TestClient(app).get(f"/api/projects/{project_id}").json()
+    presentation = next(stage for stage in body["stages"] if stage["stage_id"] == "presentation")
+    assert presentation["state"] == "blocked"
+    assert "missing activity evidence" in presentation["blockers"]
+    assert body["current_stage"] == "presentation"
+
+
+def test_force_export_cannot_bypass_missing_blueprint_or_render(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "technical-export-blocker"
+    storage.ensure_project(project_id)
+    storage.write_json(project_id, "quality/evidence_alignment_report.json", {"state": "pass"})
+    storage.write_json(project_id, "quality/presentation_readiness_report.json", {"state": "pass"})
+    storage.write_json(project_id, "presentation/binding_quality_report.json", {"state": "pass"})
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+
+    response = TestClient(app).post(f"/api/projects/{project_id}/export?force=true")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "export_technical_blocked"
+    assert detail["force_export_allowed"] is False
+    assert any("Blueprint artifact is missing" in reason for reason in detail["blocking_reasons"])
+
+
+def test_malformed_blueprint_is_a_structured_technical_export_blocker(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "malformed-blueprint"
+    root = storage.ensure_project(project_id)
+    (root / "blueprints" / "lesson_blueprint.json").write_text("{not-json", encoding="utf-8")
+    (root / "courseware" / "lesson.html").write_text("<html>ready</html>", encoding="utf-8")
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        storage.write_json(project_id, relative, {"state": "pass"})
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+
+    response = TestClient(app).post(f"/api/projects/{project_id}/export?force=true")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "export_technical_blocked"
+    assert any("Blueprint artifact is missing" in reason for reason in detail["blocking_reasons"])
+
+
+def test_corrupt_render_is_a_non_bypassable_export_blocker(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "corrupt-render"
+    root = storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="损坏渲染", slides=[]))
+    (root / "courseware" / "lesson.html").write_bytes(b"\xff\xfe\x00\x01")
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        storage.write_json(project_id, relative, {"state": "pass"})
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+
+    response = TestClient(app).post(f"/api/projects/{project_id}/export?force=true")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "export_technical_blocked"
+    assert detail["force_export_allowed"] is False
+    assert any("unreadable or corrupt" in reason for reason in detail["blocking_reasons"])
+
+
+def test_stale_quality_report_is_supported_and_blocks_current_preview(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "stale-quality-schema"
+    root = storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="过期质量", slides=[]))
+    (root / "courseware" / "lesson.html").write_text("<html>old</html>", encoding="utf-8")
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        storage.write_json(project_id, relative, {"state": "pass"})
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="stale", blocking=["profile changed"]))
+    storage.bump_project_revision(project_id)
+
+    response = TestClient(app).get(f"/api/projects/{project_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quality_state"] == "stale"
+    assert body["gate_summary"]["quality_report"]["state"] == "stale"
+    assert body["gate_summary"]["overall_state"] == "stale"
+    assert body["gate_summary"]["export_allowed"] is False
+    assert body["preview_url"] is None
+
+
+def test_export_blocker_is_structured_and_carries_gate_summary(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "structured-blocker"
+    root = storage.ensure_project(project_id)
+    (root / "courseware" / "lesson.html").write_text("<html></html>", encoding="utf-8")
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="测试", slides=[]))
+    storage.write_json(project_id, "quality/evidence_alignment_report.json", {"state": "pass"})
+    storage.write_json(project_id, "quality/presentation_readiness_report.json", {"state": "pass"})
+    storage.write_json(project_id, "presentation/binding_quality_report.json", {"state": "pass"})
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="blocked", blocking=["missing evidence"]))
+
+    response = TestClient(app).get(f"/api/projects/{project_id}/export")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "export_gate_blocked"
+    assert "missing evidence" in detail["blocking_reasons"]
+    assert detail["gate_summary"]["quality_report"]["state"] == "blocked"
+    assert detail["force_export_allowed"] is True
+
+
+def test_project_listing_and_profile_confirmation_are_persistent(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    project_id = "persistent-profile"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="初级中文"))
+    storage.set_profile_state(project_id, "inferred")
+    storage.bump_project_revision(project_id)
+    client = TestClient(app)
+
+    before = client.get(f"/api/projects/{project_id}").json()
+    confirmed = client.put(
+        f"/api/projects/{project_id}/profile",
+        json={**before["lesson_profile"], "lesson_title": "确认后的课程"},
+    )
+    assert confirmed.status_code == 200
+    body = confirmed.json()
+    assert body["profile_state"] == "confirmed"
+    assert body["project_revision"] > before["project_revision"]
+
+    listing = client.get("/api/projects")
+    assert listing.status_code == 200
+    item = next(entry for entry in listing.json() if entry["project_id"] == project_id)
+    assert item["profile_state"] == "confirmed"
+    assert item["project_revision"] == body["project_revision"]
+
+
+def test_project_mutation_rejects_stale_expected_revision(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "revision-conflict"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="原始课程"))
+    storage.set_profile_state(project_id, "inferred")
+    storage.bump_project_revision(project_id)
+    current = TestClient(app).get(f"/api/projects/{project_id}").json()
+    storage.bump_project_revision(project_id)
+
+    response = TestClient(app).put(
+        f"/api/projects/{project_id}/profile?expected_revision={current['project_revision']}",
+        json={"lesson_title": "不应覆盖"},
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "project_revision_conflict"
+    assert detail["expected_revision"] == current["project_revision"]
+    assert detail["actual_revision"] == current["project_revision"] + 1
+    stored = storage.read_model(project_id, "lesson_profile.json", LessonProfile)
+    assert stored is not None and stored.lesson_title == "原始课程"
+
+
+def test_profile_change_invalidates_all_downstream_versions(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "profile-invalidation"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="旧课程"))
+    storage.set_profile_state(project_id, "confirmed")
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="旧课程", slides=[]))
+    (projects_dir / project_id / "courseware" / "lesson.html").write_text("<html></html>", encoding="utf-8")
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="warning"))
+    storage.clear_stale_state(project_id, stages={"profile", "design", "presentation", "media", "render", "quality", "delivery"})
+
+    response = TestClient(app).put(
+        f"/api/projects/{project_id}/profile",
+        json={"lesson_title": "新课程"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["profile_state"] == "confirmed"
+    assert set(body["stale_state"]["stale_stages"]) == {"design", "presentation", "media", "render", "quality", "delivery"}
+    assert body["preview_url"] is None
+    assert body["export_url"] is None
+    assert body["gate_summary"]["export_allowed"] is False
+    stale_render = TestClient(app).post(f"/api/projects/{project_id}/render")
+    assert stale_render.status_code == 409
+    assert stale_render.json()["detail"]["code"] == "upstream_stale"
+
+
+def test_persisted_stale_profile_blocks_old_preview_and_export(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "stale-profile-gate"
+    root = storage.ensure_project(project_id)
+    storage.write_model(project_id, "source_material.json", SourceMaterial(source_type="pptx", original_filename="lesson.pptx"))
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="课程"))
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="课程", slides=[]))
+    (root / "courseware" / "lesson.html").write_text("<html>old</html>", encoding="utf-8")
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        storage.write_json(project_id, relative, {"state": "pass"})
+    storage.set_profile_state(project_id, "confirmed")
+    storage.bump_project_revision(project_id)
+    storage.clear_stale_state(project_id, stages={"profile", "design", "presentation", "media", "render", "quality", "delivery"})
+    storage.set_profile_state(project_id, "stale")
+    storage.clear_stale_state(project_id, stages={"profile", "design", "presentation", "media", "render", "quality", "delivery"})
+
+    body = TestClient(app).get(f"/api/projects/{project_id}").json()
+
+    assert body["profile_state"] == "stale"
+    assert body["stale_state"]["stale"] is True
+    assert set(body["stale_state"]["stale_stages"]) == {"profile", "design", "presentation", "media", "render", "quality", "delivery"}
+    assert body["gate_summary"]["stale"] is True
+    assert body["gate_summary"]["export_allowed"] is False
+    assert body["preview_url"] is None
+    assert body["export_url"] is None
+
+
+def test_legacy_project_state_is_readable_but_old_outputs_are_not_current(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "legacy-with-outputs"
+    root = storage.ensure_project(project_id)
+    storage.write_model(project_id, "source_material.json", SourceMaterial(source_type="pptx", original_filename="legacy.pptx"))
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="旧课程"))
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="旧课程", slides=[]))
+    (root / "courseware" / "lesson.html").write_text("<html>legacy</html>", encoding="utf-8")
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+    (root / "exports" / "HanClassStudio_Output_legacy.zip").write_bytes(b"historical")
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        storage.write_json(project_id, relative, {"state": "pass"})
+    assert not (root / "assets" / "data" / "project_meta.json").exists()
+    assert not (root / "assets" / "data" / "profile_state.json").exists()
+
+    client = TestClient(app)
+    response = client.get(f"/api/projects/{project_id}")
+    assert response.status_code == 200
+    body = response.json()
+    # Legacy lineage is intentionally surfaced as stale so the teacher must
+    # confirm/re-run before using the historical profile or outputs.
+    assert body["profile_state"] == "stale"
+    assert body["stale_state"]["stale"] is True
+    assert any("lineage is unknown" in reason for reason in body["stale_state"]["reasons"])
+    assert body["preview_url"] is None
+    assert body["export_url"] is None
+    assert body["gate_summary"]["export_allowed"] is False
+    assert client.get("/api/projects").status_code == 200
+    assert any(item["project_id"] == project_id for item in client.get("/api/projects").json())
+    # Reading legacy state must not silently migrate or rewrite source files.
+    assert not (root / "assets" / "data" / "project_meta.json").exists()
+    assert not (root / "assets" / "data" / "profile_state.json").exists()
+
+
+def test_media_route_passes_force_regenerate_to_executor(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    project_id = "force-media"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="媒体", slides=[]))
+    captured: dict[str, bool] = {}
+
+    def fake_generate(*_args, **kwargs):
+        captured["force_regenerate"] = bool(kwargs.get("force_regenerate"))
+        return AssetManifest()
+
+    monkeypatch.setattr(main, "generate_project_media", fake_generate)
+    response = TestClient(app).post(f"/api/projects/{project_id}/media?force_regenerate=true")
+
+    assert response.status_code == 200
+    assert captured["force_regenerate"] is True
+
+
+def test_media_review_api_persists_candidate_decision_and_stales_outputs(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "media-review-api"
+    root = storage.ensure_project(project_id)
+    candidate_path = root / "assets" / "images" / "hero.png"
+    candidate_path.write_bytes(b"not-a-real-image")
+    candidate = AssetCandidate(id="generated-1", path="assets/images/hero.png", mime_type="image/png", content_hash="hash", source="generated")
+    storage.write_model(
+        project_id,
+        "asset_manifest.json",
+        AssetManifest(images=[AssetFile(id="hero", kind="image", path="assets/images/hero.svg", candidates=[candidate], review_state="pending_review")]),
+    )
+
+    manifest_response = TestClient(app).get(f"/api/projects/{project_id}/media")
+    assert manifest_response.status_code == 200
+    decision = TestClient(app).put(
+        f"/api/projects/{project_id}/media/hero/review",
+        json={"state": "accepted", "candidate_id": "generated-1"},
+    )
+
+    assert decision.status_code == 200
+    assert decision.json()["review_state"] == "accepted"
+    state = TestClient(app).get(f"/api/projects/{project_id}").json()
+    assert "render" in state["stale_state"]["stale_stages"]
+    assert "quality" in state["stale_state"]["stale_stages"]
+    assert "delivery" in state["stale_state"]["stale_stages"]
+
+
+def test_unsupported_media_provider_returns_capability_blocker(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    project_id = "unsupported-media"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="媒体", slides=[]))
+    storage.write_provider_settings(ProviderSettings(image=ImageProviderSettings(provider="made_up_provider")))
+
+    response = TestClient(app).post(f"/api/projects/{project_id}/media")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "provider_capability_unavailable"
+    assert detail["provider_id"] == "made_up_provider"
+    descriptor = next(item for item in TestClient(app).get("/api/settings/providers/capabilities").json() if item["provider_id"] == "made_up_provider")
+    assert descriptor["configured"] is False
+    assert descriptor["available"] is False
+
+
+def test_unsupported_llm_provider_does_not_silently_fallback(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    project_id = "unsupported-llm"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "source_material.json", SourceMaterial(source_type="unknown", original_filename="lesson.pdf"))
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile())
+    storage.write_provider_settings(ProviderSettings(llm=LLMProviderSettings(provider="made_up_llm")))
+
+    response = TestClient(app).post(f"/api/projects/{project_id}/blueprint")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "provider_capability_unavailable"
+    assert detail["capability"] == "llm"
+
+
+def test_unconfigured_llm_provider_returns_structured_capability_blocker(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    project_id = "unconfigured-llm"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "source_material.json", SourceMaterial(source_type="unknown", original_filename="lesson.pdf"))
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile())
+    storage.write_provider_settings(ProviderSettings(llm=LLMProviderSettings(provider="openai_compatible", base_url="https://llm.test/v1", model="teacher")))
+
+    response = TestClient(app).post(f"/api/projects/{project_id}/blueprint")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "provider_capability_unavailable"
+    assert detail["capability"] == "llm"
+    assert "credentials" in detail["message"]
+
+
+def test_provider_execution_failure_does_not_return_success(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(storage, "CONFIG_DIR", runtime_dir / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", runtime_dir / "config" / "provider_settings.json")
+    project_id = "provider-execution-failure"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="媒体", slides=[]))
+    storage.write_provider_settings(
+        ProviderSettings(image=ImageProviderSettings(provider="openai_images", api_key="configured", model="image")),
+    )
+    monkeypatch.setattr(main, "generate_project_media", lambda *_args, **_kwargs: (_ for _ in ()).throw(ProviderError("remote unavailable")))
+
+    response = TestClient(app).post(f"/api/projects/{project_id}/media")
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["code"] == "provider_execution_failed"
+    assert detail["capability"] == "image"
+
+
+def test_dependency_invalidation_matrix_matches_pipeline_contract(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    project_id = "invalidation-matrix"
+    storage.ensure_project(project_id)
+    expected = {
+        "ocr": {"profile", "design", "presentation", "media", "render", "quality", "delivery"},
+        "profile": {"design", "presentation", "media", "render", "quality", "delivery"},
+        "design": {"presentation", "media", "render", "quality", "delivery"},
+        "blueprint": {"media", "render", "quality", "delivery"},
+        "media": {"render", "quality", "delivery"},
+        "render": {"quality", "delivery"},
+    }
+    for dependency, stages in expected.items():
+        storage.clear_stale_state(project_id, stages=set(expected["ocr"]))
+        storage.invalidate_downstream(project_id, dependency, dependency)
+        payload = storage.read_json(project_id, "assets/data/stale_state.json")
+        assert set(payload["stale_stages"]) == stages
 
 
 def test_golden_sample_pipeline_smoke_exports_expected_artifacts(tmp_path, monkeypatch) -> None:
@@ -380,6 +1071,10 @@ def test_editable_pptx_export_respects_blocked_quality_and_force(tmp_path, monke
             ],
         ),
     )
+    (projects_dir / project_id / "courseware" / "lesson.html").write_text("<html>ready</html>", encoding="utf-8")
+    storage.write_json(project_id, "quality/evidence_alignment_report.json", {"state": "pass"})
+    storage.write_json(project_id, "quality/presentation_readiness_report.json", {"state": "pass"})
+    storage.write_json(project_id, "presentation/binding_quality_report.json", {"state": "pass"})
     storage.write_model(project_id, "quality_report.json", QualityReport(state="blocked", blocking=["missing answer"]))
 
     client = TestClient(app)
@@ -391,6 +1086,8 @@ def test_editable_pptx_export_respects_blocked_quality_and_force(tmp_path, monke
     body = forced_response.json()
     manifest = json.loads((projects_dir / project_id / "exports" / "pptx_export_manifest.json").read_text(encoding="utf-8"))
     assert manifest["forced"] is True
+    assert "missing answer" in manifest["forced_blockers"]
+    assert manifest["force_confirmation"] == "explicit force=true request"
     assert (projects_dir / project_id / "exports" / body["filename"]).exists()
 
 
@@ -481,16 +1178,16 @@ def test_agent_handoff_e2e_validates_then_render_exports(tmp_path, monkeypatch) 
     assert render_response.status_code == 200
     assert (project_root / "courseware" / "lesson.html").exists()
     assert (project_root / "quality" / "quality_report.json").exists()
-    assert storage.latest_export_path(project_id) is not None
+    # Agent handoff/render does not fabricate the missing State-first gate
+    # reports; export remains unavailable until the complete gate contract is
+    # run.
+    assert storage.latest_export_path(project_id) is None
 
     export_response = client.get(f"/api/projects/{project_id}/export")
-    assert export_response.status_code == 200
-    with zipfile.ZipFile(io.BytesIO(export_response.content)) as zf:
-        names = set(zf.namelist())
-    assert "lesson.html" in names
-    assert "assets/data/lesson_blueprint.json" in names
-    assert "assets/data/asset_manifest.json" in names
-    assert "assets/data/quality_report.json" in names
+    assert export_response.status_code == 409
+    export_detail = export_response.json()["detail"]
+    assert export_detail["code"] == "export_gate_blocked"
+    assert export_detail["gate_summary"]["overall_state"] == "stale"
 
 
 def test_blocked_quality_prevents_normal_export_but_force_export_succeeds(tmp_path, monkeypatch) -> None:
@@ -502,6 +1199,10 @@ def test_blocked_quality_prevents_normal_export_but_force_export_succeeds(tmp_pa
     project_id = "blockedproject"
     project_root = storage.ensure_project(project_id)
     (project_root / "courseware" / "lesson.html").write_text("<!doctype html><title>blocked</title>", encoding="utf-8")
+    storage.write_model(project_id, "lesson_blueprint.json", LessonBlueprint(lesson_title="阻塞导出", slides=[]))
+    storage.write_json(project_id, "quality/evidence_alignment_report.json", {"state": "pass"})
+    storage.write_json(project_id, "quality/presentation_readiness_report.json", {"state": "pass"})
+    storage.write_json(project_id, "presentation/binding_quality_report.json", {"state": "pass"})
     storage.write_model(
         project_id,
         "quality_report.json",
@@ -520,6 +1221,8 @@ def test_blocked_quality_prevents_normal_export_but_force_export_succeeds(tmp_pa
     assert "lesson.html" in names
     assert "assets/data/quality_report.json" in names
     assert '"forced": true' in manifest
+    assert '"missing answer"' in manifest
+    assert '"force_confirmation": "explicit force=true request"' in manifest
 
 
 def test_component_registry_route_exposes_supported_components() -> None:

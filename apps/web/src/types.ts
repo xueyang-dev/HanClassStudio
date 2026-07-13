@@ -1,27 +1,36 @@
 export type GenerationMode = "faithful" | "guided_redesign" | "reimagined";
-export type QualityState = "pass" | "warning" | "blocked";
+export type QualityState = "pass" | "warning" | "blocked" | "stale";
+export type StageState = "not_started" | "ready" | "running" | "completed" | "warning" | "blocked" | "failed" | "stale";
+export type GateState = "not_run" | "running" | "passed" | "warning" | "blocked" | "failed" | "stale";
 
 /** Capability category handled by a provider. */
-export type ProviderCapability = "ocr" | "image" | "tts" | "video";
+export type ProviderCapability = "llm" | "ocr" | "image" | "tts" | "video";
 
 /** One configurable field for a provider. */
 export interface ProviderFieldDef {
   key: string;
-  labelKey: string;
+  label: string;
   type: "text" | "password" | "select" | "url";
-  placeholderKey?: string;
+  placeholder?: string;
   required: boolean;
   options?: Array<{ value: string; label: string }>;
 }
 
-/** A selectable provider (cloud API or local runtime). */
+/** A provider descriptor returned by the backend capability contract. */
 export interface ProviderDefinition {
   id: string;
   name: string;
   category: "cloud" | "local";
-  capabilities: ProviderCapability[];
-  descriptionKey: string;
+  capability: ProviderCapability;
+  description: string;
   fields: ProviderFieldDef[];
+  implemented: boolean;
+  configurable: boolean;
+  configured: boolean;
+  available: boolean;
+  experimental: boolean;
+  unavailable_reason?: string | null;
+  supported_operations: string[];
 }
 
 /** Stored configuration for one capability. */
@@ -121,6 +130,10 @@ export interface OcrStatusResponse {
   recommended_pipeline: string[];
 }
 
+export interface BackendHealth {
+  status: "ok" | string;
+}
+
 export interface LessonProfile {
   lesson_title: string;
   subject: string;
@@ -177,8 +190,29 @@ export interface AssetFile {
   id: string;
   kind: "image" | "audio" | "video" | "font" | "data";
   path: string;
+  placeholder?: boolean;
   prompt: string;
   text: string;
+  review_state?: "pending_review" | "accepted" | "rejected" | "regenerate_requested" | "replaced_by_teacher" | "fallback_accepted" | null;
+  selected_candidate_id?: string | null;
+  candidates?: AssetCandidate[];
+  review_history?: AssetReviewEvent[];
+}
+
+export interface AssetCandidate {
+  id: string;
+  path: string;
+  mime_type: string;
+  content_hash: string;
+  source: "generated" | "fallback" | "teacher";
+  created_at?: string;
+}
+
+export interface AssetReviewEvent {
+  state: string;
+  candidate_id?: string | null;
+  notes: string;
+  occurred_at?: string;
 }
 
 export interface AssetManifest {
@@ -203,10 +237,58 @@ export interface QualityReport {
   suggestions: string[];
 }
 
+export interface StageStatus {
+  stage_id: string;
+  state: StageState;
+  started_at?: string | null;
+  completed_at?: string | null;
+  stale: boolean;
+  blockers: string[];
+  warnings: string[];
+  required_artifacts: string[];
+  available_actions: string[];
+}
+
+export interface GateStatus {
+  state: GateState;
+  blocking_reasons: string[];
+  warnings: string[];
+  stale: boolean;
+}
+
+export interface GateSummary {
+  evidence_alignment: GateStatus;
+  presentation_readiness: GateStatus;
+  presentation_binding: GateStatus;
+  quality_report: GateStatus;
+  overall_state: GateState;
+  export_allowed: boolean;
+  force_export_allowed: boolean;
+  blocking_reasons: string[];
+  warnings: string[];
+  stale: boolean;
+}
+
+export interface StaleState {
+  stale: boolean;
+  stale_stages?: string[];
+  reasons: string[];
+  changed_at?: string | null;
+}
+
 export interface ProjectState {
   project_id: string;
   status: string;
   route?: string | null;
+  project_revision?: number;
+  current_stage?: string;
+  stages?: StageStatus[];
+  profile_state?: "inferred" | "confirmed" | "stale";
+  gate_summary?: GateSummary;
+  artifacts?: Record<string, boolean>;
+  stale_state?: StaleState;
+  provider_readiness?: ProviderDefinition[];
+  last_updated_at?: string | null;
   quality_state?: QualityState | null;
   source_material?: SourceMaterial | null;
   lesson_profile?: LessonProfile | null;
@@ -215,6 +297,28 @@ export interface ProjectState {
   quality_report?: QualityReport | null;
   preview_url?: string | null;
   export_url?: string | null;
+}
+
+export interface ProjectSummary {
+  project_id: string;
+  status: string;
+  current_stage: string;
+  profile_state: "inferred" | "confirmed" | "stale";
+  project_revision: number;
+  source_filename?: string | null;
+  last_updated_at?: string | null;
+}
+
+export interface StateFirstTeacherSummary {
+  project_id: string;
+  project_revision: number;
+  learning_state_plan?: Record<string, unknown> | null;
+  evidence_plan?: Record<string, unknown> | null;
+  activity_plan?: Record<string, unknown> | null;
+  evidence_alignment?: Record<string, unknown> | null;
+  blockers: string[];
+  warnings: string[];
+  available_actions: string[];
 }
 
 export interface ArtifactEntry {

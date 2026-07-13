@@ -36,6 +36,7 @@ from hcs_api.pipeline import (
     write_presentation_bindings,
     write_spec_artifacts,
 )
+from hcs_api.providers import ProviderError
 from hcs_api.quality import check_classroom_quality, check_quality
 from hcs_api.renderer import render_lesson
 from hcs_api.storage import ensure_project, write_json, write_model, zip_output
@@ -51,7 +52,8 @@ def test_zip_output_respects_blocked_evidence_alignment(tmp_path: Path, monkeypa
     with pytest.raises(PermissionError, match="Evidence alignment gate"):
         zip_output(project_id)
 
-    assert zip_output(project_id, force=True).exists()
+    with pytest.raises(PermissionError, match="Blueprint artifact is missing"):
+        zip_output(project_id, force=True)
 
 
 def test_pptx_to_offline_zip(tmp_path: Path, monkeypatch) -> None:
@@ -73,6 +75,12 @@ def test_pptx_to_offline_zip(tmp_path: Path, monkeypatch) -> None:
     write_model(project_id, "asset_manifest.json", manifest)
     write_json(project_id, "assets/data/attribution.json", {"schema": "hanclassstudio.attribution.v1", "items": []})
     report = render_and_check(project_id, project_root, profile, blueprint, manifest)
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        write_json(project_id, relative, {"state": "pass"})
     html_path = project_root / "courseware" / "lesson.html"
     zip_path = zip_output(project_id)
 
@@ -291,7 +299,7 @@ def test_llm_blueprint_provider_can_drive_pipeline(tmp_path: Path, monkeypatch) 
     assert blueprint.slides[0].title == "LLM 封面"
 
 
-def test_llm_blueprint_pipeline_falls_back_without_credentials(tmp_path: Path, monkeypatch) -> None:
+def test_llm_blueprint_pipeline_rejects_missing_credentials(tmp_path: Path, monkeypatch) -> None:
     _, source, profile = _parsed_source(tmp_path, monkeypatch)
     settings = ProviderSettings(
         llm=LLMProviderSettings(
@@ -302,10 +310,8 @@ def test_llm_blueprint_pipeline_falls_back_without_credentials(tmp_path: Path, m
         )
     )
 
-    blueprint, _ = generate_lesson_blueprint(source, profile, settings)
-
-    assert blueprint.lesson_title == "第14课 我在学习中文呢"
-    assert len(blueprint.slides) >= 6
+    with pytest.raises(ProviderError, match="no API key|not configured"):
+        generate_lesson_blueprint(source, profile, settings)
 
 
 def test_media_pipeline_replaces_placeholder_assets_when_provider_returns_bytes(tmp_path: Path, monkeypatch) -> None:

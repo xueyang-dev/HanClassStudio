@@ -8,7 +8,9 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 GenerationMode = Literal["faithful", "guided_redesign", "reimagined"]
 SourceType = Literal["pptx", "pdf", "image", "unknown"]
-QualityState = Literal["pass", "warning", "blocked"]
+QualityState = Literal["pass", "warning", "blocked", "stale"]
+StageState = Literal["not_started", "ready", "running", "completed", "warning", "blocked", "failed", "stale"]
+GateState = Literal["not_run", "running", "passed", "warning", "blocked", "failed", "stale"]
 
 
 def utc_now_iso() -> str:
@@ -604,10 +606,76 @@ class QualityReport(BaseModel):
         return len(self.blocking) + len(self.warnings)
 
 
+class ProviderCapabilityDescriptor(BaseModel):
+    """The executable/configurable provider contract consumed by WebUI clients."""
+
+    capability: Literal["llm", "image", "tts", "ocr", "video"]
+    provider_id: str
+    display_name: str
+    category: Literal["local", "cloud"]
+    description: str = ""
+    implemented: bool = False
+    configurable: bool = False
+    configured: bool = False
+    available: bool = False
+    experimental: bool = False
+    unavailable_reason: str | None = None
+    configuration_schema: list[dict[str, Any]] = Field(default_factory=list)
+    supported_operations: list[str] = Field(default_factory=list)
+
+
+class StageStatus(BaseModel):
+    stage_id: str
+    state: StageState = "not_started"
+    started_at: str | None = None
+    completed_at: str | None = None
+    stale: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    required_artifacts: list[str] = Field(default_factory=list)
+    available_actions: list[str] = Field(default_factory=list)
+
+
+class GateStatus(BaseModel):
+    state: GateState = "not_run"
+    blocking_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    stale: bool = False
+
+
+class GateSummary(BaseModel):
+    evidence_alignment: GateStatus = Field(default_factory=GateStatus)
+    presentation_readiness: GateStatus = Field(default_factory=GateStatus)
+    presentation_binding: GateStatus = Field(default_factory=GateStatus)
+    quality_report: GateStatus = Field(default_factory=GateStatus)
+    overall_state: GateState = "not_run"
+    export_allowed: bool = False
+    force_export_allowed: bool = False
+    blocking_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    stale: bool = False
+
+
+class StaleState(BaseModel):
+    stale: bool = False
+    stale_stages: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    changed_at: str | None = None
+
+
 class ProjectState(BaseModel):
     project_id: str
     status: str
     route: str | None = None
+    project_revision: int = 0
+    current_stage: str = "material"
+    stages: list[StageStatus] = Field(default_factory=list)
+    profile_state: Literal["inferred", "confirmed", "stale"] = "inferred"
+    gate_summary: GateSummary = Field(default_factory=GateSummary)
+    artifacts: dict[str, Any] = Field(default_factory=dict)
+    stale_state: StaleState = Field(default_factory=StaleState)
+    provider_readiness: list[ProviderCapabilityDescriptor] = Field(default_factory=list)
+    last_updated_at: str | None = None
     quality_state: QualityState | None = None
     source_material: SourceMaterial | None = None
     lesson_profile: LessonProfile | None = None
@@ -616,6 +684,28 @@ class ProjectState(BaseModel):
     quality_report: QualityReport | None = None
     preview_url: str | None = None
     export_url: str | None = None
+
+
+class ProjectSummary(BaseModel):
+    project_id: str
+    status: str
+    current_stage: str = "material"
+    profile_state: Literal["inferred", "confirmed", "stale"] = "inferred"
+    project_revision: int = 0
+    source_filename: str | None = None
+    last_updated_at: str | None = None
+
+
+class StateFirstTeacherSummary(BaseModel):
+    project_id: str
+    project_revision: int = 0
+    learning_state_plan: dict[str, Any] | None = None
+    evidence_plan: dict[str, Any] | None = None
+    activity_plan: dict[str, Any] | None = None
+    evidence_alignment: dict[str, Any] | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    available_actions: list[str] = Field(default_factory=list)
 
 
 class ArtifactEntry(BaseModel):
@@ -663,10 +753,10 @@ class EditablePptxExportResponse(BaseModel):
 
 
 class LLMProviderSettings(BaseModel):
-    provider: str = "openai_compatible"
-    base_url: str = "https://api.openai.com/v1"
+    provider: str = "deterministic"
+    base_url: str = ""
     api_key: str = ""
-    model: str = "gpt-4.1-mini"
+    model: str = "deterministic-v1"
 
 
 class ImageProviderSettings(BaseModel):
@@ -713,7 +803,42 @@ class ProviderSettings(BaseModel):
     # read user choices directly.
     capabilities: dict = Field(default_factory=dict)
 
-QualityState = Literal["pass", "warning", "blocked"]
+
+class PublicProviderSection(BaseModel):
+    """Provider settings safe to return to a client.
+
+    Credentials intentionally never cross this boundary.  ``api_key_present``
+    lets a client render configuration readiness without receiving a secret.
+    """
+
+    provider: str = ""
+    endpoint_url: str = ""
+    base_url: str = ""
+    model: str = ""
+    voice: str = ""
+    deploy_mode: str = "local"
+    langs: str = ""
+    use_gpu: bool = False
+    api_key_present: bool = False
+
+
+class PublicCapabilityConfig(BaseModel):
+    providerId: str
+    values: dict[str, str] = Field(default_factory=dict)
+    api_key_present: bool = False
+
+
+class PublicProviderSettings(BaseModel):
+    """The persisted provider contract with secrets removed."""
+
+    llm: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    image: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    audio: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    ocr: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    video: PublicProviderSection = Field(default_factory=PublicProviderSection)
+    capabilities: dict[str, PublicCapabilityConfig] = Field(default_factory=dict)
+
+QualityState = Literal["pass", "warning", "blocked", "stale"]
 LearnerLevel = Literal["zero_beginner", "beginner", "elementary", "intermediate"]
 RouteHint = Literal["greeting_lesson", "vocabulary_lesson", "dialogue_lesson", "character_lesson", "grammar_pattern_lesson", "mixed_lesson"]
 StandardScheme = Literal["HSK", "CEFR", "JLPT", "TOPIK", "ACTFL", "custom"]

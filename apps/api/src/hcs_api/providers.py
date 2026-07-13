@@ -13,12 +13,202 @@ from .models import (
     LLMProviderSettings,
     LessonBlueprint,
     LessonProfile,
+    ProviderCapabilityDescriptor,
+    ProviderSettings,
     SourceMaterial,
 )
 
 
 class ProviderError(RuntimeError):
     pass
+
+
+def _field(key: str, label: str, field_type: str = "text", *, required: bool = False,
+           placeholder: str | None = None, options: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    value: dict[str, Any] = {"key": key, "label": label, "type": field_type, "required": required}
+    if placeholder:
+        value["placeholder"] = placeholder
+    if options:
+        value["options"] = options
+    return value
+
+
+def _provider_definitions() -> list[dict[str, Any]]:
+    """Canonical provider list. UI clients must render this list, not copy it."""
+    return [
+        {
+            "capability": "llm", "provider_id": "deterministic", "display_name": "Deterministic offline",
+            "category": "local", "description": "Offline-safe deterministic Blueprint generator",
+            "fields": [], "operations": ["blueprint"],
+        },
+        {
+            "capability": "llm", "provider_id": "openai_compatible", "display_name": "OpenAI-compatible",
+            "category": "cloud", "description": "OpenAI-compatible chat completion endpoint",
+            "fields": [_field("base_url", "Base URL", "url", required=True, placeholder="https://api.openai.com/v1"),
+                       _field("api_key", "API key", "password", required=True),
+                       _field("model", "Model", required=True)],
+            "operations": ["blueprint", "illustration"],
+        },
+        {
+            "capability": "llm", "provider_id": "ollama", "display_name": "Ollama",
+            "category": "local", "description": "Local Ollama chat endpoint",
+            "fields": [_field("base_url", "Base URL", "url", placeholder="http://127.0.0.1:11434"),
+                       _field("model", "Model", required=True)],
+            "operations": ["blueprint", "illustration"],
+        },
+        {
+            "capability": "llm", "provider_id": "lm_studio", "display_name": "LM Studio",
+            "category": "local", "description": "Local OpenAI-compatible endpoint",
+            "fields": [_field("base_url", "Base URL", "url", placeholder="http://127.0.0.1:1234/v1"),
+                       _field("model", "Model", required=True)],
+            "operations": ["blueprint", "illustration"],
+        },
+        {
+            "capability": "llm", "provider_id": "custom", "display_name": "Custom endpoint",
+            "category": "cloud", "description": "Custom OpenAI-compatible endpoint",
+            "fields": [_field("base_url", "Base URL", "url", required=True),
+                       _field("api_key", "API key", "password", required=True),
+                       _field("model", "Model", required=True)],
+            "operations": ["blueprint", "illustration"],
+        },
+        {
+            "capability": "image", "provider_id": "placeholder", "display_name": "Deterministic SVG",
+            "category": "local", "description": "Offline-safe deterministic illustration fallback",
+            "fields": [], "operations": ["placeholder"],
+        },
+        {
+            "capability": "image", "provider_id": "openai_images", "display_name": "OpenAI Images",
+            "category": "cloud", "description": "OpenAI image generation endpoint",
+            "fields": [_field("api_key", "API key", "password", required=True),
+                       _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
+                       _field("model", "Model", placeholder="gpt-image-1")],
+            "operations": ["image"],
+        },
+        {
+            "capability": "image", "provider_id": "experimental_openai_images", "display_name": "OpenAI Images (experimental)",
+            "category": "cloud", "description": "Opt-in raster adapter with retained candidates and review provenance",
+            "fields": [_field("api_key", "API key", "password", required=True),
+                       _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
+                       _field("model", "Model", placeholder="gpt-image-1")],
+            "operations": ["image"], "experimental": True,
+        },
+        {
+            "capability": "tts", "provider_id": "placeholder", "display_name": "Deterministic tone",
+            "category": "local", "description": "Offline-safe placeholder audio",
+            "fields": [], "operations": ["placeholder"],
+        },
+        {
+            "capability": "tts", "provider_id": "openai_tts", "display_name": "OpenAI TTS",
+            "category": "cloud", "description": "OpenAI speech endpoint",
+            "fields": [_field("api_key", "API key", "password", required=True),
+                       _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
+                       _field("model", "Model", required=True, options=[{"value": "tts-1", "label": "TTS-1"}, {"value": "tts-1-hd", "label": "TTS-1 HD"}]),
+                       _field("voice", "Voice", required=True, options=[{"value": v, "label": v.title()} for v in ("alloy", "echo", "fable", "onyx", "nova", "shimmer")])],
+            "operations": ["tts"],
+        },
+        {
+            "capability": "ocr", "provider_id": "paddle_ocr", "display_name": "PaddleOCR",
+            "category": "local", "description": "Local PaddleOCR engine",
+            "fields": [_field("use_gpu", "Use GPU", "select", options=[{"value": "false", "label": "CPU"}, {"value": "true", "label": "GPU"}])],
+            "operations": ["source_intake", "ocr"],
+        },
+        {
+            "capability": "ocr", "provider_id": "tesseract", "display_name": "Tesseract",
+            "category": "local", "description": "Local Tesseract fallback engine",
+            "fields": [_field("langs", "Languages", placeholder="chi_sim+eng")],
+            "operations": ["source_intake", "ocr"],
+        },
+        {
+            "capability": "video", "provider_id": "runway", "display_name": "Runway",
+            "category": "cloud", "description": "Video generation is not connected to the production pipeline",
+            "fields": [_field("api_key", "API key", "password", required=True)],
+            "operations": [], "implemented": False, "configurable": False,
+            "unavailable_reason": "Video generation is not implemented in the production media pipeline.",
+        },
+    ]
+
+
+def _selected_provider(settings: ProviderSettings, capability: str) -> tuple[str, dict[str, str]]:
+    raw = settings.capabilities.get(capability) if isinstance(settings.capabilities, dict) else None
+    if isinstance(raw, dict) and raw.get("providerId"):
+        values = raw.get("values") if isinstance(raw.get("values"), dict) else {}
+        return str(raw["providerId"]), _normalize_values(values)
+    flat = {
+        "llm": settings.llm,
+        "image": settings.image,
+        "tts": settings.audio,
+        "ocr": settings.ocr,
+        "video": settings.video,
+    }.get(capability)
+    if flat is None:
+        return "", {}
+    if capability == "llm":
+        return flat.provider, {"base_url": flat.base_url, "api_key": flat.api_key, "model": flat.model}
+    if capability == "image":
+        return flat.provider, {"base_url": flat.endpoint_url, "api_key": flat.api_key, "model": flat.model}
+    if capability == "tts":
+        return flat.provider, {"base_url": flat.endpoint_url, "api_key": flat.api_key, "model": flat.model, "voice": flat.voice}
+    if capability == "ocr":
+        return flat.provider, {"endpoint": flat.endpoint_url, "api_key": flat.api_key, "langs": flat.langs, "use_gpu": str(flat.use_gpu).lower()}
+    return flat.provider, {"endpoint": flat.endpoint_url, "api_key": flat.api_key, "model": flat.model}
+
+
+def _normalize_values(values: dict[str, Any]) -> dict[str, str]:
+    normalized = {str(k): str(v) for k, v in values.items()}
+    normalized.setdefault("api_key", normalized.get("apiKey", ""))
+    normalized.setdefault("base_url", normalized.get("baseUrl", normalized.get("endpoint", "")))
+    normalized.setdefault("endpoint", normalized.get("endpoint_url", normalized.get("baseUrl", "")))
+    normalized.setdefault("use_gpu", normalized.get("useGpu", "false"))
+    normalized.setdefault("voice", normalized.get("voiceId", ""))
+    return normalized
+
+
+def _has_required_values(fields: list[dict[str, Any]], values: dict[str, str]) -> bool:
+    return all(str(values.get(field["key"], "")).strip() for field in fields if field.get("required"))
+
+
+def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapabilityDescriptor]:
+    """Return executable provider facts for both the WebUI and backend console."""
+    try:
+        from .source_understanding import get_engine_status
+        engine_status = {item.name: item.available for item in get_engine_status()}
+    except Exception:
+        engine_status = {}
+
+    definitions = _provider_definitions()
+    known = {(item["capability"], item["provider_id"]) for item in definitions}
+    result: list[ProviderCapabilityDescriptor] = []
+    for item in definitions:
+        provider_id, values = _selected_provider(settings, item["capability"])
+        configured = provider_id == item["provider_id"] and _has_required_values(item["fields"], values)
+        implemented = item.get("implemented", True)
+        available = implemented
+        reason = item.get("unavailable_reason")
+        if provider_id == item["provider_id"] and not configured:
+            reason = "Provider credentials or required configuration are missing."
+        if item["capability"] == "ocr" and item["provider_id"] in engine_status:
+            available = bool(engine_status[item["provider_id"]])
+            if not available:
+                reason = "OCR engine is not available in this deployment."
+        result.append(ProviderCapabilityDescriptor(
+            capability=item["capability"], provider_id=item["provider_id"], display_name=item["display_name"],
+            category=item["category"], description=item["description"], implemented=implemented,
+            configurable=item.get("configurable", implemented), configured=configured, available=available,
+            experimental=item.get("experimental", False), unavailable_reason=reason,
+            configuration_schema=item["fields"], supported_operations=item["operations"],
+        ))
+
+    # Preserve visibility of a previously stored but no longer supported choice.
+    for capability in ("llm", "image", "tts", "ocr", "video"):
+        provider_id, values = _selected_provider(settings, capability)
+        if not provider_id or (capability, provider_id) in known:
+            continue
+        result.append(ProviderCapabilityDescriptor(
+            capability=capability, provider_id=provider_id, display_name=provider_id,
+            category="cloud", configured=False, available=False,
+            unavailable_reason="This provider is not implemented for this capability.",
+        ))
+    return result
 
 
 def generate_blueprint_with_llm(

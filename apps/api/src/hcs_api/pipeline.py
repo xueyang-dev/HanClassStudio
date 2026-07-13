@@ -84,12 +84,12 @@ def generate_lesson_blueprint(
     if language_items is None:
         learner_model = build_learner_model(profile)
         language_items = build_language_items(candidates, learner_model)
-    try:
-        blueprint = generate_blueprint_with_llm(source, profile, settings.llm)
-    except ProviderError:
-        blueprint = None
-    if blueprint is None:
+    if settings.llm.provider == "deterministic":
         blueprint = build_blueprint(source, profile, candidates, language_items)
+    else:
+        blueprint = generate_blueprint_with_llm(source, profile, settings.llm)
+        if blueprint is None:
+            raise ProviderError("Selected LLM provider is not configured for execution")
     return blueprint, candidates
 
 
@@ -99,9 +99,10 @@ def generate_project_media(
     settings: ProviderSettings,
     preserve_media_origin_trace: bool = False,
     force_regenerate: bool = False,
+    strict_provider: bool = False,
 ) -> AssetManifest:
     return generate_configured_media(
-        project_root, blueprint, settings, preserve_media_origin_trace, force_regenerate,
+        project_root, blueprint, settings, preserve_media_origin_trace, force_regenerate, strict_provider,
     )
 
 
@@ -451,7 +452,7 @@ def run_full_pipeline(
         project_id, blueprint, evidence_plan, activity_plan, binding_plan, alignment,
     )
     if binding_plan.state == "blocked" or readiness.state == "blocked":
-        manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled)
+        manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled, strict_provider=True)
         write_model(project_id, "asset_manifest.json", manifest)
         if media_projection_enabled:
             from .presentation_media_projection import run_presentation_media_projection_audit
@@ -474,7 +475,7 @@ def run_full_pipeline(
             )
         return get_project_state(project_id)
 
-    manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled)
+    manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled, strict_provider=True)
     write_model(project_id, "asset_manifest.json", manifest)
     if media_projection_enabled:
         from .presentation_media_projection import run_presentation_media_projection_audit
@@ -514,7 +515,7 @@ def run_full_pipeline(
             )
             if binding_plan.state == "blocked" or readiness.state == "blocked":
                 return get_project_state(project_id)
-            manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled)
+            manifest = generate_project_media(project_root, blueprint, settings, media_projection_enabled, strict_provider=True)
             write_model(project_id, "asset_manifest.json", manifest)
             if media_projection_enabled:
                 from .presentation_media_projection import run_presentation_media_projection_audit

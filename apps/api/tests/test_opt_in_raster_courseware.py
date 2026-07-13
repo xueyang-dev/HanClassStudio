@@ -92,6 +92,12 @@ def test_opt_in_raster_survives_html_pptx_and_zip(tmp_path: Path, monkeypatch) -
     storage.write_model(project_id, "lesson_profile.json", profile)
     storage.write_model(project_id, "asset_manifest.json", manifest)
     storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+    for relative in (
+        "quality/evidence_alignment_report.json",
+        "quality/presentation_readiness_report.json",
+        "presentation/binding_quality_report.json",
+    ):
+        storage.write_json(project_id, relative, {"state": "pass"})
     html_path = render_lesson(root, profile, blueprint, manifest, QualityReport(state="pass"))
     html = html_path.read_text(encoding="utf-8")
     assert '../assets/images/greeting_scene.png' in html

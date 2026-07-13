@@ -8,21 +8,29 @@ import {
   CheckCircle2,
   Clipboard,
   Cpu,
+  FileArchive,
   FileUp,
+  GitBranch,
   Image,
-  Layers3,
+  LayoutTemplate,
   Loader2,
   MessageSquare,
   Mic,
+  Monitor,
   MonitorPlay,
+  Moon,
   Pencil,
   Play,
+  PackageCheck,
   Plus,
   RefreshCw,
   Save,
   Settings2,
+  ShieldCheck,
   Sparkles,
+  Sun,
   Trash2,
+  UsersRound,
   Video,
   X
 } from "lucide-react";
@@ -31,6 +39,10 @@ import {
   configToBackend,
   exportEditablePptx,
   exportUrl,
+  fetchProject,
+  fetchDesignSummary,
+  fetchHealth,
+  fetchProviderCapabilities,
   fetchProviderSettings,
   forceExportProject,
   generateAgentPackage,
@@ -39,22 +51,28 @@ import {
   getComponentRegistry,
   getOcrStatus,
   listProjectArtifacts,
+  listProjects,
   previewUrl,
   putProviderSettings,
+  replaceMedia,
   rerunOcr,
   renderProject,
+  reviewMedia,
   runPipeline,
   saveBlueprint,
   saveProfile,
   uploadProject,
   validateAgentOutput
 } from "./api";
+import type { BackendProviderSettings } from "./api";
 import { useI18n, UI_LANGUAGES, type UiLang } from "./i18n";
 import type {
   AgentPackage,
   AgentValidation,
   ArtifactEntry,
   ArtifactTree,
+  AssetFile,
+  AssetManifest,
   CapabilityConfig,
   ComponentConfig,
   ComponentRegistry,
@@ -69,209 +87,50 @@ import type {
   ProviderConfig,
   ProviderDefinition,
   ProjectState,
+  ProjectSummary,
   SlideComponent,
   SourceAnalysis,
-  SourceAnalysisPage
+  SourceAnalysisPage,
+  StateFirstTeacherSummary,
+  StageStatus
 } from "./types";
+import { PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus } from "./state";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
 const PROVIDER_STORAGE_KEY = "hcs_provider_config";
 const ONBOARDING_STORAGE_KEY = "hcs_onboarding_seen";
+const THEME_STORAGE_KEY = "hcs_theme_mode";
 
-const CAPABILITY_ORDER: ProviderCapability[] = ["ocr", "image", "tts", "video"];
+const CAPABILITY_ORDER: ProviderCapability[] = ["llm", "ocr", "image", "tts", "video"];
 
-const CAPABILITY_META: Record<ProviderCapability, { labelKey: string; icon: typeof Cpu; defaultProvider: string }> = {
-  ocr: { labelKey: "provider.ocr.label", icon: MessageSquare, defaultProvider: "paddle_ocr" },
-  image: { labelKey: "provider.image.label", icon: Image, defaultProvider: "openai" },
-  tts: { labelKey: "provider.tts.label", icon: Mic, defaultProvider: "openai_tts" },
-  video: { labelKey: "provider.video.label", icon: Video, defaultProvider: "runway" },
+const CAPABILITY_META: Record<ProviderCapability, { labelKey: string; icon: typeof Cpu }> = {
+  llm: { labelKey: "provider.llm.label", icon: Cpu },
+  ocr: { labelKey: "provider.ocr.label", icon: MessageSquare },
+  image: { labelKey: "provider.image.label", icon: Image },
+  tts: { labelKey: "provider.tts.label", icon: Mic },
+  video: { labelKey: "provider.video.label", icon: Video },
 };
 
-const PROVIDER_CATALOG: ProviderDefinition[] = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    category: "cloud",
-    capabilities: ["image", "tts"],
-    descriptionKey: "provider.desc.openai",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
-      { key: "baseUrl", labelKey: "provider.field.baseUrl", type: "url", placeholderKey: "provider.field.baseUrl.optional", required: false },
-      { key: "model", labelKey: "provider.field.model", type: "select", required: true, options: [
-        { value: "gpt-4o", label: "GPT-4o" },
-        { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-        { value: "gpt-4-turbo", label: "GPT-4 Turbo" }
-      ]}
-    ]
-  },
-  {
-    id: "anthropic",
-    name: "Anthropic Claude",
-    category: "cloud",
-    capabilities: [],
-    descriptionKey: "provider.desc.anthropic",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
-      { key: "model", labelKey: "provider.field.model", type: "select", required: true, options: [
-        { value: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet" },
-        { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
-        { value: "claude-3-haiku-20240307", label: "Claude 3 Haiku" }
-      ]}
-    ]
-  },
-  {
-    id: "azure_openai",
-    name: "Azure OpenAI",
-    category: "cloud",
-    capabilities: ["image"],
-    descriptionKey: "provider.desc.azure",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
-      { key: "endpoint", labelKey: "provider.field.endpoint", type: "url", required: true },
-      { key: "deployment", labelKey: "provider.field.deployment", type: "text", required: true }
-    ]
-  },
-  {
-    id: "google",
-    name: "Google Gemini",
-    category: "cloud",
-    capabilities: ["image"],
-    descriptionKey: "provider.desc.google",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
-      { key: "model", labelKey: "provider.field.model", type: "select", required: true, options: [
-        { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-        { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" }
-      ]}
-    ]
-  },
-  {
-    id: "ollama",
-    name: "Ollama",
-    category: "local",
-    capabilities: ["image"],
-    descriptionKey: "provider.desc.ollama",
-    fields: [
-      { key: "baseUrl", labelKey: "provider.field.baseUrl", type: "url", required: true, placeholderKey: "provider.field.baseUrl.ollama" },
-      { key: "model", labelKey: "provider.field.model", type: "text", required: true, placeholderKey: "provider.field.model.example" }
-    ]
-  },
-  {
-    id: "lm_studio",
-    name: "LM Studio",
-    category: "local",
-    capabilities: [],
-    descriptionKey: "provider.desc.lm_studio",
-    fields: [
-      { key: "baseUrl", labelKey: "provider.field.baseUrl", type: "url", required: true, placeholderKey: "provider.field.baseUrl.lmstudio" },
-      { key: "model", labelKey: "provider.field.model", type: "text", required: false, placeholderKey: "provider.field.model.optional" }
-    ]
-  },
-  {
-    id: "openai_tts",
-    name: "OpenAI TTS",
-    category: "cloud",
-    capabilities: ["tts"],
-    descriptionKey: "provider.desc.openai_tts",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
-      { key: "model", labelKey: "provider.field.ttsModel", type: "select", required: true, options: [
-        { value: "tts-1", label: "TTS-1" },
-        { value: "tts-1-hd", label: "TTS-1 HD" }
-      ]},
-      { key: "voice", labelKey: "provider.field.voice", type: "select", required: true, options: [
-        { value: "alloy", label: "Alloy" },
-        { value: "echo", label: "Echo" },
-        { value: "fable", label: "Fable" },
-        { value: "onyx", label: "Onyx" },
-        { value: "nova", label: "Nova" },
-        { value: "shimmer", label: "Shimmer" }
-      ]}
-    ]
-  },
-  {
-    id: "elevenlabs",
-    name: "ElevenLabs",
-    category: "cloud",
-    capabilities: ["tts"],
-    descriptionKey: "provider.desc.elevenlabs",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
-      { key: "voiceId", labelKey: "provider.field.voiceId", type: "text", required: true }
-    ]
-  },
-  {
-    id: "macos_say",
-    name: "macOS Say",
-    category: "local",
-    capabilities: ["tts"],
-    descriptionKey: "provider.desc.macos_say",
-    fields: [
-      { key: "voice", labelKey: "provider.field.voice", type: "text", required: false, placeholderKey: "provider.field.voice.optional" }
-    ]
-  },
-  {
-    id: "runway",
-    name: "Runway",
-    category: "cloud",
-    capabilities: ["video"],
-    descriptionKey: "provider.desc.runway",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true }
-    ]
-  },
-  {
-    id: "paddle_ocr",
-    name: "PaddleOCR",
-    category: "local",
-    capabilities: ["ocr"],
-    descriptionKey: "provider.desc.paddle_ocr",
-    fields: [
-      { key: "useGpu", labelKey: "provider.field.useGpu", type: "select", required: false, options: [
-        { value: "false", label: "CPU" },
-        { value: "true", label: "GPU" }
-      ]}
-    ]
-  },
-  {
-    id: "tesseract",
-    name: "Tesseract",
-    category: "local",
-    capabilities: ["ocr"],
-    descriptionKey: "provider.desc.tesseract",
-    fields: [
-      { key: "langs", labelKey: "provider.field.langs", type: "text", required: false, placeholderKey: "provider.field.langs.example" }
-    ]
-  },
-  {
-    id: "azure_doc",
-    name: "Azure Document Intelligence",
-    category: "cloud",
-    capabilities: ["ocr"],
-    descriptionKey: "provider.desc.azure_doc",
-    fields: [
-      { key: "apiKey", labelKey: "provider.field.apiKey", type: "password", required: true },
-      { key: "endpoint", labelKey: "provider.field.endpoint", type: "url", required: true }
-    ]
-  }
-];
-
-function getProviderById(id: string): ProviderDefinition | undefined {
-  return PROVIDER_CATALOG.find((p) => p.id === id);
+function getProviderById(id: string, capability: ProviderCapability, catalog: ProviderDefinition[]): ProviderDefinition | undefined {
+  return catalog.find((p) => p.id === id && p.capability === capability);
 }
 
-function isCapabilityConfigured(config: CapabilityConfig | undefined): boolean {
+function isCapabilityConfigured(config: CapabilityConfig | undefined, capability: ProviderCapability, catalog: ProviderDefinition[]): boolean {
   if (!config) return false;
-  const def = getProviderById(config.providerId);
-  if (!def) return false;
-  return def.fields.filter((f) => f.required).every((f) => config.values[f.key]?.trim());
+  const def = getProviderById(config.providerId, capability, catalog);
+  if (!def || !def.implemented || !def.available) return false;
+  return def.configured || def.fields.filter((f) => f.required).every((f) => config.values[f.key]?.trim());
 }
 
 function readStoredProviderConfig(): ProviderConfig {
   try {
     const raw = localStorage.getItem(PROVIDER_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as ProviderConfig) : {};
+    const parsed = raw ? (JSON.parse(raw) as ProviderConfig) : {};
+    const sanitized = sanitizeProviderConfig(parsed);
+    // Remove credentials left by older builds as soon as the app starts.
+    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(sanitized));
+    return sanitized;
   } catch {
     return {};
   }
@@ -279,7 +138,7 @@ function readStoredProviderConfig(): ProviderConfig {
 
 function writeStoredProviderConfig(config: ProviderConfig) {
   try {
-    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(config));
+    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(sanitizeProviderConfig(config)));
   } catch {
     // ignore storage failures
   }
@@ -301,6 +160,23 @@ function writeOnboardingSeen() {
   }
 }
 
+function readStoredTheme(): ThemeMode {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    return value === "light" || value === "dark" || value === "system" ? value : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function writeStoredTheme(theme: ThemeMode) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  } catch {
+    // ignore storage failures
+  }
+}
+
 const modes: Array<{ value: GenerationMode; titleKey: string; detailKey: string }> = [
   { value: "faithful", titleKey: "mode.faithful", detailKey: "mode.faithful.detail" },
   { value: "guided_redesign", titleKey: "mode.guided", detailKey: "mode.guided.detail" },
@@ -308,24 +184,20 @@ const modes: Array<{ value: GenerationMode; titleKey: string; detailKey: string 
 ];
 
 const steps = [
-  { id: "upload", titleKey: "step.upload", icon: FileUp },
-  { id: "profile", titleKey: "step.profile", icon: Settings2 },
-  { id: "mode", titleKey: "step.mode", icon: Sparkles },
-  { id: "outline", titleKey: "step.outline", icon: Layers3 },
-  { id: "preview", titleKey: "step.preview", icon: MonitorPlay }
+  { id: "material", titleKey: "step.material", icon: FileUp },
+  { id: "profile", titleKey: "step.learners", icon: UsersRound },
+  { id: "design", titleKey: "step.design", icon: GitBranch },
+  { id: "presentation", titleKey: "step.presentation", icon: LayoutTemplate },
+  { id: "quality", titleKey: "step.quality", icon: ShieldCheck },
+  { id: "delivery", titleKey: "step.delivery", icon: PackageCheck }
 ] as const;
 
 type StepId = (typeof steps)[number]["id"];
-type PipelineStepStatus = "pending" | "running" | "done" | "error";
+type ThemeMode = "light" | "dark" | "system";
 
-const pipelineStepKeys = [
-  "pipeline.contract",
-  "pipeline.blueprint",
-  "pipeline.media",
-  "pipeline.render",
-  "pipeline.quality",
-  "pipeline.export"
-];
+function asStepId(value: string | null | undefined): StepId | undefined {
+  return steps.some((step) => step.id === value) ? value as StepId : undefined;
+}
 
 const emptyProfile: LessonProfile = {
   lesson_title: "",
@@ -359,14 +231,14 @@ function readableError(err: unknown, t: (key: string, vars?: Record<string, stri
 
 export function App() {
   const { t } = useI18n();
-  const [activeStep, setActiveStep] = useState<StepId>("upload");
+  const [activeStep, setActiveStep] = useState<StepId>("material");
   const [project, setProject] = useState<ProjectState | null>(null);
+  const [designSummary, setDesignSummary] = useState<StateFirstTeacherSummary | null>(null);
   const [profile, setProfile] = useState<LessonProfile>(emptyProfile);
   const [blueprint, setBlueprint] = useState<LessonBlueprint | null>(null);
   const [busy, setBusy] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [previewKey, setPreviewKey] = useState(0);
-  const [confirmedProfileProjectId, setConfirmedProfileProjectId] = useState<string>("");
   const [pipelineSteps, setPipelineSteps] = useState<Record<string, PipelineStepStatus>>(() => initialPipelineSteps());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -381,17 +253,47 @@ export function App() {
   const [autoFilledFields, setAutoFilledFields] = useState<Set<string>>(new Set());
   const [userEditedFields, setUserEditedFields] = useState<Set<string>>(new Set());
   const [providerConfig, setProviderConfig] = useState<ProviderConfig>(() => readStoredProviderConfig());
+  const [providerCatalog, setProviderCatalog] = useState<ProviderDefinition[]>([]);
+  const [recentProjects, setRecentProjects] = useState<ProjectSummary[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [healthStatus, setHealthStatus] = useState<"unknown" | "online" | "offline">("unknown");
   const [settingsSynced, setSettingsSynced] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme());
+  const [navNotice, setNavNotice] = useState("");
+  const [exportFormat, setExportFormat] = useState<"html" | "pptx">("html");
+  const [forceExportType, setForceExportType] = useState<"html" | "pptx" | null>(null);
+  const providerSettingsRef = useRef<BackendProviderSettings | null>(null);
   const settingsLoadedRef = useRef(false);
+  const settingsSaveSequenceRef = useRef(0);
+  const settingsSaveControllerRef = useRef<AbortController | null>(null);
+  const activeProjectIdRef = useRef<string | null>(null);
+  const projectLoadSequenceRef = useRef(0);
+  const artifactRequestSequenceRef = useRef(0);
 
-  const progressIndex = useMemo(() => {
-    if (project?.preview_url) return 4;
-    if (project?.lesson_blueprint) return 3;
-    if (project?.lesson_profile) return 2;
-    if (project?.source_material) return 1;
-    return 0;
-  }, [project]);
+  const availableSteps = useMemo<Record<StepId, boolean>>(() => {
+    const canOpen = (stageId: string) => {
+      const state = project?.stages?.find((stage) => stage.stage_id === stageId)?.state;
+      return Boolean(state && state !== "not_started");
+    };
+    return {
+      material: true,
+      profile: canOpen("profile"),
+      design: canOpen("design"),
+      presentation: canOpen("presentation"),
+      quality: canOpen("quality"),
+      delivery: canOpen("delivery") || Boolean(pptxExport),
+    };
+  }, [project, pptxExport]);
+
+  const completedSteps = useMemo<Record<StepId, boolean>>(() => ({
+    material: project?.stages?.find((stage) => stage.stage_id === "material")?.state === "completed",
+    profile: project?.stages?.find((stage) => stage.stage_id === "profile")?.state === "completed",
+    design: project?.stages?.find((stage) => stage.stage_id === "design")?.state === "completed",
+    presentation: project?.stages?.find((stage) => stage.stage_id === "presentation")?.state === "completed",
+    quality: ["completed", "warning"].includes(project?.stages?.find((stage) => stage.stage_id === "quality")?.state ?? ""),
+    delivery: project?.stages?.find((stage) => stage.stage_id === "delivery")?.state === "completed" || Boolean(pptxExport)
+  }), [project, pptxExport]);
 
   const componentOptions = useMemo(
     () => Object.keys(componentRegistry).filter((name) => !componentRegistry[name]?.experimental).sort(),
@@ -407,17 +309,77 @@ export function App() {
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    setProjectsLoading(true);
+    void listProjects()
+      .then((items) => {
+        if (!cancelled) setRecentProjects(items);
+      })
+      .catch(() => {
+        if (!cancelled) setRecentProjects([]);
+      })
+      .finally(() => {
+        if (!cancelled) setProjectsLoading(false);
+      });
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get("project_id");
+    if (projectId) {
+      const loadSequence = ++projectLoadSequenceRef.current;
+      activeProjectIdRef.current = projectId;
+      void fetchProject(projectId)
+        .then((next) => {
+          if (cancelled || loadSequence !== projectLoadSequenceRef.current) return;
+          updateProject(next);
+          setActiveStep(asStepId(params.get("stage")) ?? asStepId(next.current_stage) ?? "material");
+        })
+        .catch((err) => {
+          if (!cancelled) setError(readableError(err, t));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!project?.project_id) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("project_id", project.project_id);
+    url.searchParams.set("stage", activeStep);
+    window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
+  }, [project?.project_id, activeStep]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const resolved = theme === "system" ? (media.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.style.colorScheme = resolved;
+    };
+    applyTheme();
+    if (theme !== "system") return;
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
+  }, [theme]);
+
+  function handleThemeChange(next: ThemeMode) {
+    setTheme(next);
+    writeStoredTheme(next);
+  }
+
   // Load persisted provider settings from the backend (source of truth) on mount.
   useEffect(() => {
     fetchProviderSettings()
       .then((backend) => {
+        providerSettingsRef.current = backend;
         const fromBackend = backendToConfig(backend);
         if (Object.keys(fromBackend).length > 0) {
           setProviderConfig(fromBackend);
           writeStoredProviderConfig(fromBackend);
         } else if (Object.keys(providerConfig).length > 0) {
           // Promote any existing local-only config to the server.
-          putProviderSettings(configToBackend(providerConfig)).catch(() => {});
+          putProviderSettings(configToBackend(providerConfig, backend)).catch(() => {});
         }
         setSettingsSynced(true);
       })
@@ -427,16 +389,51 @@ export function App() {
       });
   }, []);
 
+  useEffect(() => {
+    fetchProviderCapabilities()
+      .then(setProviderCatalog)
+      .catch(() => setProviderCatalog([]));
+  }, []);
+
+  useEffect(() => {
+    if (!project?.project_id) {
+      setDesignSummary(null);
+      return;
+    }
+    fetchDesignSummary(project.project_id)
+      .then(setDesignSummary)
+      .catch(() => setDesignSummary(null));
+  }, [project?.project_id, project?.project_revision]);
+
   // Persist provider settings to the backend whenever they change (best-effort,
   // debounced, and skipped until the initial load has resolved).
   useEffect(() => {
     if (!settingsLoadedRef.current) return;
+    const sequence = ++settingsSaveSequenceRef.current;
+    settingsSaveControllerRef.current?.abort();
+    const controller = new AbortController();
+    settingsSaveControllerRef.current = controller;
+    setSettingsSynced(false);
     const handle = setTimeout(() => {
-      putProviderSettings(configToBackend(providerConfig))
-        .then(() => setSettingsSynced(true))
-        .catch(() => setSettingsSynced(false));
+      putProviderSettings(configToBackend(providerConfig, providerSettingsRef.current), { signal: controller.signal })
+        .then((next) => {
+          if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
+          providerSettingsRef.current = next;
+          setSettingsSynced(true);
+          return fetchProviderCapabilities().then((catalog) => {
+            if (isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) setProviderCatalog(catalog);
+          }).catch(() => undefined);
+        })
+        .catch((error: unknown) => {
+          if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
+          setSettingsSynced(false);
+          setError(error instanceof Error ? error.message : String(error));
+        });
     }, 400);
-    return () => clearTimeout(handle);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
   }, [providerConfig]);
 
   useEffect(() => {
@@ -448,11 +445,61 @@ export function App() {
       });
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const check = () => {
+      fetchHealth()
+        .then((health) => {
+          if (!cancelled) setHealthStatus(health.status === "ok" ? "online" : "offline");
+        })
+        .catch(() => {
+          if (!cancelled) setHealthStatus("offline");
+        });
+    };
+    check();
+    const timer = window.setInterval(check, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   async function refreshArtifacts(projectId: string) {
+    const requestSequence = ++artifactRequestSequenceRef.current;
     try {
-      setArtifactTree(await listProjectArtifacts(projectId));
+      const next = await listProjectArtifacts(projectId);
+      if (requestSequence === artifactRequestSequenceRef.current && activeProjectIdRef.current === projectId) {
+        setArtifactTree(next);
+      }
     } catch {
-      setArtifactTree(null);
+      if (requestSequence === artifactRequestSequenceRef.current && activeProjectIdRef.current === projectId) {
+        setArtifactTree(null);
+      }
+    }
+  }
+
+  async function refreshRecentProjects() {
+    try {
+      setRecentProjects(await listProjects());
+    } catch {
+      // Recent-project navigation is an enhancement; the current project stays usable.
+    }
+  }
+
+  async function openProject(projectId: string, stage?: string) {
+    const loadSequence = ++projectLoadSequenceRef.current;
+    activeProjectIdRef.current = projectId;
+    setBusy(t("busy.openingProject"));
+    setError("");
+    try {
+      const next = await fetchProject(projectId);
+      if (loadSequence !== projectLoadSequenceRef.current) return;
+      updateProject(next);
+      setActiveStep(asStepId(stage) ?? asStepId(next.current_stage) ?? "material");
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusy("");
     }
   }
 
@@ -469,7 +516,15 @@ export function App() {
   }
 
   function updateProject(next: ProjectState) {
+    if (activeProjectIdRef.current && activeProjectIdRef.current !== next.project_id) return;
+    activeProjectIdRef.current = next.project_id;
     setProject(next);
+    setPipelineSteps(pipelineStepsFromProject(next));
+    setDesignSummary(null);
+    setAgentPackage(null);
+    setAgentValidation(null);
+    setPptxExport(null);
+    setArtifactTree(null);
     if (next.lesson_profile) {
       setProfile(next.lesson_profile);
       // Detect which fields differ from emptyProfile defaults → auto-filled by backend
@@ -481,14 +536,22 @@ export function App() {
       }
       setAutoFilledFields(filled);
       setUserEditedFields(new Set()); // reset user edits on new upload
+    } else {
+      setProfile(emptyProfile);
+      setAutoFilledFields(new Set());
+      setUserEditedFields(new Set());
     }
-    if (next.lesson_blueprint) setBlueprint(next.lesson_blueprint);
+    setBlueprint(next.lesson_blueprint ?? null);
     void refreshArtifacts(next.project_id);
     if (next.preview_url) {
       setPreviewError("");
       setPreviewLoading(true);
       setPreviewKey((key) => key + 1);
+    } else {
+      setPreviewError("");
+      setPreviewLoading(false);
     }
+    void refreshRecentProjects();
   }
 
   async function run(label: string, action: () => Promise<ProjectState>, nextStep?: StepId) {
@@ -508,7 +571,8 @@ export function App() {
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setConfirmedProfileProjectId("");
+    activeProjectIdRef.current = null;
+    projectLoadSequenceRef.current += 1;
     setPipelineSteps(initialPipelineSteps());
     setArtifactTree(null);
     setAgentPackage(null);
@@ -525,7 +589,7 @@ export function App() {
     setBusy(t("ocr.busy"));
     setError("");
     try {
-      const next = await rerunOcr(project.project_id, engine);
+      const next = await rerunOcr(project.project_id, engine, project.project_revision);
       updateProject(next);
     } catch (err) {
       setError(readableError(err, t));
@@ -534,13 +598,45 @@ export function App() {
     }
   }
 
+  async function handleReviewMedia(assetId: string, state: string, candidateId?: string) {
+    if (!project) return;
+    setBusy(t("busy.reviewingMedia"));
+    setError("");
+    try {
+      await reviewMedia(project.project_id, assetId, { state, candidate_id: candidateId }, project.project_revision);
+      updateProject(await fetchProject(project.project_id));
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function handleReplaceMedia(assetId: string, file: File) {
+    if (!project) return;
+    setBusy(t("busy.replacingMedia"));
+    setError("");
+    try {
+      await replaceMedia(project.project_id, assetId, file, "", project.project_revision);
+      updateProject(await fetchProject(project.project_id));
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function handleForceRegenerateMedia() {
+    if (!project) return;
+    await run(t("busy.regeneratingMedia"), () => generateMedia(project.project_id, true, project.project_revision), "quality");
+  }
+
   async function handleSaveProfile(nextStep?: StepId) {
     if (!project) return;
     await run(
       t("busy.savingProfile"),
       async () => {
-        const next = await saveProfile(project.project_id, profile);
-        setConfirmedProfileProjectId(next.project_id);
+        const next = await saveProfile(project.project_id, profile, project.project_revision);
         return next;
       },
       nextStep
@@ -553,22 +649,19 @@ export function App() {
     setError("");
     setPipelineSteps(markPipelineStep("pipeline.contract"));
     try {
-      const saved = await saveProfile(project.project_id, profile);
-      setConfirmedProfileProjectId(saved.project_id);
+      const saved = await saveProfile(project.project_id, profile, project.project_revision);
       updateProject(saved);
       setPipelineSteps(markPipelineStep("pipeline.contract", "done"));
       setPipelineSteps(markPipelineStep("pipeline.blueprint"));
-      const next = await runPipeline(project.project_id);
-      const nextSteps = initialPipelineSteps();
-      for (const label of pipelineStepKeys) {
-        nextSteps[label] = "done";
-      }
-      if (next.quality_report?.state === "blocked") {
-        nextSteps["pipeline.export"] = "error";
-      }
-      setPipelineSteps(nextSteps);
+      const next = await runPipeline(project.project_id, saved.project_revision);
+      setPipelineSteps(pipelineStepsFromProject(next));
       updateProject(next);
-      setActiveStep("preview");
+      const backendStage = next.current_stage as StepId | undefined;
+      if (backendStage && steps.some((step) => step.id === backendStage)) {
+        setActiveStep(backendStage);
+      } else {
+        setActiveStep("quality");
+      }
     } catch (err) {
       setError(readableError(err, t));
       setPipelineSteps((current) => {
@@ -589,7 +682,7 @@ export function App() {
     try {
       const blob = await forceExportProject(project.project_id);
       downloadBlob(blob, `HanClassStudio_Output_${project.project_id}.zip`);
-      setProject({ ...project, export_url: project.export_url ?? `/api/projects/${project.project_id}/export` });
+      updateProject(await fetchProject(project.project_id));
     } catch (err) {
       setError(readableError(err, t));
     } finally {
@@ -655,20 +748,21 @@ export function App() {
     }
   }
 
-  const qualityState = project?.quality_report?.state ?? project?.quality_state ?? null;
-  const qualityBlocked = qualityState === "blocked";
-  const issueCount = project?.quality_report
-    ? safeList(project.quality_report.blocking).length + safeList(project.quality_report.warnings).length
-    : 0;
-  const profileConfirmed = Boolean(project?.project_id && confirmedProfileProjectId === project.project_id);
+  const gateSummary = project?.gate_summary;
+  const qualityState = gateSummary?.quality_report.state ?? "not_run";
+  const qualityBlocked = gateSummary?.overall_state === "blocked" || gateSummary?.overall_state === "failed" || gateSummary?.overall_state === "stale";
+  const exportBlocked = Boolean(project && gateSummary && !gateSummary.export_allowed);
+  const issueCount = safeList(gateSummary?.blocking_reasons).length + safeList(gateSummary?.warnings).length;
+  const profileConfirmed = project?.profile_state === "confirmed";
   const canRunPipeline = Boolean(project?.project_id && profileConfirmed && !busy);
+  const qualityLabel = gateStateLabel(qualityState, t);
 
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label={t("nav.workflow")}>
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
-            H
+            汉
           </div>
           <div>
             <strong>HanClassStudio</strong>
@@ -676,25 +770,34 @@ export function App() {
           </div>
         </div>
         <nav className="step-list" aria-label={t("nav.workflow")}>
-          {steps.map((step, index) => {
+          {steps.map((step) => {
             const Icon = step.icon;
-            const available = index <= progressIndex + 1;
+            const available = availableSteps[step.id];
             return (
               <button
                 key={step.id}
                 type="button"
                 className={activeStep === step.id ? "active" : ""}
-                disabled={!available}
-                onClick={() => setActiveStep(step.id)}
+                aria-disabled={!available}
+                title={!available ? t("nav.locked") : undefined}
+                onClick={() => {
+                  if (available) {
+                    setActiveStep(step.id);
+                    setNavNotice("");
+                  } else {
+                    setNavNotice(t("nav.locked"));
+                  }
+                }}
               >
                 <Icon size={18} aria-hidden="true" />
                 <span>{t(step.titleKey)}</span>
-                {index <= progressIndex && <CheckCircle2 size={16} aria-hidden="true" />}
+                {completedSteps[step.id] && <CheckCircle2 size={16} aria-hidden="true" />}
               </button>
             );
           })}
         </nav>
-        <ProviderStatusPanel config={providerConfig} onOpenSettings={() => setSettingsOpen(true)} />
+        <RecentProjects projects={recentProjects} loading={projectsLoading} currentProjectId={project?.project_id} onOpen={openProject} />
+        <ProviderStatusPanel config={providerConfig} catalog={providerCatalog} onOpenSettings={() => setSettingsOpen(true)} />
       </aside>
 
       <main className="workspace">
@@ -704,14 +807,20 @@ export function App() {
             <h1>{profile.lesson_title || t("topbar.newLesson")}</h1>
           </div>
           <div className="topbar-aside">
-            <div className="status-strip">
-              <span>{project?.project_id ? t("status.project", { id: project.project_id }) : t("status.noProject")}</span>
-              <span>{project?.status ?? t("status.ready")}</span>
-              <span>{project?.route ? t("status.route", { route: project.route }) : t("status.routePending")}</span>
-              <span>{profileConfirmed ? t("status.profileConfirmed") : t("status.profilePending")}</span>
-              <span>{qualityState ? t("status.quality", { state: qualityState }) : t("status.qualityPending")}</span>
-              <span>{issueCount === 0 ? t("status.qualityPass") : t("status.issues", { n: issueCount })}</span>
-            </div>
+            <details className="project-status-menu">
+              <summary>
+                <ShieldCheck size={17} aria-hidden="true" />
+                {project ? t("status.quality", { state: qualityLabel }) : t("status.ready")}
+                <ChevronDown size={16} aria-hidden="true" />
+              </summary>
+              <div>
+                <span>{healthStatus === "online" ? t("status.backendOnline") : healthStatus === "offline" ? t("status.backendOffline") : t("status.backendChecking")}</span>
+                <span>{project?.project_id ? t("status.project", { id: project.project_id }) : t("status.noProject")}</span>
+                <span>{project?.route ? t("status.route", { route: project.route }) : t("status.routePending")}</span>
+                <span>{profileConfirmed ? t("status.profileConfirmed") : t("status.profilePending")}</span>
+                <span>{issueCount === 0 ? qualityLabel : t("status.issues", { n: issueCount })}</span>
+              </div>
+            </details>
             <div className="top-actions">
               <button type="button" className="secondary" onClick={() => setSettingsOpen(true)}>
                 <Settings2 size={18} aria-hidden="true" />
@@ -728,11 +837,13 @@ export function App() {
                 {t("btn.generate")}
               </button>
             </div>
+            <ThemeSwitcher theme={theme} onChange={handleThemeChange} />
             <LanguageSwitcher />
           </div>
         </header>
 
         {error && <div className="notice error">{error}</div>}
+        {navNotice && <div className="notice">{navNotice}</div>}
         <PipelineStatus steps={pipelineSteps} />
         {busy && (
           <div className="notice loading">
@@ -741,13 +852,13 @@ export function App() {
           </div>
         )}
 
-        {activeStep === "upload" && (
+        {activeStep === "material" && (
           <section className="panel">
             <PanelHeader icon={<FileUp size={22} />} title={t("panel.upload.title")} action={t("panel.upload.action")} />
             <label className="upload-zone">
               <FileUp size={34} aria-hidden="true" />
               <span>{t("upload.choose")}</span>
-              <input type="file" accept=".pptx,.pdf" onChange={handleUpload} />
+              <input type="file" accept=".pptx,.pdf,.png,.jpg,.jpeg" onChange={handleUpload} />
             </label>
             {project?.source_material && (
               <>
@@ -760,25 +871,8 @@ export function App() {
 
         {activeStep === "profile" && (
           <section className="panel">
-            <PanelHeader icon={<Settings2 size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} />
+            <PanelHeader icon={<UsersRound size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} />
             <ProfileForm profile={profile} onChange={handleProfileChange} autoFilledFields={autoFilledFields} userEditedFields={userEditedFields} />
-            <div className="action-row">
-              <button
-                type="button"
-                className="primary"
-                disabled={!project || !!busy}
-                onClick={() => handleSaveProfile("mode")}
-              >
-                <Save size={18} aria-hidden="true" />
-                {t("btn.saveProfile")}
-              </button>
-            </div>
-          </section>
-        )}
-
-        {activeStep === "mode" && (
-          <section className="panel">
-            <PanelHeader icon={<Sparkles size={22} />} title={t("panel.mode.title")} action={t("panel.mode.action")} />
             <fieldset className="field-group">
               <legend>{t("mode.legend")}</legend>
               <div className="segmented-grid">
@@ -813,40 +907,57 @@ export function App() {
                 type="button"
                 className="primary"
                 disabled={!project || !!busy}
-                onClick={() =>
-                  project &&
-                  run(
-                    t("busy.generatingOutline"),
-                    async () => {
-                      const saved = await saveProfile(project.project_id, profile);
-                      setConfirmedProfileProjectId(saved.project_id);
-                      return generateBlueprint(project.project_id);
-                    },
-                    "outline"
-                  )
-                }
+                onClick={() => handleSaveProfile("design")}
               >
-                <Play size={18} aria-hidden="true" />
-                {t("btn.generateOutline")}
+                <Save size={18} aria-hidden="true" />
+                {t("btn.saveProfile")}
               </button>
             </div>
           </section>
         )}
 
-        {activeStep === "outline" && (
+        {activeStep === "design" && (
+          <section className="panel design-boundary">
+            <PanelHeader icon={<GitBranch size={22} />} title={t("design.title")} action={t("design.action")} />
+            <div className="state-flow" aria-label={t("design.flowLabel")}>
+              <span>{t("design.state")}</span><ChevronRight size={16} /><span>{t("design.goal")}</span><ChevronRight size={16} /><span>{t("design.evidence")}</span><ChevronRight size={16} /><span>{t("design.activity")}</span>
+            </div>
+            <div className="boundary-note">
+              <strong>{t("design.boundaryTitle")}</strong>
+              <p>{t("design.boundaryBody")}</p>
+            </div>
+            <StateFirstSummaryView summary={designSummary} />
+            <div className="action-row">
+              <button type="button" className="secondary" onClick={() => setActiveStep("profile")}>{t("design.back")}</button>
+              <button type="button" className="primary" disabled={!availableSteps.presentation} onClick={() => setActiveStep("presentation")}>{t("design.continue")}</button>
+            </div>
+          </section>
+        )}
+
+        {activeStep === "presentation" && (
           <section className="panel">
-            <PanelHeader icon={<Pencil size={22} />} title={t("panel.outline.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} />
+            <PanelHeader icon={<LayoutTemplate size={22} />} title={t("presentation.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} />
+            <StageNotice stage={project?.stages?.find((item) => item.stage_id === "presentation")} />
+            <p className="production-note">{t("presentation.compatibility")}</p>
             {blueprint ? (
               <BlueprintEditor blueprint={blueprint} componentRegistry={componentRegistry} componentOptions={componentOptions} onChange={setBlueprint} />
             ) : (
-              <EmptyState text={t("outline.empty")} />
+              <EmptyState text={t("presentation.empty")} />
             )}
             <div className="action-row">
+              {!blueprint && (
+                <button type="button" className="primary" disabled={!project || !!busy} onClick={() => project && run(t("busy.generatingOutline"), async () => {
+                  const saved = await saveProfile(project.project_id, profile, project.project_revision);
+                  return generateBlueprint(project.project_id, saved.project_revision);
+                }, "presentation")}>
+                  <Play size={18} aria-hidden="true" />{t("btn.generateOutline")}
+                </button>
+              )}
               <button
                 type="button"
                 className="secondary"
                 disabled={!project || !blueprint || !!busy}
-                onClick={() => project && blueprint && run(t("busy.savingOutline"), () => saveBlueprint(project.project_id, blueprint))}
+                onClick={() => project && blueprint && run(t("busy.savingOutline"), () => saveBlueprint(project.project_id, blueprint, project.project_revision))}
               >
                 <Save size={18} aria-hidden="true" />
                 {t("btn.saveOutline")}
@@ -861,10 +972,10 @@ export function App() {
                   run(
                     t("busy.generatingMedia"),
                     async () => {
-                      await saveBlueprint(project.project_id, blueprint);
-                      return generateMedia(project.project_id);
+                      const saved = await saveBlueprint(project.project_id, blueprint, project.project_revision);
+                      return generateMedia(project.project_id, false, saved.project_revision);
                     },
-                    "preview"
+                    "quality"
                   )
                 }
               >
@@ -875,15 +986,16 @@ export function App() {
           </section>
         )}
 
-        {activeStep === "preview" && (
+        {activeStep === "quality" && (
           <section className="panel preview-panel">
             <PanelHeader icon={<MonitorPlay size={22} />} title={t("panel.preview.title")} action={project?.preview_url ? t("panel.preview.actionRendered") : t("panel.preview.actionReady")} />
+            <StageNotice stage={project?.stages?.find((item) => item.stage_id === "quality")} />
             <div className="action-row">
               <button
                 type="button"
                 className="secondary"
                 disabled={!project || !!busy}
-                onClick={() => project && run(t("busy.generatingMedia"), () => generateMedia(project.project_id))}
+                onClick={() => project && run(t("busy.generatingMedia"), () => generateMedia(project.project_id, false, project.project_revision))}
               >
                 <Image size={18} aria-hidden="true" />
                 {t("btn.regenerateMedia")}
@@ -895,78 +1007,15 @@ export function App() {
                 onClick={() => {
                   setPreviewError("");
                   setPreviewLoading(true);
-                  project && run(t("busy.rendering"), () => renderProject(project.project_id));
+                  project && run(t("busy.rendering"), () => renderProject(project.project_id, project.project_revision));
                 }}
               >
                 <MonitorPlay size={18} aria-hidden="true" />
                 {t("btn.rerender")}
               </button>
-              <a
-                className={project?.export_url && !qualityBlocked ? "download-link" : "download-link disabled"}
-                href={project?.export_url && !qualityBlocked ? exportUrl(project.project_id) : undefined}
-                aria-disabled={!project?.export_url || qualityBlocked}
-              >
-                <ArrowDownToLine size={18} aria-hidden="true" />
-                {qualityBlocked ? t("export.blocked") : project?.export_url ? t("btn.downloadZip") : t("export.waiting")}
-              </a>
-              <button
-                type="button"
-                className="secondary"
-                disabled={!project || !!busy || !qualityBlocked}
-                onClick={handleForceExport}
-              >
-                <ArrowDownToLine size={18} aria-hidden="true" />
-                {t("btn.forceExport")}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={!project || !!busy || qualityBlocked}
-                onClick={() => handleEditablePptxExport(false)}
-              >
-                <ArrowDownToLine size={18} aria-hidden="true" />
-                {t("btn.exportPptx")}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={!project || !!busy || !qualityBlocked}
-                onClick={() => handleEditablePptxExport(true)}
-              >
-                <ArrowDownToLine size={18} aria-hidden="true" />
-                {t("btn.forceExportPptx")}
-              </button>
             </div>
-            <p className="export-note">
-              {t("export.note")}
-            </p>
+            <MediaReviewPanel projectId={project?.project_id} manifest={project?.asset_manifest ?? null} busy={Boolean(busy)} onReview={handleReviewMedia} onReplace={handleReplaceMedia} onForceRegenerate={handleForceRegenerateMedia} />
             <QualityReportView project={project} />
-            <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
-            <AgentHandoffPanel
-              project={project}
-              agentPackage={agentPackage}
-              validation={agentValidation}
-              copied={agentCopied}
-              busy={Boolean(busy)}
-              onGenerate={handleGenerateAgentPackage}
-              onCopy={handleCopyAgentTask}
-              onValidate={handleValidateAgentOutput}
-            />
-            <ArtifactInspector tree={artifactTree} />
-            {project?.export_url && !qualityBlocked && (
-              <div className="export-ready">
-                <CheckCircle2 size={18} aria-hidden="true" />
-                <span>{t("export.ready")}</span>
-                <a href={exportUrl(project.project_id)}>HanClassStudio_Output_*.zip</a>
-              </div>
-            )}
-            {pptxExport && (
-              <div className="export-ready">
-                <CheckCircle2 size={18} aria-hidden="true" />
-                <span>{t("export.pptxReady")}</span>
-                <a href={previewUrl(pptxExport.download_url) ?? undefined}>{pptxExport.filename}</a>
-              </div>
-            )}
             {previewUrl(project?.preview_url) ? (
               <div className="preview-frame-wrap">
                 {previewLoading && (
@@ -994,12 +1043,58 @@ export function App() {
             ) : (
               <EmptyState text={t("preview.empty")} />
             )}
+            <div className="action-row">
+              <button type="button" className="primary" disabled={!project || !gateSummary?.export_allowed} onClick={() => setActiveStep("delivery")}>{t("quality.toDelivery")}</button>
+            </div>
+          </section>
+        )}
+
+        {activeStep === "delivery" && (
+          <section className="panel delivery-panel">
+            <PanelHeader icon={<PackageCheck size={22} />} title={t("delivery.title")} action={t("delivery.action")} />
+            <div className={`delivery-gate ${qualityBlocked ? "blocked" : exportBlocked ? "pending" : "pass"}`}>
+              <ShieldCheck size={20} aria-hidden="true" />
+              <div><strong>{qualityBlocked ? t("export.blocked") : exportBlocked ? qualityLabel : t("status.qualityPass")}</strong><span>{issueCount ? t("status.issues", { n: issueCount }) : qualityLabel}</span></div>
+            </div>
+            <div className="export-format-grid" role="radiogroup" aria-label={t("delivery.format") }>
+              <button type="button" role="radio" aria-checked={exportFormat === "html"} className={exportFormat === "html" ? "export-format-card selected" : "export-format-card"} onClick={() => setExportFormat("html")}>
+                <FileArchive size={24} /><strong>{t("delivery.html")}</strong><span>{t("delivery.htmlDetail")}</span>
+              </button>
+              <button type="button" role="radio" aria-checked={exportFormat === "pptx"} className={exportFormat === "pptx" ? "export-format-card selected" : "export-format-card"} onClick={() => setExportFormat("pptx")}>
+                <LayoutTemplate size={24} /><strong>{t("delivery.pptx")}</strong><span>{t("delivery.pptxDetail")}</span>
+              </button>
+            </div>
+            <div className="action-row">
+              {exportFormat === "html" ? (
+                <a className={project?.export_url && gateSummary?.export_allowed ? "download-link" : "download-link disabled"} href={project?.export_url && gateSummary?.export_allowed ? exportUrl(project.project_id) : undefined} aria-disabled={!project?.export_url || !gateSummary?.export_allowed}>
+                  <ArrowDownToLine size={18} />{project?.export_url ? t("btn.downloadZip") : t("export.waiting")}
+                </a>
+              ) : (
+                <button type="button" className="primary" disabled={!project || !!busy || !gateSummary?.export_allowed} onClick={() => handleEditablePptxExport(false)}>
+                  <ArrowDownToLine size={18} />{t("btn.exportPptx")}
+                </button>
+              )}
+            </div>
+            <details className="more-actions">
+              <summary>{t("delivery.more")}</summary>
+              <p>{t("export.note")}</p>
+              <div className="action-row">
+                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed} onClick={() => setForceExportType("html")}>{t("btn.forceExport")}</button>
+                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed} onClick={() => setForceExportType("pptx")}>{t("btn.forceExportPptx")}</button>
+              </div>
+            </details>
+            <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
+            <AgentHandoffPanel project={project} agentPackage={agentPackage} validation={agentValidation} copied={agentCopied} busy={Boolean(busy)} onGenerate={handleGenerateAgentPackage} onCopy={handleCopyAgentTask} onValidate={handleValidateAgentOutput} />
+            <ArtifactInspector tree={artifactTree} />
+            {project?.export_url && gateSummary?.export_allowed && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.ready")}</span><a href={exportUrl(project.project_id)}>HanClassStudio_Output_*.zip</a></div>}
+            {pptxExport && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.pptxReady")}</span><a href={previewUrl(pptxExport.download_url) ?? undefined}>{pptxExport.filename}</a></div>}
           </section>
         )}
       </main>
       {settingsOpen && (
         <ModelSettingsModal
           config={providerConfig}
+          catalog={providerCatalog}
           synced={settingsSynced}
           onChange={(next) => {
             setProviderConfig(next);
@@ -1008,13 +1103,33 @@ export function App() {
           onClose={() => setSettingsOpen(false)}
         />
       )}
+      {forceExportType && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="forceExportTitle">
+            <h2 id="forceExportTitle">{t("delivery.forceTitle")}</h2>
+            <p>{t("delivery.forceBody", { n: issueCount })}</p>
+            <div className="action-row">
+              <button type="button" className="secondary" onClick={() => setForceExportType(null)}>{t("delivery.cancel")}</button>
+              <button type="button" className="danger-button filled" onClick={async () => {
+                const type = forceExportType;
+                setForceExportType(null);
+                if (type === "html") await handleForceExport();
+                else await handleEditablePptxExport(true);
+              }}>{t("delivery.confirmForce")}</button>
+            </div>
+          </section>
+        </div>
+      )}
       {onboardingOpen && (
         <OnboardingWizard
           config={providerConfig}
+          catalog={providerCatalog}
+          theme={theme}
           onChange={(next) => {
             setProviderConfig(next);
             writeStoredProviderConfig(next);
           }}
+          onThemeChange={handleThemeChange}
           onClose={() => {
             writeOnboardingSeen();
             setOnboardingOpen(false);
@@ -1026,13 +1141,71 @@ export function App() {
 }
 
 const LANG_FLAGS: Record<UiLang, string> = {
-  zh: "🇨🇳",
-  en: "🇺🇸",
-  ja: "🇯🇵",
-  ko: "🇰🇷",
-  ar: "🇸🇦",
-  ru: "🇷🇺",
+  zh: "中",
+  en: "EN",
+  ja: "日",
+  ko: "한",
+  ar: "ع",
+  ru: "РУ",
 };
+
+function RecentProjects({
+  projects,
+  loading,
+  currentProjectId,
+  onOpen,
+}: {
+  projects: ProjectSummary[];
+  loading: boolean;
+  currentProjectId?: string;
+  onOpen: (projectId: string, stage?: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="recent-projects" aria-label={t("project.recent")}>
+      <div className="recent-projects-heading"><strong>{t("project.recent")}</strong>{loading && <Loader2 size={13} className="spin" aria-hidden="true" />}</div>
+      {projects.length ? projects.slice(0, 5).map((item) => (
+        <button
+          type="button"
+          key={item.project_id}
+          className={item.project_id === currentProjectId ? "selected" : ""}
+          onClick={() => onOpen(item.project_id, item.current_stage)}
+          title={item.source_filename ?? item.project_id}
+        >
+          <span>{item.source_filename || item.project_id}</span>
+          <small>{item.current_stage}</small>
+        </button>
+      )) : <p>{t("project.noRecent")}</p>}
+    </section>
+  );
+}
+
+function ThemeSwitcher({
+  theme,
+  onChange,
+  inOnboarding = false,
+}: {
+  theme: ThemeMode;
+  onChange: (theme: ThemeMode) => void;
+  inOnboarding?: boolean;
+}) {
+  const { t } = useI18n();
+  const Icon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+
+  return (
+    <label className={`theme-switcher${inOnboarding ? " theme-switcher--field" : ""}`} title={t("theme.label")}>
+      {inOnboarding && <span>{t("theme.label")}</span>}
+      <span className="theme-select-wrap">
+        <Icon size={16} aria-hidden="true" />
+        <select value={theme} onChange={(event) => onChange(event.target.value as ThemeMode)} aria-label={t("theme.label")}>
+          <option value="light">{t("theme.light")}</option>
+          <option value="dark">{t("theme.dark")}</option>
+          <option value="system">{t("theme.system")}</option>
+        </select>
+      </span>
+    </label>
+  );
+}
 
 function LanguageSwitcher() {
   const { lang, setLang, t } = useI18n();
@@ -1101,14 +1274,16 @@ function LanguageSwitcher() {
 
 function ProviderStatusPanel({
   config,
+  catalog,
   onOpenSettings,
 }: {
   config: ProviderConfig;
+  catalog: ProviderDefinition[];
   onOpenSettings: () => void;
 }) {
   const { t } = useI18n();
   const total = CAPABILITY_ORDER.length;
-  const configured = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c])).length;
+  const configured = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
   return (
     <section className="provider-status" aria-label={t("provider.title")}>
@@ -1149,29 +1324,43 @@ function PipelineStatus({ steps }: { steps: Record<string, PipelineStepStatus> }
 
 function getProvidersForCapabilityByMode(
   capability: ProviderCapability,
-  mode: "local" | "cloud"
+  mode: "local" | "cloud",
+  catalog: ProviderDefinition[]
 ): ProviderDefinition[] {
-  return PROVIDER_CATALOG.filter((p) => p.capabilities.includes(capability) && p.category === mode);
+  return catalog.filter((p) => p.capability === capability && p.category === mode && (p.configurable || p.experimental || !p.implemented));
 }
 
 function CapabilityConfigPanel({
   capability,
   config,
+  catalog,
   onChange,
 }: {
   capability: ProviderCapability;
   config: ProviderConfig;
+  catalog: ProviderDefinition[];
   onChange: (next: ProviderConfig) => void;
 }) {
   const { t } = useI18n();
   const cfg = config[capability];
-  const selectedProvider = cfg ? getProviderById(cfg.providerId) : undefined;
+  const selectedProvider = cfg ? getProviderById(cfg.providerId, capability, catalog) : undefined;
   const [mode, setMode] = useState<"local" | "cloud">(selectedProvider?.category ?? "local");
-  const providers = getProvidersForCapabilityByMode(capability, mode);
+  const providers = getProvidersForCapabilityByMode(capability, mode, catalog);
   const selectedId = selectedProvider && selectedProvider.category === mode ? selectedProvider.id : "";
 
+  useEffect(() => {
+    if (selectedProvider && selectedProvider.category !== mode) {
+      setMode(selectedProvider.category);
+      return;
+    }
+    if (!cfg) {
+      const first = catalog.find((provider) => provider.capability === capability && (provider.configurable || provider.experimental || !provider.implemented));
+      if (first && first.category !== mode) setMode(first.category);
+    }
+  }, [capability, catalog, cfg, mode, selectedProvider]);
+
   function applyProvider(id: string) {
-    const def = getProviderById(id);
+    const def = getProviderById(id, capability, catalog);
     if (!def) return;
     const defaults: Record<string, string> = {};
     def.fields.forEach((f) => {
@@ -1182,9 +1371,10 @@ function CapabilityConfigPanel({
 
   function switchMode(next: "local" | "cloud") {
     setMode(next);
-    const list = getProvidersForCapabilityByMode(capability, next);
-    if (list.length) {
-      applyProvider(list[0].id);
+    const list = getProvidersForCapabilityByMode(capability, next, catalog);
+    const selectable = list.find((provider) => provider.implemented && provider.available);
+    if (selectable) {
+      applyProvider(selectable.id);
     } else {
       onChange({ ...config, [capability]: undefined });
     }
@@ -1228,12 +1418,18 @@ function CapabilityConfigPanel({
           <select value={selectedId} onChange={(e) => applyProvider(e.target.value)}>
             <option value="">{t("provider.chooseProvider")}</option>
             {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} — {t(p.descriptionKey)}
-              </option>
+                <option key={p.id} value={p.id} disabled={!p.implemented || !p.available}>
+                  {p.name}{!p.implemented || !p.available ? ` (${t("provider.unavailable")})` : ""} — {p.description}
+                </option>
             ))}
           </select>
         </label>
+      )}
+
+      {cfg && (!selectedProvider || !selectedProvider.implemented || !selectedProvider.available) && (
+        <div className="notice error" role="status">
+          {selectedProvider?.unavailable_reason ?? t("provider.unavailable")}
+        </div>
       )}
 
       {selectedProvider && selectedProvider.category === mode && (
@@ -1241,7 +1437,7 @@ function CapabilityConfigPanel({
           {selectedProvider.fields.map((field) => (
             <label className="field" key={field.key}>
               <span>
-                {t(field.labelKey)}
+                {field.label}
                 {field.required && <span className="required-mark">*</span>}
               </span>
               {field.type === "select" ? (
@@ -1259,7 +1455,7 @@ function CapabilityConfigPanel({
                 <input
                   type={field.type === "password" ? "password" : field.type === "url" ? "url" : "text"}
                   value={cfg?.values[field.key] ?? ""}
-                  placeholder={field.placeholderKey ? t(field.placeholderKey) : ""}
+                  placeholder={field.placeholder ?? ""}
                   onChange={(e) => setValue(field.key, e.target.value)}
                 />
               )}
@@ -1273,11 +1469,13 @@ function CapabilityConfigPanel({
 
 function ModelSettingsModal({
   config,
+  catalog,
   onChange,
   onClose,
   synced,
 }: {
   config: ProviderConfig;
+  catalog: ProviderDefinition[];
   onChange: (next: ProviderConfig) => void;
   onClose: () => void;
   synced?: boolean;
@@ -1285,7 +1483,7 @@ function ModelSettingsModal({
   const { t } = useI18n();
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
 
-  const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c])).length;
+  const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
   return (
     <div className="modal-backdrop" role="presentation">
@@ -1314,7 +1512,7 @@ function ModelSettingsModal({
           <nav className="capability-tabs">
             {CAPABILITY_ORDER.map((capability) => {
               const meta = CAPABILITY_META[capability];
-              const ok = isCapabilityConfigured(config[capability]);
+              const ok = isCapabilityConfigured(config[capability], capability, catalog);
               const Icon = meta.icon;
               return (
                 <button
@@ -1332,20 +1530,17 @@ function ModelSettingsModal({
           </nav>
 
           <div className="capability-tab-content">
-            <CapabilityConfigPanel capability={activeCapability} config={config} onChange={onChange} />
+            <CapabilityConfigPanel capability={activeCapability} config={config} catalog={catalog} onChange={onChange} />
           </div>
         </div>
 
         <p className={`settings-saved-note ${synced ? "ok" : ""}`}>
-          {synced ? t("settings.savedToServer") : t("settings.note")}
+          {synced ? t("settings.savedToServer") : t("settings.autoSaveNote")}
         </p>
 
         <div className="action-row">
-          <button type="button" className="secondary" onClick={onClose}>
-            {t("settings.cancel")}
-          </button>
           <button type="button" className="primary" onClick={onClose}>
-            {t("settings.save")}
+            {t("settings.done")}
           </button>
         </div>
       </section>
@@ -1355,18 +1550,24 @@ function ModelSettingsModal({
 
 function OnboardingWizard({
   config,
+  catalog,
+  theme,
   onChange,
+  onThemeChange,
   onClose,
 }: {
   config: ProviderConfig;
+  catalog: ProviderDefinition[];
+  theme: ThemeMode;
   onChange: (next: ProviderConfig) => void;
+  onThemeChange: (theme: ThemeMode) => void;
   onClose: () => void;
 }) {
   const { t, lang, setLang } = useI18n();
   const [step, setStep] = useState(0);
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
 
-  const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c])).length;
+  const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
   const steps = [
     { id: "welcome", titleKey: "onboarding.welcome.title", icon: Sparkles },
@@ -1421,23 +1622,18 @@ function OnboardingWizard({
                 <h3>{t("onboarding.welcome.heading")}</h3>
                 <p>{t("onboarding.welcome.body")}</p>
               </div>
-              <div className="onboarding-lang">
-                <span className="onboarding-lang-label">{t("onboarding.chooseLanguage")}</span>
-                <div className="lang-grid">
-                  {UI_LANGUAGES.map((item) => (
-                    <button
-                      type="button"
-                      key={item.code}
-                      className={`lang-chip ${lang === item.code ? "active" : ""}`}
-                      onClick={() => setLang(item.code)}
-                      aria-pressed={lang === item.code}
-                    >
-                      <span className="lang-chip-flag" aria-hidden="true">{LANG_FLAGS[item.code]}</span>
-                      <span className="lang-chip-native">{item.native}</span>
-                      {lang === item.code && <Check size={16} className="lang-chip-check" aria-hidden="true" />}
-                    </button>
-                  ))}
-                </div>
+              <div className="onboarding-preferences">
+                <label className="field">
+                  <span>{t("onboarding.chooseLanguage")}</span>
+                  <select value={lang} onChange={(event) => setLang(event.target.value as UiLang)}>
+                    {UI_LANGUAGES.map((item) => (
+                      <option key={item.code} value={item.code}>
+                        {item.native} · {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <ThemeSwitcher theme={theme} onChange={onThemeChange} inOnboarding />
               </div>
               <div className="onboarding-welcome-actions">
                 <button type="button" className="secondary" onClick={onClose}>
@@ -1459,7 +1655,7 @@ function OnboardingWizard({
                 <nav className="capability-tabs">
                   {CAPABILITY_ORDER.map((capability) => {
                     const meta = CAPABILITY_META[capability];
-                    const ok = isCapabilityConfigured(config[capability]);
+                        const ok = isCapabilityConfigured(config[capability], capability, catalog);
                     const Icon = meta.icon;
                     return (
                       <button
@@ -1476,7 +1672,7 @@ function OnboardingWizard({
                   })}
                 </nav>
                 <div className="capability-tab-content">
-                  <CapabilityConfigPanel capability={activeCapability} config={config} onChange={onChange} />
+                  <CapabilityConfigPanel capability={activeCapability} config={config} catalog={catalog} onChange={onChange} />
                 </div>
               </div>
             </div>
@@ -1493,8 +1689,8 @@ function OnboardingWizard({
                 {CAPABILITY_ORDER.map((capability) => {
                   const meta = CAPABILITY_META[capability];
                   const cfg = config[capability];
-                  const ok = isCapabilityConfigured(cfg);
-                  const def = cfg ? getProviderById(cfg.providerId) : undefined;
+                  const ok = isCapabilityConfigured(cfg, capability, catalog);
+                  const def = cfg ? getProviderById(cfg.providerId, capability, catalog) : undefined;
                   const Icon = meta.icon;
                   return (
                     <div className="onboarding-summary-row" key={capability}>
@@ -2157,21 +2353,165 @@ function ValidationList({ title, items, empty }: { title: string; items: string[
   );
 }
 
+function StateFirstSummaryView({ summary }: { summary: StateFirstTeacherSummary | null }) {
+  const { t } = useI18n();
+  if (!summary) return <EmptyState text={t("design.summaryEmpty")} />;
+  const goals = arrayLength(summary.learning_state_plan?.learning_goals ?? summary.learning_state_plan?.goals);
+  const states = arrayLength(summary.learning_state_plan?.states);
+  const evidence = arrayLength(summary.evidence_plan?.evidence_specs);
+  const activities = arrayLength(summary.activity_plan?.activities);
+  const alignmentState = typeof summary.evidence_alignment?.state === "string" ? summary.evidence_alignment.state : "not_run";
+  return (
+    <section className="state-first-summary" aria-label={t("design.summaryTitle")}>
+      <div className="summary-heading">
+        <strong>{t("design.summaryTitle")}</strong>
+        <span>{t("design.alignment", { state: alignmentState })}</span>
+      </div>
+      <div className="summary-metrics">
+        <span><strong>{states}</strong>{t("design.states")}</span>
+        <span><strong>{goals}</strong>{t("design.goals")}</span>
+        <span><strong>{evidence}</strong>{t("design.evidenceItems")}</span>
+        <span><strong>{activities}</strong>{t("design.activities")}</span>
+      </div>
+      {(summary.blockers.length > 0 || summary.warnings.length > 0) && (
+        <div className="summary-issues">
+          {summary.blockers.map((item) => <p className="error-text" key={`blocker-${item}`}>{item}</p>)}
+          {summary.warnings.map((item) => <p className="warning-text" key={`warning-${item}`}>{item}</p>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function arrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function StageNotice({ stage }: { stage?: StageStatus }) {
+  const { t } = useI18n();
+  if (!stage || (!stage.blockers.length && !stage.warnings.length && stage.state !== "stale")) return null;
+  const stateLabel = stage.state === "blocked" || stage.state === "failed" || stage.state === "stale"
+    ? t("export.blocked")
+    : stage.state === "warning"
+      ? t("status.qualityPending")
+      : stage.state;
+  return (
+    <div className={`stage-notice ${stage.state === "warning" ? "warning" : "blocked"}`} role="status">
+      <strong>{stateLabel}</strong>
+      {stage.blockers.map((item) => <span key={`blocker-${item}`}>{item}</span>)}
+      {stage.warnings.map((item) => <span key={`warning-${item}`}>{item}</span>)}
+    </div>
+  );
+}
+
+function MediaReviewPanel({
+  projectId,
+  manifest,
+  busy,
+  onReview,
+  onReplace,
+  onForceRegenerate,
+}: {
+  projectId?: string;
+  manifest: AssetManifest | null;
+  busy: boolean;
+  onReview: (assetId: string, state: string, candidateId?: string) => void;
+  onReplace: (assetId: string, file: File) => void;
+  onForceRegenerate: () => void;
+}) {
+  const { t } = useI18n();
+  const assets = manifest ? [...manifest.images, ...manifest.audio, ...manifest.video] : [];
+  if (!assets.length) return <EmptyState text={t("media.reviewEmpty")} />;
+  return (
+    <section className="media-review" aria-label={t("media.reviewTitle")}>
+      <div className="summary-heading">
+        <strong>{t("media.reviewTitle")}</strong>
+        <button type="button" className="secondary small-button" disabled={busy} onClick={onForceRegenerate}>
+          <RefreshCw size={14} aria-hidden="true" />{t("btn.forceRegenerateMedia")}
+        </button>
+      </div>
+      <div className="media-review-list">
+        {assets.map((asset) => (
+          <MediaReviewCard key={asset.id} projectId={projectId} asset={asset} busy={busy} onReview={onReview} onReplace={onReplace} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MediaReviewCard({
+  projectId,
+  asset,
+  busy,
+  onReview,
+  onReplace,
+}: {
+  projectId?: string;
+  asset: AssetFile;
+  busy: boolean;
+  onReview: (assetId: string, state: string, candidateId?: string) => void;
+  onReplace: (assetId: string, file: File) => void;
+}) {
+  const { t } = useI18n();
+  const assetUrl = projectId && asset.path ? `${import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000"}/runtime/projects/${projectId}/${asset.path}` : null;
+  return (
+    <article className="media-review-card">
+      <div className="media-review-preview">
+        {asset.kind === "image" && assetUrl ? <img src={assetUrl} alt={asset.prompt || asset.id} /> : <span>{asset.kind.toUpperCase()}</span>}
+      </div>
+      <div className="media-review-body">
+        <div className="media-review-title"><strong>{asset.id}</strong><span>{asset.review_state || "pending_review"}</span></div>
+        <p>{asset.prompt || asset.text || asset.path}</p>
+        <div className="media-review-actions">
+          {(asset.candidates ?? []).map((candidate) => (
+            <button type="button" className="small-button" key={candidate.id} disabled={busy} onClick={() => onReview(asset.id, candidate.source === "fallback" ? "fallback_accepted" : "accepted", candidate.id)}>
+              {t("media.acceptCandidate", { source: candidate.source })}
+            </button>
+          ))}
+          <button type="button" className="small-button" disabled={busy} onClick={() => onReview(asset.id, "rejected")}>{t("media.reject")}</button>
+          <label className="small-button file-button">
+            {t("media.replace")}
+            <input type="file" accept="image/png,image/jpeg" disabled={busy} onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onReplace(asset.id, file);
+              event.currentTarget.value = "";
+            }} />
+          </label>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function QualityReportView({ project }: { project: ProjectState | null }) {
   const { t } = useI18n();
+  const summary = project?.gate_summary;
   const report = project?.quality_report;
-  if (!report) return <EmptyState text={t("quality.emptyState")} />;
-  const blocking = safeList(report.blocking).length
-    ? safeList(report.blocking)
-    : [...safeList(report.resource_errors), ...safeList(report.invalid_interactions)];
-  const warnings = safeList(report.warnings).length
-    ? safeList(report.warnings)
-    : [...safeList(report.missing_titles), ...safeList(report.missing_audio), ...safeList(report.missing_images), ...safeList(report.empty_prompts)];
-  const passed = safeList(report.passed).length
-    ? safeList(report.passed)
-    : safeList(report.suggestions).length
-      ? safeList(report.suggestions)
-      : [t("quality.pending")];
+  const gates = summary
+    ? [
+        [t("quality.gate.evidence"), summary.evidence_alignment],
+        [t("quality.gate.readiness"), summary.presentation_readiness],
+        [t("quality.gate.binding"), summary.presentation_binding],
+        [t("quality.gate.quality"), summary.quality_report],
+      ] as const
+    : [];
+  const blocking = report
+    ? (safeList(report.blocking).length
+      ? safeList(report.blocking)
+      : [...safeList(report.resource_errors), ...safeList(report.invalid_interactions)])
+    : [];
+  const warnings = report
+    ? (safeList(report.warnings).length
+      ? safeList(report.warnings)
+      : [...safeList(report.missing_titles), ...safeList(report.missing_audio), ...safeList(report.missing_images), ...safeList(report.empty_prompts)])
+    : [];
+  const passed = report
+    ? (safeList(report.passed).length
+      ? safeList(report.passed)
+      : safeList(report.suggestions).length
+        ? safeList(report.suggestions)
+        : [t("quality.pending")])
+    : [];
   const groups = [
     [t("quality.blocking"), blocking, t("quality.blocking.detail")],
     [t("quality.warnings"), warnings, t("quality.warnings.detail")],
@@ -2179,29 +2519,62 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
   ] as const;
   return (
     <>
-      <div className={`quality-state ${report.state}`}>
-        <strong>{t("quality.title", { state: report.state })}</strong>
-        <span>{report.schema}</span>
-      </div>
-      <div className="quality-grid">
-        {groups.map(([title, items, detail]) => (
-          <section className="quality-group" key={title}>
-            <h3>{title}</h3>
-            <p>{detail}</p>
-            {items.length ? (
-              <ul>
-                {items.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            ) : (
-              <p>{t("quality.empty")}</p>
-            )}
-          </section>
-        ))}
-      </div>
+      {summary && (
+        <section className="gate-summary" aria-label={t("quality.gates") }>
+          <div className={`quality-state ${summary.overall_state}`}>
+            <strong>{t("quality.title", { state: gateStateLabel(summary.overall_state, t) })}</strong>
+            <span>{summary.export_allowed ? t("export.ready") : t("status.qualityPending")}</span>
+          </div>
+          <div className="gate-grid">
+            {gates.map(([title, gate]) => (
+              <article className={`gate-card ${gate.state}`} key={title}>
+                <strong>{title}</strong>
+                <span>{gateStateLabel(gate.state, t)}</span>
+                {gate.blocking_reasons.length > 0 && <small>{gate.blocking_reasons.join("；")}</small>}
+                {gate.warnings.length > 0 && <small>{gate.warnings.join("；")}</small>}
+              </article>
+            ))}
+          </div>
+          {!report && <EmptyState text={t("quality.emptyState")} />}
+        </section>
+      )}
+      {report && (
+        <>
+          <div className={`quality-state ${summary?.quality_report.state === "stale" ? "stale" : report.state}`}>
+            <strong>{t("quality.title", { state: summary?.quality_report.state === "stale" ? gateStateLabel("stale", t) : report.state })}</strong>
+            <span>{report.schema}</span>
+          </div>
+          <div className="quality-grid">
+            {groups.map(([title, items, detail]) => (
+              <section className="quality-group" key={title}>
+                <h3>{title}</h3>
+                <p>{detail}</p>
+                {items.length ? (
+                  <ul>
+                    {items.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>{t("quality.empty")}</p>
+                )}
+              </section>
+            ))}
+          </div>
+        </>
+      )}
+      {!summary && !report && <EmptyState text={t("quality.emptyState")} />}
     </>
   );
+}
+
+function gateStateLabel(state: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  if (state === "passed") return t("status.qualityPass");
+  if (state === "not_run") return t("status.qualityPending");
+  if (state === "warning") return t("status.qualityWarning");
+  if (state === "running") return t("status.qualityRunning");
+  if (state === "blocked" || state === "failed" || state === "stale") return t("export.blocked");
+  return state;
 }
 
 function safeList(value: unknown): string[] {
