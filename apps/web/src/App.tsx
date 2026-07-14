@@ -43,6 +43,8 @@ import {
   fetchDesignSummary,
   fetchHealth,
   fetchProviderCapabilities,
+  fetchProviderInstallLogs,
+  fetchProviderRegistry,
   fetchProviderSettings,
   forceExportProject,
   generateAgentPackage,
@@ -54,6 +56,11 @@ import {
   listProjects,
   previewUrl,
   putProviderSettings,
+  configureProviderInstall,
+  confirmProviderInstall,
+  prepareProviderInstall,
+  retryProviderInstall,
+  rollbackProviderInstall,
   replaceMedia,
   rerunOcr,
   renderProject,
@@ -86,6 +93,10 @@ import type {
   ProviderCapability,
   ProviderConfig,
   ProviderDefinition,
+  ProviderInstallLog,
+  ProviderInstallPrepareResponse,
+  ProviderRegistryCatalog,
+  ProviderRegistryStatus,
   ProjectState,
   ProjectSummary,
   SlideComponent,
@@ -269,6 +280,7 @@ function useNativeDialog(dialogRef: RefObject<HTMLDialogElement | null>, onClose
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         closeRef.current();
         return;
       }
@@ -336,6 +348,7 @@ export function App() {
   const [userEditedFields, setUserEditedFields] = useState<Set<string>>(new Set());
   const [providerConfig, setProviderConfig] = useState<ProviderConfig>(() => readStoredProviderConfig());
   const [providerCatalog, setProviderCatalog] = useState<ProviderDefinition[]>([]);
+  const [providerRegistry, setProviderRegistry] = useState<ProviderRegistryCatalog | null>(null);
   const [recentProjects, setRecentProjects] = useState<ProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [healthStatus, setHealthStatus] = useState<"unknown" | "online" | "offline">("unknown");
@@ -477,7 +490,14 @@ export function App() {
     fetchProviderCapabilities()
       .then(setProviderCatalog)
       .catch(() => setProviderCatalog([]));
+    fetchProviderRegistry()
+      .then(setProviderRegistry)
+      .catch(() => setProviderRegistry(null));
   }, []);
+
+  const refreshProviderRegistry = () => {
+    void fetchProviderRegistry().then(setProviderRegistry).catch(() => setProviderRegistry(null));
+  };
 
   useEffect(() => {
     if (!project?.project_id) {
@@ -1283,6 +1303,8 @@ export function App() {
         <ModelSettingsModal
           config={providerConfig}
           catalog={providerCatalog}
+          registry={providerRegistry}
+          onRegistryRefresh={refreshProviderRegistry}
           synced={settingsSynced}
           error={providerSaveError}
           onChange={(next) => {
@@ -1695,9 +1717,244 @@ function CapabilityConfigPanel({
   );
 }
 
+function registryBlockerLabel(code: string, t: (key: string) => string): string {
+  if (code === "platform_unsupported" || code === "architecture_unsupported") return t("provider.registry.blocker.platform");
+  if (code === "disk_space_insufficient") return t("provider.registry.blocker.disk");
+  if (code === "configuration_required" || code === "provider_configuration_missing") return t("provider.registry.blocker.configuration");
+  return t("provider.registry.blocker.generic");
+}
+
+function RegistryInstallConfirmDialog({
+  prepared,
+  onCancel,
+  onConfirm,
+}: {
+  prepared: ProviderInstallPrepareResponse;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [busy, setBusy] = useState(false);
+  useNativeDialog(dialogRef, onCancel);
+
+  async function confirm() {
+    setBusy(true);
+    try {
+      await onConfirm();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="registryInstallTitle" aria-describedby="registryInstallDescription" aria-modal="true">
+      <section className="confirm-modal">
+        <h2 id="registryInstallTitle">{t("provider.registry.confirmTitle")}</h2>
+        <p id="registryInstallDescription">{t("provider.registry.confirmBody")}</p>
+        <dl className="provider-registry-plan">
+          <div><dt>{t("provider.registry.version")}</dt><dd>{prepared.plan.version}</dd></div>
+          <div><dt>{t("provider.registry.source")}</dt><dd>{prepared.plan.source_ref}</dd></div>
+          <div><dt>{t("provider.registry.checksum")}</dt><dd>{prepared.plan.checksum_sha256.slice(0, 12)}…</dd></div>
+        </dl>
+        <ol className="provider-install-steps">
+          {prepared.plan.steps.map((step) => <li key={step.kind}>{step.label}</li>)}
+        </ol>
+        <div className="action-row">
+          <button type="button" className="secondary" onClick={onCancel} disabled={busy}>{t("provider.registry.cancel")}</button>
+          <button type="button" className="primary" onClick={() => void confirm()} disabled={busy}>
+            {busy ? t("provider.registry.installing") : t("provider.registry.confirm")}
+          </button>
+        </div>
+      </section>
+    </dialog>
+  );
+}
+
+function ProviderRegistryPanel({
+  registry,
+  onRefresh,
+}: {
+  registry: ProviderRegistryCatalog | null;
+  onRefresh: () => void;
+}) {
+  const { t } = useI18n();
+  const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [prepared, setPrepared] = useState<ProviderInstallPrepareResponse | null>(null);
+  const [configValues, setConfigValues] = useState<Record<string, Record<string, string>>>({});
+  const [logs, setLogs] = useState<Record<string, ProviderInstallLog[]>>({});
+  const pendingTriggerRef = useRef<HTMLElement | null>(null);
+
+  if (!registry) return null;
+
+  async function prepare(status: ProviderRegistryStatus, retry = false, trigger?: HTMLElement) {
+    pendingTriggerRef.current = trigger ?? null;
+    setBusyProvider(status.entry.provider_id);
+    setError("");
+    try {
+      const result = retry ? await retryProviderInstall(status.entry.provider_id) : await prepareProviderInstall(status.entry.provider_id);
+      setPrepared(result);
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  async function confirm() {
+    if (!prepared) return;
+    setBusyProvider(prepared.plan.provider_id);
+    setError("");
+    try {
+      await confirmProviderInstall(prepared.plan.provider_id, prepared.plan.plan_id, prepared.confirmation_token);
+      setPrepared(null);
+      onRefresh();
+      window.requestAnimationFrame(() => pendingTriggerRef.current?.focus());
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  function closePrepared() {
+    setPrepared(null);
+    window.requestAnimationFrame(() => pendingTriggerRef.current?.focus());
+  }
+
+  async function configure(status: ProviderRegistryStatus) {
+    const values = configValues[status.entry.provider_id] ?? {};
+    setBusyProvider(status.entry.provider_id);
+    setError("");
+    try {
+      await configureProviderInstall(status.entry.provider_id, values);
+      onRefresh();
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  async function rollback(status: ProviderRegistryStatus) {
+    setBusyProvider(status.entry.provider_id);
+    setError("");
+    try {
+      await rollbackProviderInstall(status.entry.provider_id);
+      onRefresh();
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  async function loadLogs(providerId: string) {
+    setBusyProvider(providerId);
+    try {
+      const nextLogs = await fetchProviderInstallLogs(providerId);
+      setLogs((current) => ({ ...current, [providerId]: nextLogs }));
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  return (
+    <section className="provider-registry" aria-labelledby="providerRegistryTitle">
+      <header className="provider-registry-header">
+        <div>
+          <h3 id="providerRegistryTitle">{t("provider.registry.title")}</h3>
+          <p>{t("provider.registry.subtitle")}</p>
+        </div>
+        <ShieldCheck size={20} aria-hidden="true" />
+      </header>
+      {error && <div className="notice error" role="alert">{error}</div>}
+      <div className="provider-registry-list">
+        {registry.providers.map((status) => {
+          const entry = status.entry;
+          const installation = status.installation;
+          const providerBusy = busyProvider === entry.provider_id;
+          const values = configValues[entry.provider_id] ?? {};
+          const platforms = Array.isArray(entry.requirements.platforms) ? entry.requirements.platforms.join(", ") : "—";
+          const modelFiles = Array.isArray(entry.requirements.model_files) && entry.requirements.model_files.length
+            ? entry.requirements.model_files.join(", ")
+            : "—";
+          return (
+            <article className="provider-registry-card" key={entry.provider_id}>
+              <div className="provider-registry-card-heading">
+                <div>
+                  <h4>{entry.display_name}</h4>
+                  <p>{entry.description}</p>
+                </div>
+                <span className={`provider-registry-state ${installation.install_state}`}>
+                  {t(`provider.registry.state.${installation.install_state}`)}
+                </span>
+              </div>
+              <dl className="provider-registry-meta">
+                <div><dt>{t("provider.registry.source")}</dt><dd>{entry.repository}</dd></div>
+                <div><dt>{t("provider.registry.publisher")}</dt><dd>{entry.publisher}</dd></div>
+                <div><dt>{t("provider.registry.license")}</dt><dd>{entry.license}</dd></div>
+                <div><dt>{t("provider.registry.available")}</dt><dd>{installation.available_version ?? entry.version}</dd></div>
+                <div><dt>{t("provider.registry.installed")}</dt><dd>{installation.installed_version ?? "—"}</dd></div>
+              </dl>
+              <p className="provider-registry-requirements">
+                <strong>{t("provider.registry.requirements")}:</strong> {String(entry.requirements.runtime ?? "isolated environment")} · {t("provider.registry.platform")}: {platforms} · {t("provider.registry.memory")}: {String(entry.requirements.min_memory_mb ?? 0)} MB · {t("provider.registry.disk")}: {String(entry.requirements.min_disk_mb ?? 0)} MB · {t("provider.registry.modelFiles")}: {modelFiles}{Boolean(entry.requirements.api_key_required) && <> · {t("provider.registry.credential")}</>}
+              </p>
+              {entry.mock_only && <p className="provider-registry-mock-note">{t("provider.registry.mockOnly")}</p>}
+              {(status.environment.blockers.length > 0 || installation.blockers.length > 0) && (
+                <ul className="provider-registry-blockers">
+                  {[...status.environment.blockers, ...installation.blockers].map((blocker, index) => (
+                    <li key={`${blocker.code}-${index}`}>{registryBlockerLabel(blocker.code, t)}{blocker.requirement ? ` (${blocker.requirement})` : ""}</li>
+                  ))}
+                </ul>
+              )}
+              {entry.configuration_schema.length > 0 && ["installed", "configuring"].includes(installation.install_state) && (
+                <div className="provider-registry-config">
+                  {entry.configuration_schema.map((field) => (
+                    <label className="field" key={field.key}>
+                      <span>{field.label}{field.required && <span className="required-mark">*</span>}</span>
+                      <input
+                        type={field.type === "password" ? "password" : field.type}
+                        value={values[field.key] ?? ""}
+                        placeholder={field.placeholder ?? ""}
+                        onChange={(event) => setConfigValues((current) => ({ ...current, [entry.provider_id]: { ...values, [field.key]: event.target.value } }))}
+                      />
+                    </label>
+                  ))}
+                  {installation.api_key_present && <p className="muted-text">{t("provider.registry.apiKeyPresent")}</p>}
+                </div>
+              )}
+              <div className="action-row provider-registry-actions">
+                {status.install_actions.includes("prepare_install") && <button type="button" className="primary" disabled={providerBusy} onClick={(event) => void prepare(status, false, event.currentTarget)}>{t("provider.registry.prepare")}</button>}
+                {status.install_actions.includes("retry_install") && <button type="button" className="secondary" disabled={providerBusy} onClick={(event) => void prepare(status, true, event.currentTarget)}>{t("provider.registry.retry")}</button>}
+                {status.install_actions.includes("configure") && <button type="button" className="primary" disabled={providerBusy} onClick={() => void configure(status)}>{t("provider.registry.configure")}</button>}
+                {status.install_actions.includes("rollback") && <button type="button" className="secondary" disabled={providerBusy} onClick={() => void rollback(status)}>{t("provider.registry.rollback")}</button>}
+                {status.install_actions.includes("view_logs") && <button type="button" className="secondary" disabled={providerBusy} onClick={() => void loadLogs(entry.provider_id)}>{t("provider.registry.logs")}</button>}
+                {status.install_actions.length === 0 && <button type="button" className="secondary" disabled>{t("provider.registry.noAction")}</button>}
+              </div>
+              {logs[entry.provider_id] && (
+                <details className="provider-registry-logs" open>
+                  <summary>{t("provider.registry.logs")}</summary>
+                  <ol>{logs[entry.provider_id].map((item, index) => <li key={`${item.timestamp}-${index}`}><time>{item.timestamp}</time> {item.message}</li>)}</ol>
+                </details>
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {prepared && <RegistryInstallConfirmDialog prepared={prepared} onCancel={closePrepared} onConfirm={confirm} />}
+    </section>
+  );
+}
+
 function ModelSettingsModal({
   config,
   catalog,
+  registry,
+  onRegistryRefresh,
   onChange,
   onClose,
   synced,
@@ -1705,6 +1962,8 @@ function ModelSettingsModal({
 }: {
   config: ProviderConfig;
   catalog: ProviderDefinition[];
+  registry: ProviderRegistryCatalog | null;
+  onRegistryRefresh: () => void;
   onChange: (next: ProviderConfig) => void;
   onClose: () => void;
   synced?: boolean;
@@ -1768,6 +2027,8 @@ function ModelSettingsModal({
             <CapabilityConfigPanel capability={activeCapability} config={config} catalog={catalog} onChange={onChange} />
           </div>
         </div>
+
+        <ProviderRegistryPanel registry={registry} onRefresh={onRegistryRefresh} />
 
         <p className={`settings-saved-note ${synced ? "ok" : ""}`}>
           {synced ? t("settings.savedToServer") : t("settings.autoSaveNote")}
@@ -2700,6 +2961,9 @@ const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
   [/ocr engine is not available/i, "status.blocker.ocrUnavailable"],
   [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],
   [/project changed elsewhere|revision conflict/i, "status.blocker.revision"],
+  [/platform .* not supported|platform .* requirement/i, "provider.registry.blocker.platform"],
+  [/not enough free disk|disk space/i, "provider.registry.blocker.disk"],
+  [/configuration is required|required field .* is missing/i, "provider.registry.blocker.configuration"],
 ];
 
 function localizeBackendMessage(message: string, t: (key: string, vars?: Record<string, string | number>) => string): string {

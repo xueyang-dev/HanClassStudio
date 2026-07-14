@@ -10,10 +10,14 @@ import type {
   LessonBlueprint,
   LessonProfile,
   OcrStatusResponse,
+  ProviderInstallLog,
+  ProviderInstallPrepareResponse,
+  ProviderInstallResult,
   ProjectState,
   ProviderCapability,
   ProviderConfig,
   ProviderDefinition,
+  ProviderRegistryCatalog,
   ProjectSummary,
   StateFirstTeacherSummary
 } from "./types";
@@ -43,10 +47,16 @@ async function responseError(response: Response): Promise<string> {
     if (typeof body.detail === "string") {
       message = body.detail;
     } else if (body.detail && typeof body.detail === "object") {
-      const detail = body.detail as { message?: unknown; blocking_reasons?: unknown };
+      const detail = body.detail as { message?: unknown; blocking_reasons?: unknown; blockers?: unknown };
       const reasons = Array.isArray(detail.blocking_reasons)
         ? detail.blocking_reasons.filter((item): item is string => typeof item === "string")
         : [];
+      if (Array.isArray(detail.blockers)) {
+        reasons.push(...detail.blockers.map((item) => {
+          if (item && typeof item === "object" && "message" in item && typeof item.message === "string") return item.message;
+          return typeof item === "string" ? item : "";
+        }).filter(Boolean));
+      }
       message = [typeof detail.message === "string" ? detail.message : "", ...reasons]
         .filter(Boolean)
         .join("\n") || message;
@@ -254,6 +264,15 @@ export async function fetchProviderCapabilities(): Promise<ProviderDefinition[]>
       options?: Array<{ value: string; label: string }>;
     }>;
     supported_operations: string[];
+    install_state?: ProviderDefinition["install_state"];
+    installed_version?: string | null;
+    available_version?: string | null;
+    environment_requirements?: Record<string, unknown>;
+    environment_blockers?: ProviderDefinition["environment_blockers"];
+    install_actions?: ProviderDefinition["install_actions"];
+    configuration_status?: ProviderDefinition["configuration_status"];
+    rollback_available?: boolean;
+    failure?: ProviderDefinition["failure"];
   }>>
   ("/api/settings/providers/capabilities");
   return descriptors.map((descriptor) => ({
@@ -270,7 +289,53 @@ export async function fetchProviderCapabilities(): Promise<ProviderDefinition[]>
     experimental: descriptor.experimental,
     unavailable_reason: descriptor.unavailable_reason,
     supported_operations: descriptor.supported_operations,
+    install_state: descriptor.install_state,
+    installed_version: descriptor.installed_version,
+    available_version: descriptor.available_version,
+    environment_requirements: descriptor.environment_requirements,
+    environment_blockers: descriptor.environment_blockers,
+    install_actions: descriptor.install_actions,
+    configuration_status: descriptor.configuration_status,
+    rollback_available: descriptor.rollback_available,
+    failure: descriptor.failure,
   }));
+}
+
+/** Fetch the trusted registry and backend-owned installation lifecycle facts. */
+export async function fetchProviderRegistry(): Promise<ProviderRegistryCatalog> {
+  return request<ProviderRegistryCatalog>("/api/providers/registry");
+}
+
+export async function prepareProviderInstall(providerId: string): Promise<ProviderInstallPrepareResponse> {
+  return request<ProviderInstallPrepareResponse>(`/api/providers/registry/${encodeURIComponent(providerId)}/install/prepare`, { method: "POST" });
+}
+
+export async function confirmProviderInstall(providerId: string, planId: string, confirmationToken: string): Promise<ProviderInstallResult> {
+  return request<ProviderInstallResult>(`/api/providers/registry/${encodeURIComponent(providerId)}/install/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan_id: planId, confirmation_token: confirmationToken }),
+  });
+}
+
+export async function configureProviderInstall(providerId: string, values: Record<string, string>): Promise<ProviderInstallResult> {
+  return request<ProviderInstallResult>(`/api/providers/registry/${encodeURIComponent(providerId)}/configure`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ values }),
+  });
+}
+
+export async function retryProviderInstall(providerId: string): Promise<ProviderInstallPrepareResponse> {
+  return request<ProviderInstallPrepareResponse>(`/api/providers/registry/${encodeURIComponent(providerId)}/install/retry`, { method: "POST" });
+}
+
+export async function rollbackProviderInstall(providerId: string): Promise<ProviderInstallResult> {
+  return request<ProviderInstallResult>(`/api/providers/registry/${encodeURIComponent(providerId)}/rollback`, { method: "POST" });
+}
+
+export async function fetchProviderInstallLogs(providerId: string): Promise<ProviderInstallLog[]> {
+  return request<ProviderInstallLog[]>(`/api/providers/registry/${encodeURIComponent(providerId)}/install/logs`);
 }
 
 /** Persist the provider settings to the backend. */

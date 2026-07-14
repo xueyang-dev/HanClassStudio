@@ -118,3 +118,39 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
   await page.unroute("**/api/settings/providers");
   await expect(providerSaveError).toHaveCount(0);
 });
+
+test("trusted provider registry requires explicit confirmation and keeps dialog focus", async ({ page }) => {
+  await page.goto("/");
+  const onboarding = page.locator("dialog.onboarding-dialog[open]");
+  if (await onboarding.count()) await onboarding.getByRole("button", { name: "跳过", exact: true }).click();
+
+  const trigger = page.getByRole("button", { name: "模型设置", exact: true });
+  await trigger.click();
+  const settings = page.locator("dialog.settings-dialog[open]");
+  const registry = settings.locator(".provider-registry");
+  await expect(registry).toBeVisible();
+  await expect(registry.locator(".provider-registry-card")).toHaveCount(2);
+  await expect(registry).toContainText("HanClassStudio OCR Sandbox");
+  await expect(registry).toContainText("HanClassStudio first-party");
+
+  const prepare = registry.getByRole("button", { name: "生成安装计划" }).first();
+  await prepare.click();
+  const confirmDialog = page.locator("dialog.confirm-dialog[open]");
+  await expect(confirmDialog).toBeVisible();
+  await expect(confirmDialog).toHaveAttribute("aria-describedby", "registryInstallDescription");
+  await expect.poll(() => confirmDialog.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(confirmDialog).toBeHidden();
+  await expect(settings).toBeVisible();
+  await expect(prepare).toBeFocused();
+
+  const installResponse = page.waitForResponse(
+    (response) => response.request().method() === "POST" && response.url().includes("/install/confirm") && response.ok(),
+  );
+  await prepare.click();
+  await page.getByRole("button", { name: "确认安装", exact: true }).click();
+  await installResponse;
+  await expect(registry.locator(".provider-registry-state.available").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+});

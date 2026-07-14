@@ -1989,6 +1989,108 @@ dialog.confirm-dialog {
   gap: 12px;
 }
 
+.provider-registry {
+  display: grid;
+  gap: 14px;
+  margin: 0 24px 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.provider-registry-header,
+.provider-registry-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.provider-registry-header h3,
+.provider-registry-header p,
+.provider-registry-card-heading h4,
+.provider-registry-card-heading p {
+  margin: 0;
+}
+
+.provider-registry-header p,
+.provider-registry-card-heading p,
+.provider-registry-requirements,
+.provider-registry-mock-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.provider-registry-list {
+  display: grid;
+  gap: 12px;
+}
+
+.provider-registry-card {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.provider-registry-state {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.provider-registry-state.available { border-color: var(--success); color: var(--success); }
+.provider-registry-state.failed { border-color: var(--danger); color: var(--danger); }
+.provider-registry-state.installing { border-color: var(--primary); color: var(--primary); }
+
+.provider-registry-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.provider-registry-meta div {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.provider-registry-meta dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.provider-registry-meta dd {
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.provider-registry-requirements,
+.provider-registry-mock-note { margin: 0; }
+.provider-registry-mock-note { color: var(--success); }
+.provider-registry-blockers { margin: 0; padding-inline-start: 18px; color: var(--danger); font-size: 12px; }
+.provider-registry-config { display: grid; gap: 10px; padding-top: 4px; }
+.provider-registry-actions { margin: 0; padding-top: 12px; }
+.provider-registry-plan { display: grid; gap: 6px; margin: 16px 0; }
+.provider-registry-plan div { display: flex; justify-content: space-between; gap: 10px; }
+.provider-registry-plan dt { color: var(--muted); }
+.provider-registry-plan dd { margin: 0; overflow-wrap: anywhere; text-align: end; }
+.provider-install-steps { max-height: 180px; overflow: auto; margin: 0 0 18px; padding-inline-start: 22px; color: var(--muted-strong); font-size: 12px; }
+.provider-registry-logs { border-top: 1px solid var(--line); padding-top: 10px; }
+.provider-registry-logs summary { cursor: pointer; color: var(--muted-strong); font-size: 12px; font-weight: 700; }
+.provider-registry-logs ol { max-height: 180px; overflow: auto; margin: 8px 0 0; padding-inline-start: 20px; color: var(--muted); font-size: 11px; }
+.provider-registry-logs time { margin-inline-end: 6px; color: var(--muted-strong); }
+
 .provider-status-header,
 .provider-list,
 .provider-row,
@@ -2585,6 +2687,14 @@ dialog.confirm-dialog {
 
   .provider-settings-layout {
     display: block;
+  }
+
+  .provider-registry {
+    margin-inline: 18px;
+  }
+
+  .provider-registry-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .capability-tabs {
