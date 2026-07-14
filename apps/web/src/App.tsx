@@ -1,4 +1,4 @@
-import { type ChangeEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Boxes,
@@ -94,7 +94,8 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus } from "./state";
+import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
@@ -117,10 +118,11 @@ function getProviderById(id: string, capability: ProviderCapability, catalog: Pr
 }
 
 function isCapabilityConfigured(config: CapabilityConfig | undefined, capability: ProviderCapability, catalog: ProviderDefinition[]): boolean {
-  if (!config) return false;
-  const def = getProviderById(config.providerId, capability, catalog);
-  if (!def || !def.implemented || !def.available) return false;
-  return def.configured || def.fields.filter((f) => f.required).every((f) => config.values[f.key]?.trim());
+  return providerStatus(config, capability, catalog).configured;
+}
+
+function isCapabilityAvailable(config: CapabilityConfig | undefined, capability: ProviderCapability, catalog: ProviderDefinition[]): boolean {
+  return providerStatus(config, capability, catalog).available;
 }
 
 function readStoredProviderConfig(): ProviderConfig {
@@ -199,6 +201,19 @@ function asStepId(value: string | null | undefined): StepId | undefined {
   return steps.some((step) => step.id === value) ? value as StepId : undefined;
 }
 
+function resolveProjectStage(project: ProjectState, requestedStage?: string | null): StepId {
+  const requested = asStepId(requestedStage);
+  if (requested && getStageAccess(project, requested).viewable) return requested;
+  const current = asStepId(project.current_stage);
+  if (current && getStageAccess(project, current).viewable) return current;
+  return "material";
+}
+
+function requestedProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("project_id");
+}
+
 const emptyProfile: LessonProfile = {
   lesson_title: "",
   subject: "国际中文",
@@ -226,13 +241,79 @@ function readableError(err: unknown, t: (key: string, vars?: Record<string, stri
   if (message.includes("Project needs")) {
     return t("error.incomplete");
   }
-  return message || t("error.fallback");
+  return message ? localizeBackendMessage(message, t) : t("error.fallback");
+}
+
+/** Keep modal keyboard/focus behavior identical for settings, onboarding, and
+ * confirmation dialogs. The native dialog supplies inert background handling;
+ * this hook adds focus restoration and a defensive Tab loop. */
+function useNativeDialog(dialogRef: RefObject<HTMLDialogElement | null>, onClose: () => void) {
+  const closeRef = useRef(onClose);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!dialog.open) dialog.showModal();
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    ));
+    const focusFirst = () => {
+      const first = focusable()[0];
+      (first ?? dialog).focus();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const handleCancel = (event: Event) => {
+      event.preventDefault();
+      closeRef.current();
+    };
+    const previousBodyOverflow = document.body.style.overflow;
+    dialog.addEventListener("keydown", handleKeyDown);
+    dialog.addEventListener("cancel", handleCancel);
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(focusFirst);
+    return () => {
+      dialog.removeEventListener("keydown", handleKeyDown);
+      dialog.removeEventListener("cancel", handleCancel);
+      if (dialog.open) dialog.close();
+      document.body.style.overflow = previousBodyOverflow;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [dialogRef]);
 }
 
 export function App() {
   const { t } = useI18n();
+  const routeProjectId = requestedProjectId();
   const [activeStep, setActiveStep] = useState<StepId>("material");
   const [project, setProject] = useState<ProjectState | null>(null);
+  const [projectLoading, setProjectLoading] = useState(Boolean(routeProjectId));
   const [designSummary, setDesignSummary] = useState<StateFirstTeacherSummary | null>(null);
   const [profile, setProfile] = useState<LessonProfile>(emptyProfile);
   const [blueprint, setBlueprint] = useState<LessonBlueprint | null>(null);
@@ -243,6 +324,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  const [providerSaveError, setProviderSaveError] = useState("");
   const [artifactTree, setArtifactTree] = useState<ArtifactTree | null>(null);
   const [componentRegistry, setComponentRegistry] = useState<ComponentRegistry>({});
   const [ocrStatus, setOcrStatus] = useState<OcrStatusResponse | null>(null);
@@ -265,26 +347,19 @@ export function App() {
   const [forceExportType, setForceExportType] = useState<"html" | "pptx" | null>(null);
   const providerSettingsRef = useRef<BackendProviderSettings | null>(null);
   const settingsLoadedRef = useRef(false);
+  const providerConfigBaselineRef = useRef<string | null>(null);
   const settingsSaveSequenceRef = useRef(0);
   const settingsSaveControllerRef = useRef<AbortController | null>(null);
   const activeProjectIdRef = useRef<string | null>(null);
   const projectLoadSequenceRef = useRef(0);
   const artifactRequestSequenceRef = useRef(0);
 
-  const availableSteps = useMemo<Record<StepId, boolean>>(() => {
-    const canOpen = (stageId: string) => {
-      const state = project?.stages?.find((stage) => stage.stage_id === stageId)?.state;
-      return Boolean(state && state !== "not_started");
-    };
-    return {
-      material: true,
-      profile: canOpen("profile"),
-      design: canOpen("design"),
-      presentation: canOpen("presentation"),
-      quality: canOpen("quality"),
-      delivery: canOpen("delivery") || Boolean(pptxExport),
-    };
-  }, [project, pptxExport]);
+  const stageAccess = useMemo<Record<StepId, StageAccess>>(
+    () => Object.fromEntries(steps.map((step) => [step.id, getStageAccess(project, step.id as WorkflowStageId)])) as Record<StepId, StageAccess>,
+    [project],
+  );
+
+  const canUseAction = (stageId: StepId, action: string) => canUseStageAction(project, stageId as WorkflowStageId, action);
 
   const completedSteps = useMemo<Record<StepId, boolean>>(() => ({
     material: project?.stages?.find((stage) => stage.stage_id === "material")?.state === "completed",
@@ -304,10 +379,10 @@ export function App() {
     getComponentRegistry()
       .then(setComponentRegistry)
       .catch((err) => setError(readableError(err, t)));
-    if (!readOnboardingSeen()) {
+    if (!readOnboardingSeen() && !routeProjectId) {
       setOnboardingOpen(true);
     }
-  }, []);
+  }, [routeProjectId, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -325,17 +400,23 @@ export function App() {
     const params = new URLSearchParams(window.location.search);
     const projectId = params.get("project_id");
     if (projectId) {
+      setProjectLoading(true);
       const loadSequence = ++projectLoadSequenceRef.current;
       activeProjectIdRef.current = projectId;
       void fetchProject(projectId)
         .then((next) => {
           if (cancelled || loadSequence !== projectLoadSequenceRef.current) return;
           updateProject(next);
-          setActiveStep(asStepId(params.get("stage")) ?? asStepId(next.current_stage) ?? "material");
+          setActiveStep(resolveProjectStage(next, params.get("stage")));
         })
         .catch((err) => {
           if (!cancelled) setError(readableError(err, t));
+        })
+        .finally(() => {
+          if (!cancelled) setProjectLoading(false);
         });
+    } else {
+      setProjectLoading(false);
     }
     return () => {
       cancelled = true;
@@ -374,17 +455,20 @@ export function App() {
       .then((backend) => {
         providerSettingsRef.current = backend;
         const fromBackend = backendToConfig(backend);
-        if (Object.keys(fromBackend).length > 0) {
-          setProviderConfig(fromBackend);
-          writeStoredProviderConfig(fromBackend);
-        } else if (Object.keys(providerConfig).length > 0) {
-          // Promote any existing local-only config to the server.
-          putProviderSettings(configToBackend(providerConfig, backend)).catch(() => {});
-        }
+        const initialConfig = Object.keys(fromBackend).length > 0 ? fromBackend : providerConfig;
+        providerConfigBaselineRef.current = providerConfigSnapshot(initialConfig);
+        if (Object.keys(fromBackend).length > 0) setProviderConfig(fromBackend);
+        writeStoredProviderConfig(initialConfig);
         setSettingsSynced(true);
+        settingsLoadedRef.current = true;
       })
-      .catch(() => setSettingsSynced(false))
-      .finally(() => {
+      .catch(() => {
+        // Do not promote browser-only settings while the backend is unavailable.
+        // Mark the load attempt complete so a later, explicit field edit can
+        // retry the save through the normal debounced path without causing an
+        // initialization PUT.
+        providerConfigBaselineRef.current = providerConfigSnapshot(providerConfig);
+        setSettingsSynced(false);
         settingsLoadedRef.current = true;
       });
   }, []);
@@ -400,15 +484,25 @@ export function App() {
       setDesignSummary(null);
       return;
     }
+    // A ready/not-started design stage has no State-first artifacts yet. Do not
+    // probe the summary endpoint in that state: the backend correctly returns
+    // 404 for an unavailable summary, but a request for an expected empty state
+    // would still surface as a browser console error.
+    if (!shouldFetchDesignSummary(project)) {
+      setDesignSummary(null);
+      return;
+    }
     fetchDesignSummary(project.project_id)
       .then(setDesignSummary)
       .catch(() => setDesignSummary(null));
-  }, [project?.project_id, project?.project_revision]);
+  }, [project?.project_id, project?.project_revision, project?.stages]);
 
   // Persist provider settings to the backend whenever they change (best-effort,
   // debounced, and skipped until the initial load has resolved).
   useEffect(() => {
     if (!settingsLoadedRef.current) return;
+    const snapshot = providerConfigSnapshot(providerConfig);
+    if (!shouldPersistProviderConfig(providerConfig, providerConfigBaselineRef.current, settingsLoadedRef.current)) return;
     const sequence = ++settingsSaveSequenceRef.current;
     settingsSaveControllerRef.current?.abort();
     const controller = new AbortController();
@@ -419,6 +513,8 @@ export function App() {
         .then((next) => {
           if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           providerSettingsRef.current = next;
+          providerConfigBaselineRef.current = snapshot;
+          setProviderSaveError("");
           setSettingsSynced(true);
           return fetchProviderCapabilities().then((catalog) => {
             if (isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) setProviderCatalog(catalog);
@@ -427,7 +523,7 @@ export function App() {
         .catch((error: unknown) => {
           if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           setSettingsSynced(false);
-          setError(error instanceof Error ? error.message : String(error));
+          setProviderSaveError(readableError(error, t));
         });
     }, 400);
     return () => {
@@ -489,16 +585,20 @@ export function App() {
   async function openProject(projectId: string, stage?: string) {
     const loadSequence = ++projectLoadSequenceRef.current;
     activeProjectIdRef.current = projectId;
+    setProject(null);
+    setProfile(emptyProfile);
+    setProjectLoading(true);
     setBusy(t("busy.openingProject"));
     setError("");
     try {
       const next = await fetchProject(projectId);
       if (loadSequence !== projectLoadSequenceRef.current) return;
       updateProject(next);
-      setActiveStep(asStepId(stage) ?? asStepId(next.current_stage) ?? "material");
+      setActiveStep(resolveProjectStage(next, stage));
     } catch (err) {
       setError(readableError(err, t));
     } finally {
+      setProjectLoading(false);
       setBusy("");
     }
   }
@@ -585,7 +685,10 @@ export function App() {
   }
 
   async function handleRerunOcr(engine?: string) {
-    if (!project) return;
+    if (!project || !canUseAction("material", "rerun_ocr")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("ocr.busy"));
     setError("");
     try {
@@ -599,7 +702,10 @@ export function App() {
   }
 
   async function handleReviewMedia(assetId: string, state: string, candidateId?: string) {
-    if (!project) return;
+    if (!project || !canUseAction("quality", "review_media")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.reviewingMedia"));
     setError("");
     try {
@@ -613,7 +719,10 @@ export function App() {
   }
 
   async function handleReplaceMedia(assetId: string, file: File) {
-    if (!project) return;
+    if (!project || !canUseAction("quality", "replace_media")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.replacingMedia"));
     setError("");
     try {
@@ -627,12 +736,18 @@ export function App() {
   }
 
   async function handleForceRegenerateMedia() {
-    if (!project) return;
+    if (!project || !canUseAction("presentation", "generate_media")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     await run(t("busy.regeneratingMedia"), () => generateMedia(project.project_id, true, project.project_revision), "quality");
   }
 
   async function handleSaveProfile(nextStep?: StepId) {
-    if (!project) return;
+    if (!project || !canUseAction("profile", "confirm_profile")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     await run(
       t("busy.savingProfile"),
       async () => {
@@ -644,7 +759,10 @@ export function App() {
   }
 
   async function handleRunFullPipeline() {
-    if (!project) return;
+    if (!project || !canUseAction("design", "run_pipeline")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.generating"));
     setError("");
     setPipelineSteps(markPipelineStep("pipeline.contract"));
@@ -676,7 +794,10 @@ export function App() {
   }
 
   async function handleForceExport() {
-    if (!project) return;
+    if (!project || !canUseAction("delivery", "force_export") || !gateSummary?.force_export_allowed) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.exporting"));
     setError("");
     try {
@@ -691,7 +812,11 @@ export function App() {
   }
 
   async function handleEditablePptxExport(force = false) {
-    if (!project) return;
+    const action = force ? "force_export" : "export";
+    if (!project || !canUseAction("delivery", action) || (force ? !gateSummary?.force_export_allowed : !gateSummary?.export_allowed)) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(force ? t("busy.exportingPptxForce") : t("busy.exportingPptx"));
     setError("");
     try {
@@ -706,7 +831,10 @@ export function App() {
   }
 
   async function handleGenerateAgentPackage() {
-    if (!project) return;
+    if (!project || !canUseAction("delivery", "agent_package")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.agentPackage"));
     setError("");
     try {
@@ -722,7 +850,10 @@ export function App() {
   }
 
   async function handleValidateAgentOutput() {
-    if (!project) return;
+    if (!project || !canUseAction("delivery", "agent_validate")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.agentValidate"));
     setError("");
     try {
@@ -754,7 +885,14 @@ export function App() {
   const exportBlocked = Boolean(project && gateSummary && !gateSummary.export_allowed);
   const issueCount = safeList(gateSummary?.blocking_reasons).length + safeList(gateSummary?.warnings).length;
   const profileConfirmed = project?.profile_state === "confirmed";
-  const canRunPipeline = Boolean(project?.project_id && profileConfirmed && !busy);
+  const canRunPipeline = Boolean(
+    project?.project_id
+      && profileConfirmed
+      && !busy
+      && canUseAction("profile", "confirm_profile")
+      && canUseAction("design", "run_pipeline"),
+  );
+  const nextWorkflowAction = getNextWorkflowAction(project);
   const qualityLabel = gateStateLabel(qualityState, t);
 
   return (
@@ -772,16 +910,18 @@ export function App() {
         <nav className="step-list" aria-label={t("nav.workflow")}>
           {steps.map((step) => {
             const Icon = step.icon;
-            const available = availableSteps[step.id];
+            const access = stageAccess[step.id];
             return (
               <button
                 key={step.id}
                 type="button"
                 className={activeStep === step.id ? "active" : ""}
-                aria-disabled={!available}
-                title={!available ? t("nav.locked") : undefined}
+                aria-current={activeStep === step.id ? "step" : undefined}
+                aria-disabled={!access.viewable || undefined}
+                disabled={!access.viewable}
+                title={!access.viewable ? t("nav.locked") : undefined}
                 onClick={() => {
-                  if (available) {
+                  if (access.viewable) {
                     setActiveStep(step.id);
                     setNavNotice("");
                   } else {
@@ -804,13 +944,15 @@ export function App() {
         <header className="topbar">
           <div className="topbar-title">
             <p className="eyebrow">{t("topbar.eyebrow")}</p>
-            <h1>{profile.lesson_title || t("topbar.newLesson")}</h1>
+            <h1>{projectLoading ? <span className="skeleton-line skeleton-line-title" aria-hidden="true" /> : profile.lesson_title || t("topbar.newLesson")}</h1>
           </div>
           <div className="topbar-aside">
             <details className="project-status-menu">
-              <summary>
+              <summary aria-label={projectLoading ? t("status.loadingProject") : project ? qualityLabel : t("status.ready")}>
                 <ShieldCheck size={17} aria-hidden="true" />
-                {project ? t("status.quality", { state: qualityLabel }) : t("status.ready")}
+                <span className="project-status-label">
+                  {projectLoading ? t("status.loadingProject") : project ? qualityLabel : t("status.ready")}
+                </span>
                 <ChevronDown size={16} aria-hidden="true" />
               </summary>
               <div>
@@ -842,6 +984,8 @@ export function App() {
           </div>
         </header>
 
+        <MobileWorkflowNav activeStep={activeStep} stageAccess={stageAccess} onChange={setActiveStep} />
+
         {error && <div className="notice error">{error}</div>}
         {navNotice && <div className="notice">{navNotice}</div>}
         <PipelineStatus steps={pipelineSteps} />
@@ -852,9 +996,11 @@ export function App() {
           </div>
         )}
 
-        {activeStep === "material" && (
+        {projectLoading ? (
+          <ProjectLoadingSkeleton />
+        ) : activeStep === "material" && (
           <section className="panel">
-            <PanelHeader icon={<FileUp size={22} />} title={t("panel.upload.title")} action={t("panel.upload.action")} />
+            <PanelHeader icon={<FileUp size={22} />} title={t("panel.upload.title")} action={t("panel.upload.action")} state={stageAccess.material.state} />
             <label className="upload-zone">
               <FileUp size={34} aria-hidden="true" />
               <span>{t("upload.choose")}</span>
@@ -863,7 +1009,7 @@ export function App() {
             {project?.source_material && (
               <>
                 <SourcePreview project={project} />
-                <OcrRerunPanel project={project} ocrStatus={ocrStatus} onRerun={handleRerunOcr} busy={Boolean(busy)} />
+                <OcrRerunPanel project={project} ocrStatus={ocrStatus} onRerun={handleRerunOcr} busy={Boolean(busy)} canRerun={canUseAction("material", "rerun_ocr")} />
               </>
             )}
           </section>
@@ -871,8 +1017,8 @@ export function App() {
 
         {activeStep === "profile" && (
           <section className="panel">
-            <PanelHeader icon={<UsersRound size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} />
-            <ProfileForm profile={profile} onChange={handleProfileChange} autoFilledFields={autoFilledFields} userEditedFields={userEditedFields} />
+            <PanelHeader icon={<UsersRound size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} state={stageAccess.profile.state} />
+            <ProfileForm profile={profile} onChange={handleProfileChange} editable={stageAccess.profile.editable} autoFilledFields={autoFilledFields} userEditedFields={userEditedFields} />
             <fieldset className="field-group">
               <legend>{t("mode.legend")}</legend>
               <div className="segmented-grid">
@@ -881,6 +1027,7 @@ export function App() {
                     key={mode.value}
                     type="button"
                     className={profile.generation_mode === mode.value ? "selected" : ""}
+                    disabled={!stageAccess.profile.editable}
                     onClick={() => setProfile({ ...profile, generation_mode: mode.value })}
                   >
                     <strong>{t(mode.titleKey)}</strong>
@@ -893,6 +1040,7 @@ export function App() {
               <span>{t("mode.scaffoldLabel")}</span>
               <select
                 value={profile.scaffolding_language}
+                disabled={!stageAccess.profile.editable}
                 onChange={(event) => setProfile({ ...profile, scaffolding_language: event.target.value })}
               >
                 {languages.map((language) => (
@@ -906,7 +1054,7 @@ export function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={!project || !!busy}
+                disabled={!project || !!busy || !canUseAction("profile", "confirm_profile")}
                 onClick={() => handleSaveProfile("design")}
               >
                 <Save size={18} aria-hidden="true" />
@@ -918,7 +1066,7 @@ export function App() {
 
         {activeStep === "design" && (
           <section className="panel design-boundary">
-            <PanelHeader icon={<GitBranch size={22} />} title={t("design.title")} action={t("design.action")} />
+            <PanelHeader icon={<GitBranch size={22} />} title={t("design.title")} action={t("design.action")} state={stageAccess.design.state} />
             <div className="state-flow" aria-label={t("design.flowLabel")}>
               <span>{t("design.state")}</span><ChevronRight size={16} /><span>{t("design.goal")}</span><ChevronRight size={16} /><span>{t("design.evidence")}</span><ChevronRight size={16} /><span>{t("design.activity")}</span>
             </div>
@@ -929,24 +1077,24 @@ export function App() {
             <StateFirstSummaryView summary={designSummary} />
             <div className="action-row">
               <button type="button" className="secondary" onClick={() => setActiveStep("profile")}>{t("design.back")}</button>
-              <button type="button" className="primary" disabled={!availableSteps.presentation} onClick={() => setActiveStep("presentation")}>{t("design.continue")}</button>
+              <button type="button" className="primary" disabled={!stageAccess.presentation.viewable} onClick={() => setActiveStep("presentation")}>{t("design.continue")}</button>
             </div>
           </section>
         )}
 
         {activeStep === "presentation" && (
           <section className="panel">
-            <PanelHeader icon={<LayoutTemplate size={22} />} title={t("presentation.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} />
+            <PanelHeader icon={<LayoutTemplate size={22} />} title={t("presentation.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} state={stageAccess.presentation.state} />
             <StageNotice stage={project?.stages?.find((item) => item.stage_id === "presentation")} />
             <p className="production-note">{t("presentation.compatibility")}</p>
             {blueprint ? (
-              <BlueprintEditor blueprint={blueprint} componentRegistry={componentRegistry} componentOptions={componentOptions} onChange={setBlueprint} />
+              <BlueprintEditor blueprint={blueprint} componentRegistry={componentRegistry} componentOptions={componentOptions} editable={stageAccess.presentation.editable} onChange={setBlueprint} />
             ) : (
               <EmptyState text={t("presentation.empty")} />
             )}
             <div className="action-row">
               {!blueprint && (
-                <button type="button" className="primary" disabled={!project || !!busy} onClick={() => project && run(t("busy.generatingOutline"), async () => {
+                  <button type="button" className="primary" disabled={!project || !!busy || !canUseAction("presentation", "generate_blueprint")} onClick={() => project && run(t("busy.generatingOutline"), async () => {
                   const saved = await saveProfile(project.project_id, profile, project.project_revision);
                   return generateBlueprint(project.project_id, saved.project_revision);
                 }, "presentation")}>
@@ -956,7 +1104,7 @@ export function App() {
               <button
                 type="button"
                 className="secondary"
-                disabled={!project || !blueprint || !!busy}
+                disabled={!project || !blueprint || !!busy || !canUseAction("presentation", "edit_blueprint")}
                 onClick={() => project && blueprint && run(t("busy.savingOutline"), () => saveBlueprint(project.project_id, blueprint, project.project_revision))}
               >
                 <Save size={18} aria-hidden="true" />
@@ -965,7 +1113,7 @@ export function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={!project || !blueprint || !!busy}
+                disabled={!project || !blueprint || !!busy || !canUseAction("presentation", "generate_media")}
                 onClick={() =>
                   project &&
                   blueprint &&
@@ -988,14 +1136,20 @@ export function App() {
 
         {activeStep === "quality" && (
           <section className="panel preview-panel">
-            <PanelHeader icon={<MonitorPlay size={22} />} title={t("panel.preview.title")} action={project?.preview_url ? t("panel.preview.actionRendered") : t("panel.preview.actionReady")} />
+            <PanelHeader icon={<MonitorPlay size={22} />} title={t("panel.preview.title")} action={project?.preview_url ? t("panel.preview.actionRendered") : t("panel.preview.actionReady")} state={stageAccess.quality.state} />
             <StageNotice stage={project?.stages?.find((item) => item.stage_id === "quality")} />
+            <WorkflowResolution
+              blockers={safeList(gateSummary?.blocking_reasons)}
+              nextStage={nextWorkflowAction?.stageId as StepId | undefined}
+              activeStage="quality"
+              onNavigate={setActiveStep}
+            />
             <div className="action-row">
               <button
                 type="button"
                 className="secondary"
-                disabled={!project || !!busy}
-                onClick={() => project && run(t("busy.generatingMedia"), () => generateMedia(project.project_id, false, project.project_revision))}
+                disabled={!project || !!busy || nextWorkflowAction?.stageId !== "presentation" || nextWorkflowAction.action !== "generate_media"}
+                onClick={() => project && nextWorkflowAction?.stageId === "presentation" && nextWorkflowAction.action === "generate_media" && run(t("busy.generatingMedia"), () => generateMedia(project.project_id, false, project.project_revision))}
               >
                 <Image size={18} aria-hidden="true" />
                 {t("btn.regenerateMedia")}
@@ -1003,18 +1157,32 @@ export function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={!project || !!busy}
+                disabled={!project || !!busy || nextWorkflowAction?.stageId !== "quality" || nextWorkflowAction.action !== "render"}
                 onClick={() => {
+                  if (!project || nextWorkflowAction?.stageId !== "quality" || nextWorkflowAction.action !== "render") {
+                    setNavNotice(t("status.actionUnavailable"));
+                    return;
+                  }
                   setPreviewError("");
                   setPreviewLoading(true);
-                  project && run(t("busy.rendering"), () => renderProject(project.project_id, project.project_revision));
+                  run(t("busy.rendering"), () => renderProject(project.project_id, project.project_revision));
                 }}
               >
                 <MonitorPlay size={18} aria-hidden="true" />
                 {t("btn.rerender")}
               </button>
             </div>
-            <MediaReviewPanel projectId={project?.project_id} manifest={project?.asset_manifest ?? null} busy={Boolean(busy)} onReview={handleReviewMedia} onReplace={handleReplaceMedia} onForceRegenerate={handleForceRegenerateMedia} />
+            <MediaReviewPanel
+              projectId={project?.project_id}
+              manifest={project?.asset_manifest ?? null}
+              busy={Boolean(busy)}
+              canReview={canUseAction("quality", "review_media")}
+              canReplace={canUseAction("quality", "replace_media")}
+              canRegenerate={canUseAction("presentation", "generate_media")}
+              onReview={handleReviewMedia}
+              onReplace={handleReplaceMedia}
+              onForceRegenerate={handleForceRegenerateMedia}
+            />
             <QualityReportView project={project} />
             {previewUrl(project?.preview_url) ? (
               <div className="preview-frame-wrap">
@@ -1044,33 +1212,39 @@ export function App() {
               <EmptyState text={t("preview.empty")} />
             )}
             <div className="action-row">
-              <button type="button" className="primary" disabled={!project || !gateSummary?.export_allowed} onClick={() => setActiveStep("delivery")}>{t("quality.toDelivery")}</button>
+              <button type="button" className="primary" disabled={!project || !stageAccess.delivery.viewable} onClick={() => setActiveStep("delivery")}>{t("quality.toDelivery")}</button>
             </div>
           </section>
         )}
 
         {activeStep === "delivery" && (
           <section className="panel delivery-panel">
-            <PanelHeader icon={<PackageCheck size={22} />} title={t("delivery.title")} action={t("delivery.action")} />
+            <PanelHeader icon={<PackageCheck size={22} />} title={t("delivery.title")} action={t("delivery.action")} state={stageAccess.delivery.state} />
             <div className={`delivery-gate ${qualityBlocked ? "blocked" : exportBlocked ? "pending" : "pass"}`}>
               <ShieldCheck size={20} aria-hidden="true" />
               <div><strong>{qualityBlocked ? t("export.blocked") : exportBlocked ? qualityLabel : t("status.qualityPass")}</strong><span>{issueCount ? t("status.issues", { n: issueCount }) : qualityLabel}</span></div>
             </div>
+            <WorkflowResolution
+              blockers={safeList(gateSummary?.blocking_reasons)}
+              nextStage={nextWorkflowAction?.stageId as StepId | undefined}
+              activeStage="delivery"
+              onNavigate={setActiveStep}
+            />
             <div className="export-format-grid" role="radiogroup" aria-label={t("delivery.format") }>
               <button type="button" role="radio" aria-checked={exportFormat === "html"} className={exportFormat === "html" ? "export-format-card selected" : "export-format-card"} onClick={() => setExportFormat("html")}>
-                <FileArchive size={24} /><strong>{t("delivery.html")}</strong><span>{t("delivery.htmlDetail")}</span>
+                <FileArchive size={24} /><strong>{t("delivery.html")}</strong><span>{t("delivery.htmlDetail")}</span>{exportFormat === "html" && <CheckCircle2 size={16} aria-label={t("delivery.selected")} />}
               </button>
               <button type="button" role="radio" aria-checked={exportFormat === "pptx"} className={exportFormat === "pptx" ? "export-format-card selected" : "export-format-card"} onClick={() => setExportFormat("pptx")}>
-                <LayoutTemplate size={24} /><strong>{t("delivery.pptx")}</strong><span>{t("delivery.pptxDetail")}</span>
+                <LayoutTemplate size={24} /><strong>{t("delivery.pptx")}</strong><span>{t("delivery.pptxDetail")}</span>{exportFormat === "pptx" && <CheckCircle2 size={16} aria-label={t("delivery.selected")} />}
               </button>
             </div>
             <div className="action-row">
               {exportFormat === "html" ? (
-                <a className={project?.export_url && gateSummary?.export_allowed ? "download-link" : "download-link disabled"} href={project?.export_url && gateSummary?.export_allowed ? exportUrl(project.project_id) : undefined} aria-disabled={!project?.export_url || !gateSummary?.export_allowed}>
+                <a className={project?.export_url && gateSummary?.export_allowed && canUseAction("delivery", "export") ? "download-link" : "download-link disabled"} href={project?.export_url && gateSummary?.export_allowed && canUseAction("delivery", "export") ? exportUrl(project.project_id) : undefined} aria-disabled={!project?.export_url || !gateSummary?.export_allowed || !canUseAction("delivery", "export")}>
                   <ArrowDownToLine size={18} />{project?.export_url ? t("btn.downloadZip") : t("export.waiting")}
                 </a>
               ) : (
-                <button type="button" className="primary" disabled={!project || !!busy || !gateSummary?.export_allowed} onClick={() => handleEditablePptxExport(false)}>
+                <button type="button" className="primary" disabled={!project || !!busy || !gateSummary?.export_allowed || !canUseAction("delivery", "export")} onClick={() => handleEditablePptxExport(false)}>
                   <ArrowDownToLine size={18} />{t("btn.exportPptx")}
                 </button>
               )}
@@ -1079,13 +1253,27 @@ export function App() {
               <summary>{t("delivery.more")}</summary>
               <p>{t("export.note")}</p>
               <div className="action-row">
-                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed} onClick={() => setForceExportType("html")}>{t("btn.forceExport")}</button>
-                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed} onClick={() => setForceExportType("pptx")}>{t("btn.forceExportPptx")}</button>
+                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed || !canUseAction("delivery", "force_export")} onClick={() => setForceExportType("html")}>{t("btn.forceExport")}</button>
+                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed || !canUseAction("delivery", "force_export")} onClick={() => setForceExportType("pptx")}>{t("btn.forceExportPptx")}</button>
               </div>
             </details>
-            <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
-            <AgentHandoffPanel project={project} agentPackage={agentPackage} validation={agentValidation} copied={agentCopied} busy={Boolean(busy)} onGenerate={handleGenerateAgentPackage} onCopy={handleCopyAgentTask} onValidate={handleValidateAgentOutput} />
-            <ArtifactInspector tree={artifactTree} />
+            <details className="advanced-details">
+              <summary>{t("delivery.advanced")}</summary>
+              <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
+              <AgentHandoffPanel
+                project={project}
+                agentPackage={agentPackage}
+                validation={agentValidation}
+                copied={agentCopied}
+                busy={Boolean(busy)}
+                canGenerate={canUseAction("delivery", "agent_package")}
+                canValidate={canUseAction("delivery", "agent_validate")}
+                onGenerate={handleGenerateAgentPackage}
+                onCopy={handleCopyAgentTask}
+                onValidate={handleValidateAgentOutput}
+              />
+              <ArtifactInspector tree={artifactTree} />
+            </details>
             {project?.export_url && gateSummary?.export_allowed && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.ready")}</span><a href={exportUrl(project.project_id)}>HanClassStudio_Output_*.zip</a></div>}
             {pptxExport && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.pptxReady")}</span><a href={previewUrl(pptxExport.download_url) ?? undefined}>{pptxExport.filename}</a></div>}
           </section>
@@ -1096,6 +1284,7 @@ export function App() {
           config={providerConfig}
           catalog={providerCatalog}
           synced={settingsSynced}
+          error={providerSaveError}
           onChange={(next) => {
             setProviderConfig(next);
             writeStoredProviderConfig(next);
@@ -1104,21 +1293,20 @@ export function App() {
         />
       )}
       {forceExportType && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="forceExportTitle">
-            <h2 id="forceExportTitle">{t("delivery.forceTitle")}</h2>
-            <p>{t("delivery.forceBody", { n: issueCount })}</p>
-            <div className="action-row">
-              <button type="button" className="secondary" onClick={() => setForceExportType(null)}>{t("delivery.cancel")}</button>
-              <button type="button" className="danger-button filled" onClick={async () => {
-                const type = forceExportType;
-                setForceExportType(null);
-                if (type === "html") await handleForceExport();
-                else await handleEditablePptxExport(true);
-              }}>{t("delivery.confirmForce")}</button>
-            </div>
-          </section>
-        </div>
+        <ForceExportDialog
+          type={forceExportType}
+          issueCount={issueCount}
+          project={project}
+          busy={Boolean(busy)}
+          gateSummary={gateSummary}
+          canExport={canUseAction("delivery", "force_export")}
+          onCancel={() => setForceExportType(null)}
+          onConfirm={async (type) => {
+            setForceExportType(null);
+            if (type === "html") await handleForceExport();
+            else await handleEditablePptxExport(true);
+          }}
+        />
       )}
       {onboardingOpen && (
         <OnboardingWizard
@@ -1173,10 +1361,40 @@ function RecentProjects({
           title={item.source_filename ?? item.project_id}
         >
           <span>{item.source_filename || item.project_id}</span>
-          <small>{item.current_stage}</small>
+          <small>{stageTitleLabel(item.current_stage, t)}</small>
         </button>
       )) : <p>{t("project.noRecent")}</p>}
     </section>
+  );
+}
+
+function MobileWorkflowNav({
+  activeStep,
+  stageAccess,
+  onChange,
+}: {
+  activeStep: StepId;
+  stageAccess: Record<StepId, StageAccess>;
+  onChange: (step: StepId) => void;
+}) {
+  const { t } = useI18n();
+  const index = steps.findIndex((step) => step.id === activeStep);
+  const previous = [...steps.slice(0, index)].reverse().find((step) => stageAccess[step.id].viewable);
+  const next = steps.slice(index + 1).find((step) => stageAccess[step.id].viewable);
+  return (
+    <nav className="mobile-workflow" aria-label={t("nav.workflow")}>
+      <button type="button" className="secondary small-button" disabled={!previous} onClick={() => previous && onChange(previous.id)}>
+        <ChevronRight size={16} className="mobile-workflow-prev-icon" aria-hidden="true" />
+        {t("mobileWorkflow.previous")}
+      </button>
+      <div className="mobile-workflow-current" aria-live="polite">
+        <strong>{t("mobileWorkflow.step", { n: index + 1, stage: stageTitleLabel(activeStep, t) })}</strong>
+      </div>
+      <button type="button" className="secondary small-button" disabled={!next} onClick={() => next && onChange(next.id)}>
+        {t("mobileWorkflow.next")}
+        <ChevronRight size={16} aria-hidden="true" />
+      </button>
+    </nav>
   );
 }
 
@@ -1284,6 +1502,7 @@ function ProviderStatusPanel({
   const { t } = useI18n();
   const total = CAPABILITY_ORDER.length;
   const configured = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
+  const available = CAPABILITY_ORDER.filter((c) => isCapabilityAvailable(config[c], c, catalog)).length;
 
   return (
     <section className="provider-status" aria-label={t("provider.title")}>
@@ -1298,7 +1517,7 @@ function ProviderStatusPanel({
         </div>
         <div className="provider-summary-text">
           <strong>{t("provider.title")}</strong>
-          <span>{t("provider.summary", { configured, total })}</span>
+          <span>{t("provider.summary", { configured, available, total })}</span>
         </div>
         <Settings2 size={18} aria-hidden="true" />
       </button>
@@ -1392,7 +1611,16 @@ function CapabilityConfigPanel({
     <div className="capability-config-panel">
       <div className="deploy-mode">
         <span className="deploy-mode-label">{t("provider.deployMode")}</span>
-        <div className="segmented-toggle" role="group" aria-label={t("provider.deployMode")}>
+        <select
+          className="deploy-mode-native-select"
+          value={mode}
+          onChange={(event) => switchMode(event.target.value as "local" | "cloud")}
+          aria-label={t("provider.deployMode")}
+        >
+          <option value="local">{t("provider.mode.local")}</option>
+          <option value="cloud">{t("provider.mode.cloud")}</option>
+        </select>
+        <div className="segmented-toggle deploy-mode-toggle" role="group" aria-label={t("provider.deployMode")}>
           <button
             type="button"
             className={mode === "local" ? "active" : ""}
@@ -1428,7 +1656,7 @@ function CapabilityConfigPanel({
 
       {cfg && (!selectedProvider || !selectedProvider.implemented || !selectedProvider.available) && (
         <div className="notice error" role="status">
-          {selectedProvider?.unavailable_reason ?? t("provider.unavailable")}
+          {selectedProvider?.unavailable_reason ? localizeBackendMessage(selectedProvider.unavailable_reason, t) : t("provider.unavailable")}
         </div>
       )}
 
@@ -1473,21 +1701,25 @@ function ModelSettingsModal({
   onChange,
   onClose,
   synced,
+  error,
 }: {
   config: ProviderConfig;
   catalog: ProviderDefinition[];
   onChange: (next: ProviderConfig) => void;
   onClose: () => void;
   synced?: boolean;
+  error?: string;
 }) {
   const { t } = useI18n();
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useNativeDialog(dialogRef, onClose);
 
   const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="settings-modal provider-settings-modal" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
+    <dialog ref={dialogRef} className="modal-backdrop settings-dialog" aria-labelledby="modelSettingsTitle" aria-describedby="modelSettingsDescription" aria-modal="true">
+      <section className="settings-modal provider-settings-modal">
         <header>
           <div>
             <p className="eyebrow">{t("settings.eyebrow")}</p>
@@ -1497,6 +1729,9 @@ function ModelSettingsModal({
             <X size={20} aria-hidden="true" />
           </button>
         </header>
+
+        <p id="modelSettingsDescription" className="sr-only">{t("settings.autoSaveNote")}</p>
+        {error && <div className="notice error" role="alert" aria-live="assertive">{error}</div>}
 
         <div className="settings-progress">
           <span>{t("provider.configuredCount", { n: configuredCount, total: CAPABILITY_ORDER.length })}</span>
@@ -1544,7 +1779,45 @@ function ModelSettingsModal({
           </button>
         </div>
       </section>
-    </div>
+    </dialog>
+  );
+}
+
+function ForceExportDialog({
+  type,
+  issueCount,
+  project,
+  busy,
+  gateSummary,
+  canExport,
+  onCancel,
+  onConfirm,
+}: {
+  type: "html" | "pptx";
+  issueCount: number;
+  project: ProjectState | null;
+  busy: boolean;
+  gateSummary?: ProjectState["gate_summary"];
+  canExport: boolean;
+  onCancel: () => void;
+  onConfirm: (type: "html" | "pptx") => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useNativeDialog(dialogRef, onCancel);
+  const allowed = Boolean(project && gateSummary?.force_export_allowed && !gateSummary.export_allowed && canExport);
+
+  return (
+    <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="forceExportTitle" aria-describedby="forceExportDescription" aria-modal="true">
+      <section className="confirm-modal" role="alertdialog" aria-modal="true">
+        <h2 id="forceExportTitle">{t("delivery.forceTitle")}</h2>
+        <p id="forceExportDescription">{t("delivery.forceBody", { n: issueCount })}</p>
+        <div className="action-row">
+          <button type="button" className="secondary" onClick={onCancel}>{t("delivery.cancel")}</button>
+          <button type="button" className="danger-button filled" disabled={busy || !allowed} onClick={() => void onConfirm(type)}>{t("delivery.confirmForce")}</button>
+        </div>
+      </section>
+    </dialog>
   );
 }
 
@@ -1566,6 +1839,8 @@ function OnboardingWizard({
   const { t, lang, setLang } = useI18n();
   const [step, setStep] = useState(0);
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useNativeDialog(dialogRef, onClose);
 
   const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
@@ -1584,8 +1859,8 @@ function OnboardingWizard({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+    <dialog ref={dialogRef} className="settings-dialog onboarding-dialog" aria-labelledby="onboardingTitle" aria-describedby="onboardingDescription" aria-modal="true">
+      <section className="settings-modal onboarding-modal">
         <header>
           <div>
             <p className="eyebrow">{t("onboarding.eyebrow")}</p>
@@ -1595,6 +1870,8 @@ function OnboardingWizard({
             <X size={20} aria-hidden="true" />
           </button>
         </header>
+
+        <p id="onboardingDescription" className="sr-only">{t("onboarding.welcome.body")}</p>
 
         <div className="onboarding-steps">
           {steps.map((s, idx) => {
@@ -1726,18 +2003,22 @@ function OnboardingWizard({
           </div>
         )}
       </section>
-    </div>
+    </dialog>
   );
 }
 
-function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; action: string }) {
+function PanelHeader({ icon, title, action, state }: { icon: ReactNode; title: string; action: string; state?: string }) {
+  const { t } = useI18n();
   return (
     <div className="panel-header">
       <div>
         <span className="panel-icon">{icon}</span>
         <h2>{title}</h2>
       </div>
-      <span>{action}</span>
+      <div className="panel-header-meta">
+        <span className="panel-action">{action}</span>
+        {state && <span className={`stage-state stage-state-${state}`}>{stageStateLabel(state, t)}</span>}
+      </div>
     </div>
   );
 }
@@ -1745,11 +2026,13 @@ function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; 
 function ProfileForm({
   profile,
   onChange,
+  editable = true,
   autoFilledFields = new Set(),
   userEditedFields = new Set(),
 }: {
   profile: LessonProfile;
   onChange: (profile: LessonProfile) => void;
+  editable?: boolean;
   autoFilledFields?: Set<string>;
   userEditedFields?: Set<string>;
 }) {
@@ -1793,7 +2076,7 @@ function ProfileForm({
             <label key={String(key)} className={`field ${badge ? `field--${badge}` : ""}`}>
               <span>{t(labelKey)}</span>
               <div className="field-input-wrap">
-                <input value={profile[key]} onChange={(event) => set(key, (event.target as HTMLInputElement).value as never)} />
+                <input disabled={!editable} value={profile[key]} onChange={(event) => set(key, (event.target as HTMLInputElement).value as never)} />
                 {badge === "ai" && <span className="field-badge field-badge--ai" title={t("profile.badge.ai")}>{t("profile.badge.aiLabel")}</span>}
                 {badge === "edited" && <span className="field-badge field-badge--edited" title={t("profile.badge.edited")}>{t("profile.badge.editedLabel")}</span>}
               </div>
@@ -1888,11 +2171,13 @@ function OcrRerunPanel({
   ocrStatus,
   onRerun,
   busy,
+  canRerun,
 }: {
   project: ProjectState;
   ocrStatus: OcrStatusResponse | null;
   onRerun: (engine?: string) => void;
   busy: boolean;
+  canRerun: boolean;
 }) {
   const { t } = useI18n();
   const [engine, setEngine] = useState("auto");
@@ -1912,7 +2197,7 @@ function OcrRerunPanel({
       <div className="ocr-rerun-controls">
         <select
           value={engine}
-          disabled={busy || !canOcr}
+          disabled={busy || !canOcr || !canRerun}
           onChange={(event) => setEngine(event.target.value)}
           aria-label={t("ocr.engineLabel")}
         >
@@ -1923,13 +2208,14 @@ function OcrRerunPanel({
         <button
           type="button"
           className="secondary"
-          disabled={busy || !canOcr}
+          disabled={busy || !canOcr || !canRerun}
           onClick={() => onRerun(engine)}
         >
           <RefreshCw size={16} aria-hidden="true" /> {t("ocr.rerun")}
         </button>
       </div>
       {!canOcr && <p className="ocr-rerun-note">{t("ocr.noEngine")}</p>}
+      {canOcr && !canRerun && <p className="ocr-rerun-note">{t("status.actionUnavailable")}</p>}
     </section>
   );
 }
@@ -1938,11 +2224,13 @@ function BlueprintEditor({
   blueprint,
   componentRegistry,
   componentOptions,
+  editable = true,
   onChange
 }: {
   blueprint: LessonBlueprint;
   componentRegistry: ComponentRegistry;
   componentOptions: string[];
+  editable?: boolean;
   onChange: (blueprint: LessonBlueprint) => void;
 }) {
   const { t } = useI18n();
@@ -2056,7 +2344,7 @@ function BlueprintEditor({
               <span className="slide-number">{slide.id}</span>
               <span>
                 <strong>{slide.title || t("editor.pageFallback", { id: slide.id })}</strong>
-                <small>{slide.slide_type || "页面"} · {slide.layout_variant || "布局"}</small>
+                <small>{slide.slide_type || t("editor.pageDefaultType")} · {slide.layout_variant || t("editor.layoutDefault")}</small>
               </span>
               {isExpanded ? <ChevronDown size={18} aria-hidden="true" /> : <ChevronRight size={18} aria-hidden="true" />}
             </button>
@@ -2064,23 +2352,23 @@ function BlueprintEditor({
               <div className="outline-fields">
                 <label className="field">
                   <span>{t("editor.pageTitle")}</span>
-                  <input value={slide.title} onChange={(event) => updateSlide(index, { title: event.target.value })} />
+                  <input disabled={!editable} value={slide.title} onChange={(event) => updateSlide(index, { title: event.target.value })} />
                 </label>
                 <div className="compact-grid">
                   <label className="field">
                     <span>{t("editor.pageType")}</span>
-                    <input value={slide.slide_type} onChange={(event) => updateSlide(index, { slide_type: event.target.value })} />
+                    <input disabled={!editable} value={slide.slide_type} onChange={(event) => updateSlide(index, { slide_type: event.target.value })} />
                   </label>
                   <label className="field">
                     <span>{t("editor.layout")}</span>
-                    <input value={slide.layout_variant} onChange={(event) => updateSlide(index, { layout_variant: event.target.value })} />
+                    <input disabled={!editable} value={slide.layout_variant} onChange={(event) => updateSlide(index, { layout_variant: event.target.value })} />
                   </label>
                 </div>
 
                 <section className="editor-section">
                   <div className="editor-section-header">
                     <h3>{t("editor.contentBlocks")}</h3>
-                    <button type="button" className="secondary small-button" onClick={() => addContentBlock(index)}>
+                    <button type="button" className="secondary small-button" disabled={!editable} onClick={() => addContentBlock(index)}>
                       <Plus size={16} aria-hidden="true" />
                       {t("editor.addContent")}
                     </button>
@@ -2090,21 +2378,22 @@ function BlueprintEditor({
                       <div className="compact-grid">
                         <label className="field">
                           <span>{t("editor.blockType")}</span>
-                          <input value={block.block_type} onChange={(event) => updateContentBlock(index, blockIndex, { block_type: event.target.value })} />
+                          <input disabled={!editable} value={block.block_type} onChange={(event) => updateContentBlock(index, blockIndex, { block_type: event.target.value })} />
                         </label>
-                        <button type="button" className="icon-text danger" onClick={() => removeContentBlock(index, blockIndex)}>
+                        <button type="button" className="icon-text danger" disabled={!editable} onClick={() => removeContentBlock(index, blockIndex)}>
                           <Trash2 size={16} aria-hidden="true" />
                           {t("editor.deleteContent")}
                         </button>
                       </div>
                       <label className="field">
                         <span>{t("editor.chineseContent")}</span>
-                        <textarea value={block.text} onChange={(event) => updateContentBlock(index, blockIndex, { text: event.target.value })} />
+                        <textarea readOnly={!editable} value={block.text} onChange={(event) => updateContentBlock(index, blockIndex, { text: event.target.value })} />
                       </label>
                       <label className="field">
                         <span>{t("editor.scaffold")}</span>
                         <textarea
                           value={block.scaffolding_text}
+                          readOnly={!editable}
                           onChange={(event) => updateContentBlock(index, blockIndex, { scaffolding_text: event.target.value })}
                         />
                       </label>
@@ -2118,17 +2407,19 @@ function BlueprintEditor({
                     <span>{t("editor.imagePrompt")}</span>
                     <textarea
                       value={slide.media_requirements.image_prompt ?? ""}
+                      readOnly={!editable}
                       onChange={(event) => updateMedia(index, "image_prompt", event.target.value)}
                     />
                   </label>
                   <div className="compact-grid">
                     <label className="field">
                       <span>{t("editor.audioText")}</span>
-                      <input value={slide.media_requirements.audio_text ?? ""} onChange={(event) => updateMedia(index, "audio_text", event.target.value)} />
+                    <input readOnly={!editable} value={slide.media_requirements.audio_text ?? ""} onChange={(event) => updateMedia(index, "audio_text", event.target.value)} />
                     </label>
                     <label className="field">
                       <span>{t("editor.videoPrompt")}</span>
                       <input
+                        readOnly={!editable}
                         value={slide.media_requirements.video_scene_prompt ?? ""}
                         onChange={(event) => updateMedia(index, "video_scene_prompt", event.target.value)}
                       />
@@ -2142,6 +2433,7 @@ function BlueprintEditor({
                     <select
                       aria-label={t("editor.addComponent")}
                       defaultValue=""
+                      disabled={!editable}
                       onChange={(event) => {
                         if (!event.target.value) return;
                         addComponent(index, event.target.value);
@@ -2167,6 +2459,7 @@ function BlueprintEditor({
                               <span>{t("editor.componentType")}</span>
                               <select
                                 value={component.component_type}
+                                disabled={!editable}
                                 onChange={(event) => updateComponent(index, componentIndex, { component_type: event.target.value })}
                               >
                                 {componentOptions.map((type) => (
@@ -2178,10 +2471,10 @@ function BlueprintEditor({
                             </label>
                             <label className="field">
                               <span>{t("editor.componentTitle")}</span>
-                              <input value={component.title} onChange={(event) => updateComponent(index, componentIndex, { title: event.target.value })} />
+                              <input disabled={!editable} value={component.title} onChange={(event) => updateComponent(index, componentIndex, { title: event.target.value })} />
                             </label>
                           </div>
-                          <button type="button" className="icon-text danger" onClick={() => removeComponent(index, componentIndex)}>
+                          <button type="button" className="icon-text danger" disabled={!editable} onClick={() => removeComponent(index, componentIndex)}>
                             <Trash2 size={16} aria-hidden="true" />
                             {t("editor.deleteComponent")}
                           </button>
@@ -2231,7 +2524,7 @@ function SpecLockSummary({ specLock }: { specLock: Record<string, unknown> | nul
         <SpecItem label={t("spec.scaffold")} value={stringValue(lesson.scaffolding_language)} />
         <SpecItem label={t("spec.runtime")} value={stringValue(templates.runtime)} />
         <SpecItem label={t("spec.components")} value={allowed} />
-        <SpecItem label={t("spec.quality")} value={qualityPolicySummary(quality)} />
+        <SpecItem label={t("spec.quality")} value={qualityPolicySummary(quality, t)} />
       </div>
     </section>
   );
@@ -2257,8 +2550,8 @@ function ArtifactInspector({ tree }: { tree: ArtifactTree | null }) {
       </div>
       <div className="artifact-grid">
         {tree.groups.map((group) => (
-          <section className="artifact-group" key={group.name}>
-            <h4>{group.name}</h4>
+          <details className="artifact-group" key={group.name}>
+            <summary><span>{group.name}</span><small>{group.items.length}</small></summary>
             <ul>
               {group.items.map((item) => (
                 <li className={item.exists ? "exists" : "missing"} key={item.path}>
@@ -2268,7 +2561,7 @@ function ArtifactInspector({ tree }: { tree: ArtifactTree | null }) {
                 </li>
               ))}
             </ul>
-          </section>
+          </details>
         ))}
       </div>
     </section>
@@ -2281,6 +2574,8 @@ function AgentHandoffPanel({
   validation,
   copied,
   busy,
+  canGenerate,
+  canValidate,
   onGenerate,
   onCopy,
   onValidate
@@ -2290,6 +2585,8 @@ function AgentHandoffPanel({
   validation: AgentValidation | null;
   copied: boolean;
   busy: boolean;
+  canGenerate: boolean;
+  canValidate: boolean;
   onGenerate: () => void;
   onCopy: () => void;
   onValidate: () => void;
@@ -2302,7 +2599,7 @@ function AgentHandoffPanel({
         <span>{agentPackage ? t("agent.subtitle") : t("agent.generate")}</span>
       </div>
       <div className="agent-actions">
-        <button type="button" className="secondary" disabled={!project || busy} onClick={onGenerate}>
+        <button type="button" className="secondary" disabled={!project || busy || !canGenerate} onClick={onGenerate}>
           <FileUp size={16} aria-hidden="true" />
           {t("agent.generate")}
         </button>
@@ -2310,7 +2607,7 @@ function AgentHandoffPanel({
           <Clipboard size={16} aria-hidden="true" />
           {copied ? t("agent.copied") : t("agent.copy")}
         </button>
-        <button type="button" className="primary" disabled={!project || busy} onClick={onValidate}>
+        <button type="button" className="primary" disabled={!project || busy || !canValidate} onClick={onValidate}>
           <CheckCircle2 size={16} aria-hidden="true" />
           {t("agent.validate")}
         </button>
@@ -2326,10 +2623,10 @@ function AgentHandoffPanel({
       )}
       {validation && (
         <div className={`agent-validation ${validation.state}`}>
-          <strong>{t("agent.validation", { state: validation.state })}</strong>
-          <ValidationList title={t("agent.blocking")} items={validation.blocking} empty={t("agent.blocking.empty")} />
-          <ValidationList title={t("agent.warnings")} items={validation.warnings} empty={t("agent.warnings.empty")} />
-          <ValidationList title={t("agent.passed")} items={validation.passed} empty={t("agent.passed.empty")} />
+          <strong>{t("agent.validation", { state: gateStateLabel(validation.state, t) })}</strong>
+          <ValidationList title={t("agent.blocking")} items={localizeMessages(validation.blocking, t)} empty={t("agent.blocking.empty")} />
+          <ValidationList title={t("agent.warnings")} items={localizeMessages(validation.warnings, t)} empty={t("agent.warnings.empty")} />
+          <ValidationList title={t("agent.passed")} items={localizeMessages(validation.passed, t)} empty={t("agent.passed.empty")} />
         </div>
       )}
     </section>
@@ -2342,8 +2639,8 @@ function ValidationList({ title, items, empty }: { title: string; items: string[
       <h4>{title}</h4>
       {items.length ? (
         <ul>
-          {items.map((item) => (
-            <li key={item}>{item}</li>
+          {items.map((item, index) => (
+            <li key={`${item}-${index}`}>{item}</li>
           ))}
         </ul>
       ) : (
@@ -2365,7 +2662,7 @@ function StateFirstSummaryView({ summary }: { summary: StateFirstTeacherSummary 
     <section className="state-first-summary" aria-label={t("design.summaryTitle")}>
       <div className="summary-heading">
         <strong>{t("design.summaryTitle")}</strong>
-        <span>{t("design.alignment", { state: alignmentState })}</span>
+        <span>{t("design.alignment", { state: gateStateLabel(alignmentState, t) })}</span>
       </div>
       <div className="summary-metrics">
         <span><strong>{states}</strong>{t("design.states")}</span>
@@ -2375,8 +2672,8 @@ function StateFirstSummaryView({ summary }: { summary: StateFirstTeacherSummary 
       </div>
       {(summary.blockers.length > 0 || summary.warnings.length > 0) && (
         <div className="summary-issues">
-          {summary.blockers.map((item) => <p className="error-text" key={`blocker-${item}`}>{item}</p>)}
-          {summary.warnings.map((item) => <p className="warning-text" key={`warning-${item}`}>{item}</p>)}
+          {localizeMessages(summary.blockers, t).map((item, index) => <p className="error-text" key={`blocker-${item}-${index}`}>{item}</p>)}
+          {localizeMessages(summary.warnings, t).map((item, index) => <p className="warning-text" key={`warning-${item}-${index}`}>{item}</p>)}
         </div>
       )}
     </section>
@@ -2387,19 +2684,91 @@ function arrayLength(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
 }
 
+const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
+  [/blueprint artifact is missing/i, "status.blocker.blueprintMissing"],
+  [/generate a lesson blueprint first|blueprint.*missing/i, "status.blocker.blueprintMissing"],
+  [/render artifact is missing/i, "status.blocker.renderMissing"],
+  [/media artifact is stale|regenerate media before rendering/i, "status.blocker.mediaStale"],
+  [/source material|uploaded source file/i, "status.blocker.sourceMissing"],
+  [/asset manifest/i, "status.blocker.mediaMissing"],
+  [/evidence alignment/i, "status.blocker.evidenceAlignment"],
+  [/presentation readiness/i, "status.blocker.readiness"],
+  [/presentation binding/i, "status.blocker.binding"],
+  [/quality gate/i, "status.blocker.quality"],
+  [/credentials or required configuration are missing/i, "status.blocker.providerConfig"],
+  [/not implemented.*capability|not implemented in the production media pipeline/i, "status.blocker.providerUnavailable"],
+  [/ocr engine is not available/i, "status.blocker.ocrUnavailable"],
+  [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],
+  [/project changed elsewhere|revision conflict/i, "status.blocker.revision"],
+];
+
+function localizeBackendMessage(message: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const trimmed = message.trim();
+  const known = BACKEND_MESSAGE_KEYS.find(([pattern]) => pattern.test(trimmed));
+  if (known) return t(known[1]);
+  return /[^\x00-\x7F]/.test(trimmed) ? trimmed : t("status.blocker.generic");
+}
+
+function localizeMessages(messages: string[], t: (key: string, vars?: Record<string, string | number>) => string): string[] {
+  return messages.map((message) => localizeBackendMessage(message, t));
+}
+
+function stageStateLabel(state: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const knownStates = new Set(["not_started", "ready", "running", "completed", "warning", "blocked", "failed", "stale"]);
+  return knownStates.has(state) ? t(`status.stage.${state}`) : t("status.stage.unknown");
+}
+
+function stageTitleLabel(stageId: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const step = steps.find((item) => item.id === stageId);
+  return step ? t(step.titleKey) : t("status.stage.unknown");
+}
+
+function mediaReviewStateLabel(state: string | null | undefined, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  switch (state) {
+    case "accepted": return t("status.media.accepted");
+    case "rejected": return t("status.media.rejected");
+    case "fallback_accepted": return t("status.media.fallbackAccepted");
+    case "replaced": return t("status.media.replaced");
+    case "pending_review": return t("status.media.pendingReview");
+    default: return t("status.media.pendingReview");
+  }
+}
+
 function StageNotice({ stage }: { stage?: StageStatus }) {
   const { t } = useI18n();
   if (!stage || (!stage.blockers.length && !stage.warnings.length && stage.state !== "stale")) return null;
-  const stateLabel = stage.state === "blocked" || stage.state === "failed" || stage.state === "stale"
-    ? t("export.blocked")
-    : stage.state === "warning"
-      ? t("status.qualityPending")
-      : stage.state;
+  const stateLabel = stageStateLabel(stage.state, t);
   return (
     <div className={`stage-notice ${stage.state === "warning" ? "warning" : "blocked"}`} role="status">
       <strong>{stateLabel}</strong>
-      {stage.blockers.map((item) => <span key={`blocker-${item}`}>{item}</span>)}
-      {stage.warnings.map((item) => <span key={`warning-${item}`}>{item}</span>)}
+      {localizeMessages(stage.blockers, t).map((item, index) => <span key={`blocker-${item}-${index}`}>{item}</span>)}
+      {localizeMessages(stage.warnings, t).map((item, index) => <span key={`warning-${item}-${index}`}>{item}</span>)}
+    </div>
+  );
+}
+
+function WorkflowResolution({
+  blockers,
+  nextStage,
+  activeStage,
+  onNavigate,
+}: {
+  blockers: string[];
+  nextStage?: StepId;
+  activeStage: StepId;
+  onNavigate: (stage: StepId) => void;
+}) {
+  const { t } = useI18n();
+  const messages = localizeMessages(blockers, t);
+  const canNavigate = Boolean(nextStage && nextStage !== activeStage);
+  if (!messages.length && !canNavigate) return null;
+  return (
+    <div className="workflow-resolution" role="status">
+      <div>
+        <strong>{messages.length ? t("export.blocked") : t("status.nextStep", { stage: stageTitleLabel(nextStage!, t) })}</strong>
+        {messages.slice(0, 2).map((message) => <span key={message}>{message}</span>)}
+      </div>
+      {canNavigate && <button type="button" className="secondary small-button" onClick={() => onNavigate(nextStage!)}>{t("status.goResolve")}</button>}
     </div>
   );
 }
@@ -2408,6 +2777,9 @@ function MediaReviewPanel({
   projectId,
   manifest,
   busy,
+  canReview,
+  canReplace,
+  canRegenerate,
   onReview,
   onReplace,
   onForceRegenerate,
@@ -2415,6 +2787,9 @@ function MediaReviewPanel({
   projectId?: string;
   manifest: AssetManifest | null;
   busy: boolean;
+  canReview: boolean;
+  canReplace: boolean;
+  canRegenerate: boolean;
   onReview: (assetId: string, state: string, candidateId?: string) => void;
   onReplace: (assetId: string, file: File) => void;
   onForceRegenerate: () => void;
@@ -2426,13 +2801,13 @@ function MediaReviewPanel({
     <section className="media-review" aria-label={t("media.reviewTitle")}>
       <div className="summary-heading">
         <strong>{t("media.reviewTitle")}</strong>
-        <button type="button" className="secondary small-button" disabled={busy} onClick={onForceRegenerate}>
+        <button type="button" className="secondary small-button" disabled={busy || !canRegenerate} onClick={onForceRegenerate}>
           <RefreshCw size={14} aria-hidden="true" />{t("btn.forceRegenerateMedia")}
         </button>
       </div>
       <div className="media-review-list">
         {assets.map((asset) => (
-          <MediaReviewCard key={asset.id} projectId={projectId} asset={asset} busy={busy} onReview={onReview} onReplace={onReplace} />
+          <MediaReviewCard key={asset.id} projectId={projectId} asset={asset} busy={busy} canReview={canReview} canReplace={canReplace} onReview={onReview} onReplace={onReplace} />
         ))}
       </div>
     </section>
@@ -2443,12 +2818,16 @@ function MediaReviewCard({
   projectId,
   asset,
   busy,
+  canReview,
+  canReplace,
   onReview,
   onReplace,
 }: {
   projectId?: string;
   asset: AssetFile;
   busy: boolean;
+  canReview: boolean;
+  canReplace: boolean;
   onReview: (assetId: string, state: string, candidateId?: string) => void;
   onReplace: (assetId: string, file: File) => void;
 }) {
@@ -2460,18 +2839,18 @@ function MediaReviewCard({
         {asset.kind === "image" && assetUrl ? <img src={assetUrl} alt={asset.prompt || asset.id} /> : <span>{asset.kind.toUpperCase()}</span>}
       </div>
       <div className="media-review-body">
-        <div className="media-review-title"><strong>{asset.id}</strong><span>{asset.review_state || "pending_review"}</span></div>
+        <div className="media-review-title"><strong>{asset.id}</strong><span>{mediaReviewStateLabel(asset.review_state, t)}</span></div>
         <p>{asset.prompt || asset.text || asset.path}</p>
         <div className="media-review-actions">
           {(asset.candidates ?? []).map((candidate) => (
-            <button type="button" className="small-button" key={candidate.id} disabled={busy} onClick={() => onReview(asset.id, candidate.source === "fallback" ? "fallback_accepted" : "accepted", candidate.id)}>
-              {t("media.acceptCandidate", { source: candidate.source })}
+            <button type="button" className="small-button" key={candidate.id} disabled={busy || !canReview} onClick={() => onReview(asset.id, candidate.source === "fallback" ? "fallback_accepted" : "accepted", candidate.id)}>
+              {t("media.acceptCandidate", { source: mediaCandidateSourceLabel(candidate.source, t) })}
             </button>
           ))}
-          <button type="button" className="small-button" disabled={busy} onClick={() => onReview(asset.id, "rejected")}>{t("media.reject")}</button>
-          <label className="small-button file-button">
+          <button type="button" className="small-button" disabled={busy || !canReview} onClick={() => onReview(asset.id, "rejected")}>{t("media.reject")}</button>
+          <label className={`small-button file-button${canReplace ? "" : " disabled"}`} aria-disabled={!canReplace}>
             {t("media.replace")}
-            <input type="file" accept="image/png,image/jpeg" disabled={busy} onChange={(event) => {
+            <input type="file" accept="image/png,image/jpeg" disabled={busy || !canReplace} onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) onReplace(asset.id, file);
               event.currentTarget.value = "";
@@ -2523,15 +2902,15 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
         <section className="gate-summary" aria-label={t("quality.gates") }>
           <div className={`quality-state ${summary.overall_state}`}>
             <strong>{t("quality.title", { state: gateStateLabel(summary.overall_state, t) })}</strong>
-            <span>{summary.export_allowed ? t("export.ready") : t("status.qualityPending")}</span>
+            <span>{summary.export_allowed ? t("export.ready") : gateStateLabel(summary.overall_state, t)}</span>
           </div>
           <div className="gate-grid">
             {gates.map(([title, gate]) => (
               <article className={`gate-card ${gate.state}`} key={title}>
                 <strong>{title}</strong>
                 <span>{gateStateLabel(gate.state, t)}</span>
-                {gate.blocking_reasons.length > 0 && <small>{gate.blocking_reasons.join("；")}</small>}
-                {gate.warnings.length > 0 && <small>{gate.warnings.join("；")}</small>}
+                {gate.blocking_reasons.length > 0 && <small>{localizeMessages(gate.blocking_reasons, t).join("；")}</small>}
+                {gate.warnings.length > 0 && <small>{localizeMessages(gate.warnings, t).join("；")}</small>}
               </article>
             ))}
           </div>
@@ -2541,7 +2920,7 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
       {report && (
         <>
           <div className={`quality-state ${summary?.quality_report.state === "stale" ? "stale" : report.state}`}>
-            <strong>{t("quality.title", { state: summary?.quality_report.state === "stale" ? gateStateLabel("stale", t) : report.state })}</strong>
+            <strong>{t("quality.title", { state: gateStateLabel(summary?.quality_report.state ?? report.state, t) })}</strong>
             <span>{report.schema}</span>
           </div>
           <div className="quality-grid">
@@ -2551,8 +2930,8 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
                 <p>{detail}</p>
                 {items.length ? (
                   <ul>
-                    {items.map((item) => (
-                      <li key={item}>{item}</li>
+                        {localizeMessages(items, t).map((item, index) => (
+                          <li key={`${item}-${index}`}>{item}</li>
                     ))}
                   </ul>
                 ) : (
@@ -2569,12 +2948,13 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
 }
 
 function gateStateLabel(state: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
-  if (state === "passed") return t("status.qualityPass");
-  if (state === "not_run") return t("status.qualityPending");
+  if (state === "passed" || state === "pass") return t("status.qualityPass");
+  if (state === "not_run") return t("status.qualityNotRun");
   if (state === "warning") return t("status.qualityWarning");
   if (state === "running") return t("status.qualityRunning");
-  if (state === "blocked" || state === "failed" || state === "stale") return t("export.blocked");
-  return state;
+  if (state === "blocked" || state === "failed") return t("status.qualityBlocked");
+  if (state === "stale") return t("status.qualityStale");
+  return t("status.stage.unknown");
 }
 
 function safeList(value: unknown): string[] {
@@ -2593,13 +2973,22 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function qualityPolicySummary(policy: Record<string, unknown>): string {
+function qualityPolicySummary(policy: Record<string, unknown>, t: (key: string, vars?: Record<string, string | number>) => string): string {
   const parts = [];
-  if (policy.block_on_missing_files) parts.push("block missing files");
-  if (policy.block_on_missing_interaction_answers) parts.push("block missing answers");
-  if (policy.warn_on_placeholder_media) parts.push("warn placeholders");
-  if (policy.allow_forced_export) parts.push("force export allowed");
+  if (policy.block_on_missing_files) parts.push(t("spec.policy.missingFiles"));
+  if (policy.block_on_missing_interaction_answers) parts.push(t("spec.policy.missingAnswers"));
+  if (policy.warn_on_placeholder_media) parts.push(t("spec.policy.placeholders"));
+  if (policy.allow_forced_export) parts.push(t("spec.policy.forceExport"));
   return parts.join(", ");
+}
+
+function mediaCandidateSourceLabel(source: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  switch (source) {
+    case "generated": return t("media.source.generated");
+    case "fallback": return t("media.source.fallback");
+    case "teacher": return t("media.source.teacher");
+    default: return t("media.source.generated");
+  }
 }
 
 function artifactMeta(item: ArtifactEntry): string {

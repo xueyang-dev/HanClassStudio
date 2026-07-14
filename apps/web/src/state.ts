@@ -1,6 +1,123 @@
-import type { ProjectState, ProviderCapability, ProviderConfig } from "./types";
+import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, StageState } from "./types";
 
 export type PipelineStepStatus = "pending" | "running" | "done" | "error";
+
+export type WorkflowStageId = "material" | "profile" | "design" | "presentation" | "quality" | "delivery";
+
+export interface StageAccess {
+  viewable: boolean;
+  editable: boolean;
+  executable: boolean;
+  state: StageState;
+  availableActions: string[];
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface WorkflowAction {
+  stageId: WorkflowStageId;
+  action: string;
+}
+
+export interface ProviderStatus {
+  configured: boolean;
+  available: boolean;
+}
+
+/** Provider status is derived only from the backend capability catalog. Local
+ * form values are intentionally ignored until the catalog confirms the save. */
+export function providerStatus(
+  config: CapabilityConfig | undefined,
+  capability: ProviderCapability,
+  catalog: ProviderDefinition[],
+): ProviderStatus {
+  const definition = config
+    ? catalog.find((provider) => provider.id === config.providerId && provider.capability === capability)
+    : undefined;
+  return {
+    configured: Boolean(definition?.configured),
+    available: Boolean(definition?.configured && definition.implemented && definition.available),
+  };
+}
+
+const EDITABLE_ACTIONS = new Set([
+  "upload",
+  "rerun_ocr",
+  "infer_profile",
+  "confirm_profile",
+  "edit_blueprint",
+  "generate_blueprint",
+  "generate_media",
+  "review_media",
+  "replace_media",
+  "force_regenerate_media",
+]);
+
+/**
+ * Keep navigation visibility separate from backend-declared operations. A
+ * blocked or not-yet-run stage remains viewable so its explanation can be
+ * inspected, while only actions returned by the backend are executable.
+ */
+export function getStageAccess(project: ProjectState | null, stageId: WorkflowStageId): StageAccess {
+  const stage = project?.stages?.find((item) => item.stage_id === stageId);
+  if (!stage) {
+    return {
+      viewable: stageId === "material",
+      editable: false,
+      executable: false,
+      state: "not_started",
+      availableActions: [],
+      blockers: [],
+      warnings: [],
+    };
+  }
+  const availableActions = Array.isArray(stage.available_actions) ? stage.available_actions : [];
+  return {
+    viewable: true,
+    editable: availableActions.some((action) => EDITABLE_ACTIONS.has(action)),
+    executable: availableActions.length > 0,
+    state: stage.state,
+    availableActions,
+    blockers: stage.blockers ?? [],
+    warnings: stage.warnings ?? [],
+  };
+}
+
+export function canUseStageAction(project: ProjectState | null, stageId: WorkflowStageId, action: string): boolean {
+  const access = getStageAccess(project, stageId);
+  return access.executable && access.availableActions.includes(action);
+}
+
+/** Only ask for the teacher summary after the design stage has produced
+ * authoritative State-first artifacts. A ready/not-started stage is an
+ * expected empty state, not an API error to surface in the browser console. */
+export function shouldFetchDesignSummary(project: ProjectState | null): boolean {
+  const stage = project?.stages?.find((item) => item.stage_id === "design");
+  return Boolean(stage && !stage.stale && ["completed", "warning"].includes(stage.state));
+}
+
+/**
+ * Return one backend-declared action that moves the workflow forward. This is
+ * intentionally a single answer: when an upstream prerequisite is available,
+ * downstream panels should not present several misleading executable buttons.
+ */
+export function getNextWorkflowAction(project: ProjectState | null): WorkflowAction | null {
+  if (!project) return null;
+  const priority: Array<[WorkflowStageId, string[]]> = [
+    ["profile", ["confirm_profile", "infer_profile"]],
+    ["design", ["generate_blueprint", "run_pipeline"]],
+    ["presentation", ["generate_media", "edit_blueprint"]],
+    ["quality", ["render", "run_quality"]],
+    ["delivery", ["export", "force_export"]],
+  ];
+  for (const [stageId, actions] of priority) {
+    const access = getStageAccess(project, stageId);
+    if (access.state === "completed" || access.state === "warning") continue;
+    const action = actions.find((candidate) => access.availableActions.includes(candidate));
+    if (action) return { stageId, action };
+  }
+  return null;
+}
 
 export const PIPELINE_STEP_KEYS = [
   "pipeline.contract",
@@ -26,6 +143,33 @@ export function sanitizeProviderConfig(config: ProviderConfig): ProviderConfig {
     sanitized[capability] = { providerId: value.providerId, values };
   }
   return sanitized;
+}
+
+/** Stable in-memory comparison key for provider edits. It intentionally keeps
+ * credential fields in memory for change detection but is never persisted or
+ * sent to logs/storage by this helper. */
+export function providerConfigSnapshot(config: ProviderConfig): string {
+  const ordered = Object.keys(config)
+    .sort()
+    .reduce<Record<string, unknown>>((result, capability) => {
+      const value = config[capability as ProviderCapability];
+      if (!value) return result;
+      result[capability] = {
+        providerId: value.providerId,
+        values: Object.keys(value.values ?? {})
+          .sort()
+          .reduce<Record<string, string>>((values, key) => {
+            values[key] = value.values[key];
+            return values;
+          }, {}),
+      };
+      return result;
+    }, {});
+  return JSON.stringify(ordered);
+}
+
+export function shouldPersistProviderConfig(config: ProviderConfig, baseline: string | null, loaded: boolean): boolean {
+  return loaded && baseline !== providerConfigSnapshot(config);
 }
 
 export function isCurrentRequest(sequence: number, currentSequence: number, aborted = false): boolean {

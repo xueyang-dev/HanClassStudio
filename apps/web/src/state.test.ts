@@ -1,4 +1,4 @@
-import { exportActionsFromProject, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -61,6 +61,55 @@ equal(renderedButQualityNotRun["pipeline.quality"], "pending");
 const actions = exportActionsFromProject(project);
 deepEqual(actions, { normal: false, force: true, qualityState: "not_run" });
 
+const qualityAccess = getStageAccess(project, "quality");
+equal(qualityAccess.viewable, true);
+equal(qualityAccess.executable, false);
+equal(canUseStageAction(project, "quality", "render"), false);
+equal(getStageAccess(null, "material").viewable, true);
+equal(getStageAccess(null, "quality").viewable, false);
+
+const executableProject = {
+  ...project,
+  stages: project.stages!.map((stage) => stage.stage_id === "quality"
+    ? { ...stage, state: "ready" as const, available_actions: ["render"] }
+    : stage),
+};
+equal(getStageAccess(executableProject, "quality").editable, false);
+equal(canUseStageAction(executableProject, "quality", "render"), true);
+
+const nextActionProject = {
+  ...project,
+  stages: project.stages!.map((stage) => stage.stage_id === "profile"
+    ? { ...stage, state: "ready" as const, available_actions: ["confirm_profile"] }
+    : stage),
+};
+deepEqual(getNextWorkflowAction(nextActionProject), { stageId: "profile", action: "confirm_profile" });
+deepEqual(getNextWorkflowAction(executableProject), { stageId: "quality", action: "render" });
+equal(getNextWorkflowAction(null), null);
+equal(shouldFetchDesignSummary(project), true);
+equal(shouldFetchDesignSummary({ ...project, stages: project.stages!.map((stage) => stage.stage_id === "design" ? { ...stage, state: "ready" as const } : stage) }), false);
+equal(shouldFetchDesignSummary({ ...project, stages: project.stages!.map((stage) => stage.stage_id === "design" ? { ...stage, stale: true } : stage) }), false);
+
+const providerCatalog = [
+  {
+    id: "openai_compatible",
+    name: "OpenAI-compatible",
+    category: "cloud" as const,
+    capability: "llm" as const,
+    description: "",
+    fields: [],
+    implemented: true,
+    configurable: true,
+    configured: false,
+    available: true,
+    experimental: false,
+    supported_operations: ["blueprint"],
+  },
+];
+deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "draft" } }, "llm", providerCatalog), { configured: false, available: false });
+deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "saved" } }, "llm", providerCatalog.map((item) => ({ ...item, configured: true }))), { configured: true, available: true });
+deepEqual(providerStatus({ providerId: "openai_compatible", values: {} }, "llm", providerCatalog.map((item) => ({ ...item, configured: true, available: false }))), { configured: true, available: false });
+
 const notRunExport = exportActionsFromProject({
   ...project,
   gate_summary: {
@@ -78,6 +127,22 @@ deepEqual(persisted, {
   llm: { providerId: "openai_compatible", values: { model: "teacher" } },
   image: { providerId: "placeholder", values: { model: "svg" } },
 });
+
+const providerBaseline = providerConfigSnapshot({
+  llm: { providerId: "deterministic", values: { model: "deterministic-v1", api_key: "" } },
+});
+equal(providerConfigSnapshot({
+  llm: { providerId: "deterministic", values: { api_key: "", model: "deterministic-v1" } },
+}), providerBaseline);
+equal(providerConfigSnapshot({
+  llm: { providerId: "deterministic", values: { model: "teacher-edited", api_key: "" } },
+}) === providerBaseline, false);
+equal(shouldPersistProviderConfig({
+  llm: { providerId: "deterministic", values: { model: "deterministic-v1", api_key: "" } },
+}, providerBaseline, false), false);
+equal(shouldPersistProviderConfig({
+  llm: { providerId: "deterministic", values: { model: "teacher-edited", api_key: "" } },
+}, providerBaseline, true), true);
 
 equal(isCurrentRequest(2, 2), true);
 equal(isCurrentRequest(1, 2), false);

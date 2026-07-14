@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -182,6 +183,23 @@ def test_provider_settings_partial_update_preserves_omitted_sections(tmp_path, m
     assert body["audio"]["model"] == initial["audio"]["model"]
 
 
+def test_provider_settings_atomic_write_survives_concurrent_reads(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", tmp_path / "config" / "provider_settings.json")
+    settings = ProviderSettings(llm=LLMProviderSettings(provider="deterministic", model="deterministic-v1"))
+    storage.write_provider_settings(settings)
+
+    def read_or_write(index: int) -> ProviderSettings:
+        if index % 2:
+            storage.write_provider_settings(settings)
+        return storage.read_provider_settings()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(read_or_write, range(24)))
+
+    assert all(result.llm.provider == "deterministic" for result in results)
+
+
 def test_provider_capability_empty_api_key_does_not_erase_existing_secret(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path / "config")
     monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", tmp_path / "config" / "provider_settings.json")
@@ -300,6 +318,39 @@ def test_project_state_exposes_authoritative_stage_and_gate_contract(tmp_path, m
     assert body["gate_summary"]["overall_state"] == "warning"
     assert body["gate_summary"]["export_allowed"] is False
     assert body["gate_summary"]["force_export_allowed"] is False
+
+
+def test_quality_stage_does_not_advertise_render_without_lesson_artifact(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "stage-action-contract"
+    storage.ensure_project(project_id)
+
+    body = TestClient(app).get(f"/api/projects/{project_id}").json()
+    quality = next(stage for stage in body["stages"] if stage["stage_id"] == "quality")
+    assert quality["state"] == "not_started"
+    assert quality["available_actions"] == []
+    assert "Blueprint artifact is missing" in quality["blockers"]
+
+
+def test_project_stage_actions_expose_pipeline_and_handoff_operations(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "stage-action-operations"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="契约"))
+    storage.set_profile_state(project_id, "confirmed")
+
+    body = TestClient(app).get(f"/api/projects/{project_id}").json()
+    stages = {stage["stage_id"]: stage for stage in body["stages"]}
+    assert "run_pipeline" in stages["design"]["available_actions"]
+    assert {"agent_package", "agent_validate"}.issubset(stages["delivery"]["available_actions"])
 
 
 def test_gate_summary_requires_all_four_gates_and_render_before_export(tmp_path, monkeypatch) -> None:
@@ -721,6 +772,9 @@ def test_media_review_api_persists_candidate_decision_and_stales_outputs(tmp_pat
     assert "render" in state["stale_state"]["stale_stages"]
     assert "quality" in state["stale_state"]["stale_stages"]
     assert "delivery" in state["stale_state"]["stale_stages"]
+    quality_stage = next(stage for stage in state["stages"] if stage["stage_id"] == "quality")
+    assert "review_media" in quality_stage["available_actions"]
+    assert "replace_media" in quality_stage["available_actions"]
 
 
 def test_unsupported_media_provider_returns_capability_blocker(tmp_path, monkeypatch) -> None:

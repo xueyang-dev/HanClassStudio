@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -371,10 +372,25 @@ def read_provider_settings() -> ProviderSettings:
 
 def write_provider_settings(settings: ProviderSettings) -> None:
     ensure_runtime()
-    PROVIDER_SETTINGS_PATH.write_text(
-        json.dumps(settings.model_dump(mode="json"), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    payload = json.dumps(settings.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    # Browser startup requests read this file concurrently (settings, catalog,
+    # OCR status). Replace it atomically so a reader never observes a partial
+    # JSON document while another request is saving settings.
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{PROVIDER_SETTINGS_PATH.name}.",
+        dir=str(PROVIDER_SETTINGS_PATH.parent),
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, PROVIDER_SETTINGS_PATH)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
 
 
 def get_project_state(project_id: str) -> ProjectState:
@@ -697,7 +713,11 @@ def _project_stages(
             stage_id="design",
             state="completed" if has_learning else ("ready" if profile else "not_started"),
             required_artifacts=learning_artifacts,
-            available_actions=["generate_blueprint"] if profile else [],
+            available_actions=(
+                ["generate_blueprint", "run_pipeline"]
+                if profile and profile_state == "confirmed"
+                else (["generate_blueprint"] if profile else [])
+            ),
         ),
         StageStatus(
             stage_id="presentation",
@@ -712,7 +732,10 @@ def _project_stages(
             required_artifacts=["quality/quality_report.json"],
             blockers=gate_summary.blocking_reasons,
             warnings=gate_summary.warnings,
-            available_actions=["run_quality", "render"] if lesson_exists else ["render"],
+            available_actions=(
+                (["run_quality", "render"] if lesson_exists else [])
+                + (["review_media", "replace_media"] if manifest and not stale_stages.intersection({"profile", "design", "presentation"}) else [])
+            ),
         ),
         StageStatus(
             stage_id="delivery",
@@ -720,7 +743,10 @@ def _project_stages(
             required_artifacts=["courseware/lesson.html", "exports/"],
             blockers=gate_summary.blocking_reasons,
             warnings=gate_summary.warnings,
-            available_actions=["export", "force_export"] if gate_summary.force_export_allowed else [],
+            available_actions=(
+                ["agent_package", "agent_validate"]
+                + (["export", "force_export"] if gate_summary.force_export_allowed else [])
+            ),
         ),
     ]
     stale_aliases = {
