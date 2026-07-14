@@ -95,6 +95,7 @@ import type {
   StageStatus
 } from "./types";
 import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
@@ -231,7 +232,7 @@ function readableError(err: unknown, t: (key: string, vars?: Record<string, stri
   if (message.includes("Project needs")) {
     return t("error.incomplete");
   }
-  return message || t("error.fallback");
+  return message ? localizeBackendMessage(message, t) : t("error.fallback");
 }
 
 export function App() {
@@ -1210,7 +1211,7 @@ export function App() {
             <p>{t("delivery.forceBody", { n: issueCount })}</p>
             <div className="action-row">
               <button type="button" className="secondary" onClick={() => setForceExportType(null)}>{t("delivery.cancel")}</button>
-              <button type="button" className="danger-button filled" onClick={async () => {
+              <button type="button" className="danger-button filled" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed || !canUseAction("delivery", "force_export")} onClick={async () => {
                 const type = forceExportType;
                 setForceExportType(null);
                 if (type === "html") await handleForceExport();
@@ -2610,6 +2611,7 @@ const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
   [/presentation binding/i, "status.blocker.binding"],
   [/quality gate/i, "status.blocker.quality"],
   [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],
+  [/project changed elsewhere|revision conflict/i, "status.blocker.revision"],
 ];
 
 function localizeBackendMessage(message: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
@@ -2910,22 +2912,4 @@ function downloadBlob(blob: Blob, filename: string) {
 
 function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
-}
-
-function ProjectLoadingSkeleton() {
-  const { t } = useI18n();
-  return (
-    <section className="panel project-loading" role="status" aria-live="polite" aria-label={t("status.loadingProject")}>
-      <div className="skeleton-block skeleton-block-heading" aria-hidden="true" />
-      <div className="skeleton-block skeleton-block-copy" aria-hidden="true" />
-      <div className="skeleton-block skeleton-block-copy short" aria-hidden="true" />
-      <div className="skeleton-grid" aria-hidden="true">
-        <div className="skeleton-block" />
-        <div className="skeleton-block" />
-        <div className="skeleton-block" />
-        <div className="skeleton-block" />
-      </div>
-      <span className="sr-only">{t("status.loadingProject")}</span>
-    </section>
-  );
 }
