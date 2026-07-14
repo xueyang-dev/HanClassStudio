@@ -697,7 +697,11 @@ def _project_stages(
             stage_id="design",
             state="completed" if has_learning else ("ready" if profile else "not_started"),
             required_artifacts=learning_artifacts,
-            available_actions=["generate_blueprint"] if profile else [],
+            available_actions=(
+                ["generate_blueprint", "run_pipeline"]
+                if profile and profile_state == "confirmed"
+                else (["generate_blueprint"] if profile else [])
+            ),
         ),
         StageStatus(
             stage_id="presentation",
@@ -712,7 +716,10 @@ def _project_stages(
             required_artifacts=["quality/quality_report.json"],
             blockers=gate_summary.blocking_reasons,
             warnings=gate_summary.warnings,
-            available_actions=["run_quality", "render"] if lesson_exists else ["render"],
+            available_actions=(
+                (["run_quality", "render"] if lesson_exists else [])
+                + (["review_media", "replace_media"] if manifest and not stale_stages.intersection({"profile", "design", "presentation"}) else [])
+            ),
         ),
         StageStatus(
             stage_id="delivery",
@@ -720,7 +727,10 @@ def _project_stages(
             required_artifacts=["courseware/lesson.html", "exports/"],
             blockers=gate_summary.blocking_reasons,
             warnings=gate_summary.warnings,
-            available_actions=["export", "force_export"] if gate_summary.force_export_allowed else [],
+            available_actions=(
+                ["agent_package", "agent_validate"]
+                + (["export", "force_export"] if gate_summary.force_export_allowed else [])
+            ),
         ),
     ]
     stale_aliases = {

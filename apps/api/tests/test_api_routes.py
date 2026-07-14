@@ -302,6 +302,22 @@ def test_project_state_exposes_authoritative_stage_and_gate_contract(tmp_path, m
     assert body["gate_summary"]["force_export_allowed"] is False
 
 
+def test_quality_stage_does_not_advertise_render_without_lesson_artifact(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "stage-action-contract"
+    storage.ensure_project(project_id)
+
+    body = TestClient(app).get(f"/api/projects/{project_id}").json()
+    quality = next(stage for stage in body["stages"] if stage["stage_id"] == "quality")
+    assert quality["state"] == "not_started"
+    assert quality["available_actions"] == []
+    assert "Blueprint artifact is missing" in quality["blockers"]
+
+
 def test_gate_summary_requires_all_four_gates_and_render_before_export(tmp_path, monkeypatch) -> None:
     runtime_dir = tmp_path / "runtime"
     projects_dir = runtime_dir / "projects"
@@ -721,6 +737,9 @@ def test_media_review_api_persists_candidate_decision_and_stales_outputs(tmp_pat
     assert "render" in state["stale_state"]["stale_stages"]
     assert "quality" in state["stale_state"]["stale_stages"]
     assert "delivery" in state["stale_state"]["stale_stages"]
+    quality_stage = next(stage for stage in state["stages"] if stage["stage_id"] == "quality")
+    assert "review_media" in quality_stage["available_actions"]
+    assert "replace_media" in quality_stage["available_actions"]
 
 
 def test_unsupported_media_provider_returns_capability_blocker(tmp_path, monkeypatch) -> None:

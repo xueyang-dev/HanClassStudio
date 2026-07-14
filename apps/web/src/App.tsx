@@ -94,7 +94,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
@@ -594,7 +594,10 @@ export function App() {
   }
 
   async function handleRerunOcr(engine?: string) {
-    if (!project) return;
+    if (!project || !canUseAction("material", "rerun_ocr")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("ocr.busy"));
     setError("");
     try {
@@ -608,7 +611,10 @@ export function App() {
   }
 
   async function handleReviewMedia(assetId: string, state: string, candidateId?: string) {
-    if (!project) return;
+    if (!project || !canUseAction("quality", "review_media")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.reviewingMedia"));
     setError("");
     try {
@@ -622,7 +628,10 @@ export function App() {
   }
 
   async function handleReplaceMedia(assetId: string, file: File) {
-    if (!project) return;
+    if (!project || !canUseAction("quality", "replace_media")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.replacingMedia"));
     setError("");
     try {
@@ -636,12 +645,18 @@ export function App() {
   }
 
   async function handleForceRegenerateMedia() {
-    if (!project) return;
+    if (!project || !canUseAction("presentation", "generate_media")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     await run(t("busy.regeneratingMedia"), () => generateMedia(project.project_id, true, project.project_revision), "quality");
   }
 
   async function handleSaveProfile(nextStep?: StepId) {
-    if (!project) return;
+    if (!project || !canUseAction("profile", "confirm_profile")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     await run(
       t("busy.savingProfile"),
       async () => {
@@ -653,7 +668,10 @@ export function App() {
   }
 
   async function handleRunFullPipeline() {
-    if (!project) return;
+    if (!project || !canUseAction("design", "run_pipeline")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.generating"));
     setError("");
     setPipelineSteps(markPipelineStep("pipeline.contract"));
@@ -685,7 +703,10 @@ export function App() {
   }
 
   async function handleForceExport() {
-    if (!project) return;
+    if (!project || !canUseAction("delivery", "force_export") || !gateSummary?.force_export_allowed) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.exporting"));
     setError("");
     try {
@@ -700,7 +721,11 @@ export function App() {
   }
 
   async function handleEditablePptxExport(force = false) {
-    if (!project) return;
+    const action = force ? "force_export" : "export";
+    if (!project || !canUseAction("delivery", action) || (force ? !gateSummary?.force_export_allowed : !gateSummary?.export_allowed)) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(force ? t("busy.exportingPptxForce") : t("busy.exportingPptx"));
     setError("");
     try {
@@ -715,7 +740,10 @@ export function App() {
   }
 
   async function handleGenerateAgentPackage() {
-    if (!project) return;
+    if (!project || !canUseAction("delivery", "agent_package")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.agentPackage"));
     setError("");
     try {
@@ -731,7 +759,10 @@ export function App() {
   }
 
   async function handleValidateAgentOutput() {
-    if (!project) return;
+    if (!project || !canUseAction("delivery", "agent_validate")) {
+      setNavNotice(t("status.actionUnavailable"));
+      return;
+    }
     setBusy(t("busy.agentValidate"));
     setError("");
     try {
@@ -763,7 +794,14 @@ export function App() {
   const exportBlocked = Boolean(project && gateSummary && !gateSummary.export_allowed);
   const issueCount = safeList(gateSummary?.blocking_reasons).length + safeList(gateSummary?.warnings).length;
   const profileConfirmed = project?.profile_state === "confirmed";
-  const canRunPipeline = Boolean(project?.project_id && profileConfirmed && !busy);
+  const canRunPipeline = Boolean(
+    project?.project_id
+      && profileConfirmed
+      && !busy
+      && canUseAction("profile", "confirm_profile")
+      && canUseAction("design", "run_pipeline"),
+  );
+  const nextWorkflowAction = getNextWorkflowAction(project);
   const qualityLabel = gateStateLabel(qualityState, t);
 
   return (
@@ -876,7 +914,7 @@ export function App() {
             {project?.source_material && (
               <>
                 <SourcePreview project={project} />
-                <OcrRerunPanel project={project} ocrStatus={ocrStatus} onRerun={handleRerunOcr} busy={Boolean(busy)} />
+                <OcrRerunPanel project={project} ocrStatus={ocrStatus} onRerun={handleRerunOcr} busy={Boolean(busy)} canRerun={canUseAction("material", "rerun_ocr")} />
               </>
             )}
           </section>
@@ -919,7 +957,7 @@ export function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={!project || !!busy}
+                disabled={!project || !!busy || !canUseAction("profile", "confirm_profile")}
                 onClick={() => handleSaveProfile("design")}
               >
                 <Save size={18} aria-hidden="true" />
@@ -959,7 +997,7 @@ export function App() {
             )}
             <div className="action-row">
               {!blueprint && (
-                <button type="button" className="primary" disabled={!project || !!busy} onClick={() => project && run(t("busy.generatingOutline"), async () => {
+                  <button type="button" className="primary" disabled={!project || !!busy || !canUseAction("presentation", "generate_blueprint")} onClick={() => project && run(t("busy.generatingOutline"), async () => {
                   const saved = await saveProfile(project.project_id, profile, project.project_revision);
                   return generateBlueprint(project.project_id, saved.project_revision);
                 }, "presentation")}>
@@ -969,7 +1007,7 @@ export function App() {
               <button
                 type="button"
                 className="secondary"
-                disabled={!project || !blueprint || !!busy}
+                disabled={!project || !blueprint || !!busy || !canUseAction("presentation", "edit_blueprint")}
                 onClick={() => project && blueprint && run(t("busy.savingOutline"), () => saveBlueprint(project.project_id, blueprint, project.project_revision))}
               >
                 <Save size={18} aria-hidden="true" />
@@ -978,7 +1016,7 @@ export function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={!project || !blueprint || !!busy}
+                disabled={!project || !blueprint || !!busy || !canUseAction("presentation", "generate_media")}
                 onClick={() =>
                   project &&
                   blueprint &&
@@ -1007,8 +1045,8 @@ export function App() {
               <button
                 type="button"
                 className="secondary"
-                disabled={!project || !!busy}
-                onClick={() => project && run(t("busy.generatingMedia"), () => generateMedia(project.project_id, false, project.project_revision))}
+                disabled={!project || !!busy || nextWorkflowAction?.stageId !== "presentation" || nextWorkflowAction.action !== "generate_media"}
+                onClick={() => project && nextWorkflowAction?.stageId === "presentation" && nextWorkflowAction.action === "generate_media" && run(t("busy.generatingMedia"), () => generateMedia(project.project_id, false, project.project_revision))}
               >
                 <Image size={18} aria-hidden="true" />
                 {t("btn.regenerateMedia")}
@@ -1016,18 +1054,32 @@ export function App() {
               <button
                 type="button"
                 className="primary"
-                disabled={!project || !!busy}
+                disabled={!project || !!busy || nextWorkflowAction?.stageId !== "quality" || nextWorkflowAction.action !== "render"}
                 onClick={() => {
+                  if (!project || nextWorkflowAction?.stageId !== "quality" || nextWorkflowAction.action !== "render") {
+                    setNavNotice(t("status.actionUnavailable"));
+                    return;
+                  }
                   setPreviewError("");
                   setPreviewLoading(true);
-                  project && run(t("busy.rendering"), () => renderProject(project.project_id, project.project_revision));
+                  run(t("busy.rendering"), () => renderProject(project.project_id, project.project_revision));
                 }}
               >
                 <MonitorPlay size={18} aria-hidden="true" />
                 {t("btn.rerender")}
               </button>
             </div>
-            <MediaReviewPanel projectId={project?.project_id} manifest={project?.asset_manifest ?? null} busy={Boolean(busy)} onReview={handleReviewMedia} onReplace={handleReplaceMedia} onForceRegenerate={handleForceRegenerateMedia} />
+            <MediaReviewPanel
+              projectId={project?.project_id}
+              manifest={project?.asset_manifest ?? null}
+              busy={Boolean(busy)}
+              canReview={canUseAction("quality", "review_media")}
+              canReplace={canUseAction("quality", "replace_media")}
+              canRegenerate={canUseAction("presentation", "generate_media")}
+              onReview={handleReviewMedia}
+              onReplace={handleReplaceMedia}
+              onForceRegenerate={handleForceRegenerateMedia}
+            />
             <QualityReportView project={project} />
             {previewUrl(project?.preview_url) ? (
               <div className="preview-frame-wrap">
@@ -1057,7 +1109,7 @@ export function App() {
               <EmptyState text={t("preview.empty")} />
             )}
             <div className="action-row">
-              <button type="button" className="primary" disabled={!project || !gateSummary?.export_allowed} onClick={() => setActiveStep("delivery")}>{t("quality.toDelivery")}</button>
+              <button type="button" className="primary" disabled={!project || !stageAccess.delivery.viewable} onClick={() => setActiveStep("delivery")}>{t("quality.toDelivery")}</button>
             </div>
           </section>
         )}
@@ -1079,11 +1131,11 @@ export function App() {
             </div>
             <div className="action-row">
               {exportFormat === "html" ? (
-                <a className={project?.export_url && gateSummary?.export_allowed ? "download-link" : "download-link disabled"} href={project?.export_url && gateSummary?.export_allowed ? exportUrl(project.project_id) : undefined} aria-disabled={!project?.export_url || !gateSummary?.export_allowed}>
+                <a className={project?.export_url && gateSummary?.export_allowed && canUseAction("delivery", "export") ? "download-link" : "download-link disabled"} href={project?.export_url && gateSummary?.export_allowed && canUseAction("delivery", "export") ? exportUrl(project.project_id) : undefined} aria-disabled={!project?.export_url || !gateSummary?.export_allowed || !canUseAction("delivery", "export")}>
                   <ArrowDownToLine size={18} />{project?.export_url ? t("btn.downloadZip") : t("export.waiting")}
                 </a>
               ) : (
-                <button type="button" className="primary" disabled={!project || !!busy || !gateSummary?.export_allowed} onClick={() => handleEditablePptxExport(false)}>
+                <button type="button" className="primary" disabled={!project || !!busy || !gateSummary?.export_allowed || !canUseAction("delivery", "export")} onClick={() => handleEditablePptxExport(false)}>
                   <ArrowDownToLine size={18} />{t("btn.exportPptx")}
                 </button>
               )}
@@ -1092,12 +1144,23 @@ export function App() {
               <summary>{t("delivery.more")}</summary>
               <p>{t("export.note")}</p>
               <div className="action-row">
-                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed} onClick={() => setForceExportType("html")}>{t("btn.forceExport")}</button>
-                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed} onClick={() => setForceExportType("pptx")}>{t("btn.forceExportPptx")}</button>
+                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed || !canUseAction("delivery", "force_export")} onClick={() => setForceExportType("html")}>{t("btn.forceExport")}</button>
+                <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed || !canUseAction("delivery", "force_export")} onClick={() => setForceExportType("pptx")}>{t("btn.forceExportPptx")}</button>
               </div>
             </details>
             <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
-            <AgentHandoffPanel project={project} agentPackage={agentPackage} validation={agentValidation} copied={agentCopied} busy={Boolean(busy)} onGenerate={handleGenerateAgentPackage} onCopy={handleCopyAgentTask} onValidate={handleValidateAgentOutput} />
+            <AgentHandoffPanel
+              project={project}
+              agentPackage={agentPackage}
+              validation={agentValidation}
+              copied={agentCopied}
+              busy={Boolean(busy)}
+              canGenerate={canUseAction("delivery", "agent_package")}
+              canValidate={canUseAction("delivery", "agent_validate")}
+              onGenerate={handleGenerateAgentPackage}
+              onCopy={handleCopyAgentTask}
+              onValidate={handleValidateAgentOutput}
+            />
             <ArtifactInspector tree={artifactTree} />
             {project?.export_url && gateSummary?.export_allowed && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.ready")}</span><a href={exportUrl(project.project_id)}>HanClassStudio_Output_*.zip</a></div>}
             {pptxExport && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.pptxReady")}</span><a href={previewUrl(pptxExport.download_url) ?? undefined}>{pptxExport.filename}</a></div>}
@@ -1186,7 +1249,7 @@ function RecentProjects({
           title={item.source_filename ?? item.project_id}
         >
           <span>{item.source_filename || item.project_id}</span>
-          <small>{item.current_stage}</small>
+          <small>{stageTitleLabel(item.current_stage, t)}</small>
         </button>
       )) : <p>{t("project.noRecent")}</p>}
     </section>
@@ -1901,11 +1964,13 @@ function OcrRerunPanel({
   ocrStatus,
   onRerun,
   busy,
+  canRerun,
 }: {
   project: ProjectState;
   ocrStatus: OcrStatusResponse | null;
   onRerun: (engine?: string) => void;
   busy: boolean;
+  canRerun: boolean;
 }) {
   const { t } = useI18n();
   const [engine, setEngine] = useState("auto");
@@ -1925,7 +1990,7 @@ function OcrRerunPanel({
       <div className="ocr-rerun-controls">
         <select
           value={engine}
-          disabled={busy || !canOcr}
+          disabled={busy || !canOcr || !canRerun}
           onChange={(event) => setEngine(event.target.value)}
           aria-label={t("ocr.engineLabel")}
         >
@@ -1936,13 +2001,14 @@ function OcrRerunPanel({
         <button
           type="button"
           className="secondary"
-          disabled={busy || !canOcr}
+          disabled={busy || !canOcr || !canRerun}
           onClick={() => onRerun(engine)}
         >
           <RefreshCw size={16} aria-hidden="true" /> {t("ocr.rerun")}
         </button>
       </div>
       {!canOcr && <p className="ocr-rerun-note">{t("ocr.noEngine")}</p>}
+      {canOcr && !canRerun && <p className="ocr-rerun-note">{t("status.actionUnavailable")}</p>}
     </section>
   );
 }
@@ -2294,6 +2360,8 @@ function AgentHandoffPanel({
   validation,
   copied,
   busy,
+  canGenerate,
+  canValidate,
   onGenerate,
   onCopy,
   onValidate
@@ -2303,6 +2371,8 @@ function AgentHandoffPanel({
   validation: AgentValidation | null;
   copied: boolean;
   busy: boolean;
+  canGenerate: boolean;
+  canValidate: boolean;
   onGenerate: () => void;
   onCopy: () => void;
   onValidate: () => void;
@@ -2315,7 +2385,7 @@ function AgentHandoffPanel({
         <span>{agentPackage ? t("agent.subtitle") : t("agent.generate")}</span>
       </div>
       <div className="agent-actions">
-        <button type="button" className="secondary" disabled={!project || busy} onClick={onGenerate}>
+        <button type="button" className="secondary" disabled={!project || busy || !canGenerate} onClick={onGenerate}>
           <FileUp size={16} aria-hidden="true" />
           {t("agent.generate")}
         </button>
@@ -2323,7 +2393,7 @@ function AgentHandoffPanel({
           <Clipboard size={16} aria-hidden="true" />
           {copied ? t("agent.copied") : t("agent.copy")}
         </button>
-        <button type="button" className="primary" disabled={!project || busy} onClick={onValidate}>
+        <button type="button" className="primary" disabled={!project || busy || !canValidate} onClick={onValidate}>
           <CheckCircle2 size={16} aria-hidden="true" />
           {t("agent.validate")}
         </button>
@@ -2339,10 +2409,10 @@ function AgentHandoffPanel({
       )}
       {validation && (
         <div className={`agent-validation ${validation.state}`}>
-          <strong>{t("agent.validation", { state: validation.state })}</strong>
-          <ValidationList title={t("agent.blocking")} items={validation.blocking} empty={t("agent.blocking.empty")} />
-          <ValidationList title={t("agent.warnings")} items={validation.warnings} empty={t("agent.warnings.empty")} />
-          <ValidationList title={t("agent.passed")} items={validation.passed} empty={t("agent.passed.empty")} />
+          <strong>{t("agent.validation", { state: gateStateLabel(validation.state, t) })}</strong>
+          <ValidationList title={t("agent.blocking")} items={localizeMessages(validation.blocking, t)} empty={t("agent.blocking.empty")} />
+          <ValidationList title={t("agent.warnings")} items={localizeMessages(validation.warnings, t)} empty={t("agent.warnings.empty")} />
+          <ValidationList title={t("agent.passed")} items={localizeMessages(validation.passed, t)} empty={t("agent.passed.empty")} />
         </div>
       )}
     </section>
@@ -2378,7 +2448,7 @@ function StateFirstSummaryView({ summary }: { summary: StateFirstTeacherSummary 
     <section className="state-first-summary" aria-label={t("design.summaryTitle")}>
       <div className="summary-heading">
         <strong>{t("design.summaryTitle")}</strong>
-        <span>{t("design.alignment", { state: alignmentState })}</span>
+        <span>{t("design.alignment", { state: gateStateLabel(alignmentState, t) })}</span>
       </div>
       <div className="summary-metrics">
         <span><strong>{states}</strong>{t("design.states")}</span>
@@ -2388,8 +2458,8 @@ function StateFirstSummaryView({ summary }: { summary: StateFirstTeacherSummary 
       </div>
       {(summary.blockers.length > 0 || summary.warnings.length > 0) && (
         <div className="summary-issues">
-          {summary.blockers.map((item) => <p className="error-text" key={`blocker-${item}`}>{item}</p>)}
-          {summary.warnings.map((item) => <p className="warning-text" key={`warning-${item}`}>{item}</p>)}
+          {localizeMessages(summary.blockers, t).map((item) => <p className="error-text" key={`blocker-${item}`}>{item}</p>)}
+          {localizeMessages(summary.warnings, t).map((item) => <p className="warning-text" key={`warning-${item}`}>{item}</p>)}
         </div>
       )}
     </section>
@@ -2400,19 +2470,57 @@ function arrayLength(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
 }
 
+const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
+  [/blueprint artifact is missing/i, "status.blocker.blueprintMissing"],
+  [/render artifact is missing/i, "status.blocker.renderMissing"],
+  [/evidence alignment/i, "status.blocker.evidenceAlignment"],
+  [/presentation readiness/i, "status.blocker.readiness"],
+  [/presentation binding/i, "status.blocker.binding"],
+  [/quality gate/i, "status.blocker.quality"],
+  [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],
+];
+
+function localizeBackendMessage(message: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const trimmed = message.trim();
+  const known = BACKEND_MESSAGE_KEYS.find(([pattern]) => pattern.test(trimmed));
+  if (known) return t(known[1]);
+  return /[^\x00-\x7F]/.test(trimmed) ? trimmed : t("status.blocker.generic");
+}
+
+function localizeMessages(messages: string[], t: (key: string, vars?: Record<string, string | number>) => string): string[] {
+  return messages.map((message) => localizeBackendMessage(message, t));
+}
+
+function stageStateLabel(state: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const knownStates = new Set(["not_started", "ready", "running", "completed", "warning", "blocked", "failed", "stale"]);
+  return knownStates.has(state) ? t(`status.stage.${state}`) : t("status.stage.unknown");
+}
+
+function stageTitleLabel(stageId: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const step = steps.find((item) => item.id === stageId);
+  return step ? t(step.titleKey) : t("status.stage.unknown");
+}
+
+function mediaReviewStateLabel(state: string | null | undefined, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  switch (state) {
+    case "accepted": return t("status.media.accepted");
+    case "rejected": return t("status.media.rejected");
+    case "fallback_accepted": return t("status.media.fallbackAccepted");
+    case "replaced": return t("status.media.replaced");
+    case "pending_review": return t("status.media.pendingReview");
+    default: return t("status.media.pendingReview");
+  }
+}
+
 function StageNotice({ stage }: { stage?: StageStatus }) {
   const { t } = useI18n();
   if (!stage || (!stage.blockers.length && !stage.warnings.length && stage.state !== "stale")) return null;
-  const stateLabel = stage.state === "blocked" || stage.state === "failed" || stage.state === "stale"
-    ? t("export.blocked")
-    : stage.state === "warning"
-      ? t("status.qualityPending")
-      : stage.state;
+  const stateLabel = stageStateLabel(stage.state, t);
   return (
     <div className={`stage-notice ${stage.state === "warning" ? "warning" : "blocked"}`} role="status">
       <strong>{stateLabel}</strong>
-      {stage.blockers.map((item) => <span key={`blocker-${item}`}>{item}</span>)}
-      {stage.warnings.map((item) => <span key={`warning-${item}`}>{item}</span>)}
+      {localizeMessages(stage.blockers, t).map((item) => <span key={`blocker-${item}`}>{item}</span>)}
+      {localizeMessages(stage.warnings, t).map((item) => <span key={`warning-${item}`}>{item}</span>)}
     </div>
   );
 }
@@ -2421,6 +2529,9 @@ function MediaReviewPanel({
   projectId,
   manifest,
   busy,
+  canReview,
+  canReplace,
+  canRegenerate,
   onReview,
   onReplace,
   onForceRegenerate,
@@ -2428,6 +2539,9 @@ function MediaReviewPanel({
   projectId?: string;
   manifest: AssetManifest | null;
   busy: boolean;
+  canReview: boolean;
+  canReplace: boolean;
+  canRegenerate: boolean;
   onReview: (assetId: string, state: string, candidateId?: string) => void;
   onReplace: (assetId: string, file: File) => void;
   onForceRegenerate: () => void;
@@ -2439,13 +2553,13 @@ function MediaReviewPanel({
     <section className="media-review" aria-label={t("media.reviewTitle")}>
       <div className="summary-heading">
         <strong>{t("media.reviewTitle")}</strong>
-        <button type="button" className="secondary small-button" disabled={busy} onClick={onForceRegenerate}>
+        <button type="button" className="secondary small-button" disabled={busy || !canRegenerate} onClick={onForceRegenerate}>
           <RefreshCw size={14} aria-hidden="true" />{t("btn.forceRegenerateMedia")}
         </button>
       </div>
       <div className="media-review-list">
         {assets.map((asset) => (
-          <MediaReviewCard key={asset.id} projectId={projectId} asset={asset} busy={busy} onReview={onReview} onReplace={onReplace} />
+          <MediaReviewCard key={asset.id} projectId={projectId} asset={asset} busy={busy} canReview={canReview} canReplace={canReplace} onReview={onReview} onReplace={onReplace} />
         ))}
       </div>
     </section>
@@ -2456,12 +2570,16 @@ function MediaReviewCard({
   projectId,
   asset,
   busy,
+  canReview,
+  canReplace,
   onReview,
   onReplace,
 }: {
   projectId?: string;
   asset: AssetFile;
   busy: boolean;
+  canReview: boolean;
+  canReplace: boolean;
   onReview: (assetId: string, state: string, candidateId?: string) => void;
   onReplace: (assetId: string, file: File) => void;
 }) {
@@ -2473,18 +2591,18 @@ function MediaReviewCard({
         {asset.kind === "image" && assetUrl ? <img src={assetUrl} alt={asset.prompt || asset.id} /> : <span>{asset.kind.toUpperCase()}</span>}
       </div>
       <div className="media-review-body">
-        <div className="media-review-title"><strong>{asset.id}</strong><span>{asset.review_state || "pending_review"}</span></div>
+        <div className="media-review-title"><strong>{asset.id}</strong><span>{mediaReviewStateLabel(asset.review_state, t)}</span></div>
         <p>{asset.prompt || asset.text || asset.path}</p>
         <div className="media-review-actions">
           {(asset.candidates ?? []).map((candidate) => (
-            <button type="button" className="small-button" key={candidate.id} disabled={busy} onClick={() => onReview(asset.id, candidate.source === "fallback" ? "fallback_accepted" : "accepted", candidate.id)}>
+            <button type="button" className="small-button" key={candidate.id} disabled={busy || !canReview} onClick={() => onReview(asset.id, candidate.source === "fallback" ? "fallback_accepted" : "accepted", candidate.id)}>
               {t("media.acceptCandidate", { source: candidate.source })}
             </button>
           ))}
-          <button type="button" className="small-button" disabled={busy} onClick={() => onReview(asset.id, "rejected")}>{t("media.reject")}</button>
-          <label className="small-button file-button">
+          <button type="button" className="small-button" disabled={busy || !canReview} onClick={() => onReview(asset.id, "rejected")}>{t("media.reject")}</button>
+          <label className={`small-button file-button${canReplace ? "" : " disabled"}`} aria-disabled={!canReplace}>
             {t("media.replace")}
-            <input type="file" accept="image/png,image/jpeg" disabled={busy} onChange={(event) => {
+            <input type="file" accept="image/png,image/jpeg" disabled={busy || !canReplace} onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) onReplace(asset.id, file);
               event.currentTarget.value = "";
@@ -2536,15 +2654,15 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
         <section className="gate-summary" aria-label={t("quality.gates") }>
           <div className={`quality-state ${summary.overall_state}`}>
             <strong>{t("quality.title", { state: gateStateLabel(summary.overall_state, t) })}</strong>
-            <span>{summary.export_allowed ? t("export.ready") : t("status.qualityPending")}</span>
+            <span>{summary.export_allowed ? t("export.ready") : gateStateLabel(summary.overall_state, t)}</span>
           </div>
           <div className="gate-grid">
             {gates.map(([title, gate]) => (
               <article className={`gate-card ${gate.state}`} key={title}>
                 <strong>{title}</strong>
                 <span>{gateStateLabel(gate.state, t)}</span>
-                {gate.blocking_reasons.length > 0 && <small>{gate.blocking_reasons.join("；")}</small>}
-                {gate.warnings.length > 0 && <small>{gate.warnings.join("；")}</small>}
+                {gate.blocking_reasons.length > 0 && <small>{localizeMessages(gate.blocking_reasons, t).join("；")}</small>}
+                {gate.warnings.length > 0 && <small>{localizeMessages(gate.warnings, t).join("；")}</small>}
               </article>
             ))}
           </div>
@@ -2554,7 +2672,7 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
       {report && (
         <>
           <div className={`quality-state ${summary?.quality_report.state === "stale" ? "stale" : report.state}`}>
-            <strong>{t("quality.title", { state: summary?.quality_report.state === "stale" ? gateStateLabel("stale", t) : report.state })}</strong>
+            <strong>{t("quality.title", { state: gateStateLabel(summary?.quality_report.state ?? report.state, t) })}</strong>
             <span>{report.schema}</span>
           </div>
           <div className="quality-grid">
@@ -2564,8 +2682,8 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
                 <p>{detail}</p>
                 {items.length ? (
                   <ul>
-                    {items.map((item) => (
-                      <li key={item}>{item}</li>
+                        {localizeMessages(items, t).map((item) => (
+                          <li key={item}>{item}</li>
                     ))}
                   </ul>
                 ) : (
@@ -2582,12 +2700,13 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
 }
 
 function gateStateLabel(state: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
-  if (state === "passed") return t("status.qualityPass");
-  if (state === "not_run") return t("status.qualityPending");
+  if (state === "passed" || state === "pass") return t("status.qualityPass");
+  if (state === "not_run") return t("status.qualityNotRun");
   if (state === "warning") return t("status.qualityWarning");
   if (state === "running") return t("status.qualityRunning");
-  if (state === "blocked" || state === "failed" || state === "stale") return t("export.blocked");
-  return state;
+  if (state === "blocked" || state === "failed") return t("status.qualityBlocked");
+  if (state === "stale") return t("status.qualityStale");
+  return t("status.stage.unknown");
 }
 
 function safeList(value: unknown): string[] {

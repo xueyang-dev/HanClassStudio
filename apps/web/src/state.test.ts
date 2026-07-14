@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getStageAccess, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -76,6 +76,16 @@ const executableProject = {
 };
 equal(getStageAccess(executableProject, "quality").editable, false);
 equal(canUseStageAction(executableProject, "quality", "render"), true);
+
+const nextActionProject = {
+  ...project,
+  stages: project.stages!.map((stage) => stage.stage_id === "profile"
+    ? { ...stage, state: "ready" as const, available_actions: ["confirm_profile"] }
+    : stage),
+};
+deepEqual(getNextWorkflowAction(nextActionProject), { stageId: "profile", action: "confirm_profile" });
+deepEqual(getNextWorkflowAction(executableProject), { stageId: "quality", action: "render" });
+equal(getNextWorkflowAction(null), null);
 
 const notRunExport = exportActionsFromProject({
   ...project,

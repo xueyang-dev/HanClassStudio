@@ -14,6 +14,11 @@ export interface StageAccess {
   warnings: string[];
 }
 
+export interface WorkflowAction {
+  stageId: WorkflowStageId;
+  action: string;
+}
+
 const EDITABLE_ACTIONS = new Set([
   "upload",
   "rerun_ocr",
@@ -60,6 +65,29 @@ export function getStageAccess(project: ProjectState | null, stageId: WorkflowSt
 export function canUseStageAction(project: ProjectState | null, stageId: WorkflowStageId, action: string): boolean {
   const access = getStageAccess(project, stageId);
   return access.executable && access.availableActions.includes(action);
+}
+
+/**
+ * Return one backend-declared action that moves the workflow forward. This is
+ * intentionally a single answer: when an upstream prerequisite is available,
+ * downstream panels should not present several misleading executable buttons.
+ */
+export function getNextWorkflowAction(project: ProjectState | null): WorkflowAction | null {
+  if (!project) return null;
+  const priority: Array<[WorkflowStageId, string[]]> = [
+    ["profile", ["confirm_profile", "infer_profile"]],
+    ["design", ["generate_blueprint", "run_pipeline"]],
+    ["presentation", ["generate_media", "edit_blueprint"]],
+    ["quality", ["render", "run_quality"]],
+    ["delivery", ["export", "force_export"]],
+  ];
+  for (const [stageId, actions] of priority) {
+    const access = getStageAccess(project, stageId);
+    if (access.state === "completed" || access.state === "warning") continue;
+    const action = actions.find((candidate) => access.availableActions.includes(candidate));
+    if (action) return { stageId, action };
+  }
+  return null;
 }
 
 export const PIPELINE_STEP_KEYS = [
