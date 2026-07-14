@@ -1,4 +1,4 @@
-import type { ProjectState, ProviderCapability, ProviderConfig, StageState } from "./types";
+import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, StageState } from "./types";
 
 export type PipelineStepStatus = "pending" | "running" | "done" | "error";
 
@@ -17,6 +17,27 @@ export interface StageAccess {
 export interface WorkflowAction {
   stageId: WorkflowStageId;
   action: string;
+}
+
+export interface ProviderStatus {
+  configured: boolean;
+  available: boolean;
+}
+
+/** Provider status is derived only from the backend capability catalog. Local
+ * form values are intentionally ignored until the catalog confirms the save. */
+export function providerStatus(
+  config: CapabilityConfig | undefined,
+  capability: ProviderCapability,
+  catalog: ProviderDefinition[],
+): ProviderStatus {
+  const definition = config
+    ? catalog.find((provider) => provider.id === config.providerId && provider.capability === capability)
+    : undefined;
+  return {
+    configured: Boolean(definition?.configured),
+    available: Boolean(definition?.configured && definition.implemented && definition.available),
+  };
 }
 
 const EDITABLE_ACTIONS = new Set([

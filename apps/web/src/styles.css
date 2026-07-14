@@ -972,14 +972,43 @@ h4 {
   letter-spacing: -0.025em;
 }
 
-.panel-header > span {
+.panel-header-meta {
   margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.panel-header-meta > span {
   color: var(--muted);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+
+.stage-state {
+  padding: 4px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--ink-soft) !important;
+  font-family: inherit !important;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none !important;
+  white-space: nowrap;
+}
+
+.stage-state-completed,
+.stage-state-warning { border-color: color-mix(in srgb, var(--success) 42%, var(--line)); }
+.stage-state-blocked,
+.stage-state-failed,
+.stage-state-stale { border-color: color-mix(in srgb, var(--danger) 42%, var(--line)); color: var(--danger) !important; }
+.stage-state-running { border-color: color-mix(in srgb, var(--primary) 42%, var(--line)); color: var(--primary) !important; }
 
 .panel-icon {
   width: 34px;
@@ -1775,28 +1804,44 @@ textarea:focus,
   background: rgba(24, 25, 22, 0.64);
 }
 
-dialog.settings-dialog {
+dialog.settings-dialog,
+dialog.onboarding-dialog,
+dialog.confirm-dialog {
   width: 100%;
   max-width: none;
-  height: 100%;
-  max-height: none;
   border: 0;
   padding: 24px;
   background: transparent;
   color: inherit;
 }
 
-dialog.settings-dialog::backdrop {
+dialog.settings-dialog::backdrop,
+dialog.onboarding-dialog::backdrop,
+dialog.confirm-dialog::backdrop {
   background: rgba(24, 25, 22, 0.64);
 }
 
-dialog.settings-dialog[open] {
+dialog.settings-dialog[open],
+dialog.onboarding-dialog[open],
+dialog.confirm-dialog[open] {
   display: grid;
   place-items: center;
 }
 
-dialog.settings-dialog:focus {
+dialog.settings-dialog:focus,
+dialog.onboarding-dialog:focus,
+dialog.confirm-dialog:focus {
   outline: none;
+}
+
+dialog.settings-dialog,
+dialog.onboarding-dialog {
+  height: 100%;
+  max-height: none;
+}
+
+dialog.confirm-dialog {
+  min-height: 100%;
 }
 
 .settings-modal {
@@ -2337,10 +2382,42 @@ dialog.settings-dialog:focus {
   }
 
   .step-list {
-    display: flex;
-    gap: 3px;
-    padding: 0;
-    overflow-x: auto;
+    display: none;
+  }
+
+  .mobile-workflow {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    margin-block: -8px 18px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface-soft);
+  }
+
+  .mobile-workflow .small-button {
+    min-height: 38px;
+    padding-inline: 9px;
+  }
+
+  .mobile-workflow-current {
+    min-width: 0;
+    text-align: center;
+  }
+
+  .mobile-workflow-current strong {
+    display: block;
+    overflow: hidden;
+    color: var(--ink);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-workflow-prev-icon {
+    transform: rotate(180deg);
   }
 
   .step-list button {
@@ -2489,7 +2566,10 @@ dialog.settings-dialog:focus {
     color: var(--ink);
   }
 
-  .modal-backdrop {
+  .modal-backdrop,
+  dialog.settings-dialog,
+  dialog.onboarding-dialog,
+  dialog.confirm-dialog {
     align-items: end;
     padding: 0;
   }
@@ -2531,7 +2611,7 @@ dialog.settings-dialog:focus {
     align-items: flex-start;
   }
 
-  .panel-header > span {
+  .panel-action {
     display: none;
   }
 

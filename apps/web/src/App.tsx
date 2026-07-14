@@ -1,4 +1,4 @@
-import { type ChangeEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Boxes,
@@ -94,7 +94,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -118,10 +118,11 @@ function getProviderById(id: string, capability: ProviderCapability, catalog: Pr
 }
 
 function isCapabilityConfigured(config: CapabilityConfig | undefined, capability: ProviderCapability, catalog: ProviderDefinition[]): boolean {
-  if (!config) return false;
-  const def = getProviderById(config.providerId, capability, catalog);
-  if (!def || !def.implemented || !def.available) return false;
-  return def.configured || def.fields.filter((f) => f.required).every((f) => config.values[f.key]?.trim());
+  return providerStatus(config, capability, catalog).configured;
+}
+
+function isCapabilityAvailable(config: CapabilityConfig | undefined, capability: ProviderCapability, catalog: ProviderDefinition[]): boolean {
+  return providerStatus(config, capability, catalog).available;
 }
 
 function readStoredProviderConfig(): ProviderConfig {
@@ -233,6 +234,70 @@ function readableError(err: unknown, t: (key: string, vars?: Record<string, stri
     return t("error.incomplete");
   }
   return message ? localizeBackendMessage(message, t) : t("error.fallback");
+}
+
+/** Keep modal keyboard/focus behavior identical for settings, onboarding, and
+ * confirmation dialogs. The native dialog supplies inert background handling;
+ * this hook adds focus restoration and a defensive Tab loop. */
+function useNativeDialog(dialogRef: RefObject<HTMLDialogElement | null>, onClose: () => void) {
+  const closeRef = useRef(onClose);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!dialog.open) dialog.showModal();
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    ));
+    const focusFirst = () => {
+      const first = focusable()[0];
+      (first ?? dialog).focus();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const handleCancel = (event: Event) => {
+      event.preventDefault();
+      closeRef.current();
+    };
+    const previousBodyOverflow = document.body.style.overflow;
+    dialog.addEventListener("keydown", handleKeyDown);
+    dialog.addEventListener("cancel", handleCancel);
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(focusFirst);
+    return () => {
+      dialog.removeEventListener("keydown", handleKeyDown);
+      dialog.removeEventListener("cancel", handleCancel);
+      if (dialog.open) dialog.close();
+      document.body.style.overflow = previousBodyOverflow;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [dialogRef]);
 }
 
 export function App() {
@@ -390,10 +455,12 @@ export function App() {
       })
       .catch(() => {
         // Do not promote browser-only settings while the backend is unavailable.
-        // A later, explicit field edit may retry the save through the normal
-        // debounced path.
+        // Mark the load attempt complete so a later, explicit field edit can
+        // retry the save through the normal debounced path without causing an
+        // initialization PUT.
         providerConfigBaselineRef.current = providerConfigSnapshot(providerConfig);
         setSettingsSynced(false);
+        settingsLoadedRef.current = true;
       });
   }, []);
 
@@ -913,7 +980,7 @@ export function App() {
           <ProjectLoadingSkeleton />
         ) : activeStep === "material" && (
           <section className="panel">
-            <PanelHeader icon={<FileUp size={22} />} title={t("panel.upload.title")} action={t("panel.upload.action")} />
+            <PanelHeader icon={<FileUp size={22} />} title={t("panel.upload.title")} action={t("panel.upload.action")} state={stageAccess.material.state} />
             <label className="upload-zone">
               <FileUp size={34} aria-hidden="true" />
               <span>{t("upload.choose")}</span>
@@ -930,7 +997,7 @@ export function App() {
 
         {activeStep === "profile" && (
           <section className="panel">
-            <PanelHeader icon={<UsersRound size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} />
+            <PanelHeader icon={<UsersRound size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} state={stageAccess.profile.state} />
             <ProfileForm profile={profile} onChange={handleProfileChange} editable={stageAccess.profile.editable} autoFilledFields={autoFilledFields} userEditedFields={userEditedFields} />
             <fieldset className="field-group">
               <legend>{t("mode.legend")}</legend>
@@ -979,7 +1046,7 @@ export function App() {
 
         {activeStep === "design" && (
           <section className="panel design-boundary">
-            <PanelHeader icon={<GitBranch size={22} />} title={t("design.title")} action={t("design.action")} />
+            <PanelHeader icon={<GitBranch size={22} />} title={t("design.title")} action={t("design.action")} state={stageAccess.design.state} />
             <div className="state-flow" aria-label={t("design.flowLabel")}>
               <span>{t("design.state")}</span><ChevronRight size={16} /><span>{t("design.goal")}</span><ChevronRight size={16} /><span>{t("design.evidence")}</span><ChevronRight size={16} /><span>{t("design.activity")}</span>
             </div>
@@ -997,7 +1064,7 @@ export function App() {
 
         {activeStep === "presentation" && (
           <section className="panel">
-            <PanelHeader icon={<LayoutTemplate size={22} />} title={t("presentation.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} />
+            <PanelHeader icon={<LayoutTemplate size={22} />} title={t("presentation.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} state={stageAccess.presentation.state} />
             <StageNotice stage={project?.stages?.find((item) => item.stage_id === "presentation")} />
             <p className="production-note">{t("presentation.compatibility")}</p>
             {blueprint ? (
@@ -1049,7 +1116,7 @@ export function App() {
 
         {activeStep === "quality" && (
           <section className="panel preview-panel">
-            <PanelHeader icon={<MonitorPlay size={22} />} title={t("panel.preview.title")} action={project?.preview_url ? t("panel.preview.actionRendered") : t("panel.preview.actionReady")} />
+            <PanelHeader icon={<MonitorPlay size={22} />} title={t("panel.preview.title")} action={project?.preview_url ? t("panel.preview.actionRendered") : t("panel.preview.actionReady")} state={stageAccess.quality.state} />
             <StageNotice stage={project?.stages?.find((item) => item.stage_id === "quality")} />
             <WorkflowResolution
               blockers={safeList(gateSummary?.blocking_reasons)}
@@ -1132,7 +1199,7 @@ export function App() {
 
         {activeStep === "delivery" && (
           <section className="panel delivery-panel">
-            <PanelHeader icon={<PackageCheck size={22} />} title={t("delivery.title")} action={t("delivery.action")} />
+            <PanelHeader icon={<PackageCheck size={22} />} title={t("delivery.title")} action={t("delivery.action")} state={stageAccess.delivery.state} />
             <div className={`delivery-gate ${qualityBlocked ? "blocked" : exportBlocked ? "pending" : "pass"}`}>
               <ShieldCheck size={20} aria-hidden="true" />
               <div><strong>{qualityBlocked ? t("export.blocked") : exportBlocked ? qualityLabel : t("status.qualityPass")}</strong><span>{issueCount ? t("status.issues", { n: issueCount }) : qualityLabel}</span></div>
@@ -1205,21 +1272,20 @@ export function App() {
         />
       )}
       {forceExportType && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="forceExportTitle">
-            <h2 id="forceExportTitle">{t("delivery.forceTitle")}</h2>
-            <p>{t("delivery.forceBody", { n: issueCount })}</p>
-            <div className="action-row">
-              <button type="button" className="secondary" onClick={() => setForceExportType(null)}>{t("delivery.cancel")}</button>
-              <button type="button" className="danger-button filled" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed || !canUseAction("delivery", "force_export")} onClick={async () => {
-                const type = forceExportType;
-                setForceExportType(null);
-                if (type === "html") await handleForceExport();
-                else await handleEditablePptxExport(true);
-              }}>{t("delivery.confirmForce")}</button>
-            </div>
-          </section>
-        </div>
+        <ForceExportDialog
+          type={forceExportType}
+          issueCount={issueCount}
+          project={project}
+          busy={Boolean(busy)}
+          gateSummary={gateSummary}
+          canExport={canUseAction("delivery", "force_export")}
+          onCancel={() => setForceExportType(null)}
+          onConfirm={async (type) => {
+            setForceExportType(null);
+            if (type === "html") await handleForceExport();
+            else await handleEditablePptxExport(true);
+          }}
+        />
       )}
       {onboardingOpen && (
         <OnboardingWizard
@@ -1414,8 +1480,8 @@ function ProviderStatusPanel({
 }) {
   const { t } = useI18n();
   const total = CAPABILITY_ORDER.length;
-  const configured = CAPABILITY_ORDER.filter((c) => Boolean(config[c]?.providerId)).length;
-  const available = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
+  const configured = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
+  const available = CAPABILITY_ORDER.filter((c) => isCapabilityAvailable(config[c], c, catalog)).length;
 
   return (
     <section className="provider-status" aria-label={t("provider.title")}>
@@ -1569,7 +1635,7 @@ function CapabilityConfigPanel({
 
       {cfg && (!selectedProvider || !selectedProvider.implemented || !selectedProvider.available) && (
         <div className="notice error" role="status">
-          {selectedProvider?.unavailable_reason ?? t("provider.unavailable")}
+          {selectedProvider?.unavailable_reason ? localizeBackendMessage(selectedProvider.unavailable_reason, t) : t("provider.unavailable")}
         </div>
       )}
 
@@ -1624,64 +1690,7 @@ function ModelSettingsModal({
   const { t } = useI18n();
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const closeRef = useRef(onClose);
-
-  useEffect(() => {
-    closeRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (!dialog.open) dialog.showModal();
-    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-    ));
-    const focusFirst = () => {
-      const first = focusable()[0];
-      (first ?? dialog).focus();
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const elements = focusable();
-      if (!elements.length) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-      const first = elements[0];
-      const last = elements[elements.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    const handleCancel = (event: Event) => {
-      event.preventDefault();
-      closeRef.current();
-    };
-    const previousBodyOverflow = document.body.style.overflow;
-    dialog.addEventListener("keydown", handleKeyDown);
-    dialog.addEventListener("cancel", handleCancel);
-    document.body.style.overflow = "hidden";
-    window.requestAnimationFrame(focusFirst);
-    return () => {
-      dialog.removeEventListener("keydown", handleKeyDown);
-      dialog.removeEventListener("cancel", handleCancel);
-      if (dialog.open) dialog.close();
-      document.body.style.overflow = previousBodyOverflow;
-      if (previouslyFocused?.isConnected) previouslyFocused.focus();
-    };
-  }, []);
+  useNativeDialog(dialogRef, onClose);
 
   const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
@@ -1748,6 +1757,44 @@ function ModelSettingsModal({
   );
 }
 
+function ForceExportDialog({
+  type,
+  issueCount,
+  project,
+  busy,
+  gateSummary,
+  canExport,
+  onCancel,
+  onConfirm,
+}: {
+  type: "html" | "pptx";
+  issueCount: number;
+  project: ProjectState | null;
+  busy: boolean;
+  gateSummary?: ProjectState["gate_summary"];
+  canExport: boolean;
+  onCancel: () => void;
+  onConfirm: (type: "html" | "pptx") => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useNativeDialog(dialogRef, onCancel);
+  const allowed = Boolean(project && gateSummary?.force_export_allowed && !gateSummary.export_allowed && canExport);
+
+  return (
+    <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="forceExportTitle">
+      <section className="confirm-modal" role="alertdialog" aria-modal="true">
+        <h2 id="forceExportTitle">{t("delivery.forceTitle")}</h2>
+        <p>{t("delivery.forceBody", { n: issueCount })}</p>
+        <div className="action-row">
+          <button type="button" className="secondary" onClick={onCancel}>{t("delivery.cancel")}</button>
+          <button type="button" className="danger-button filled" disabled={busy || !allowed} onClick={() => void onConfirm(type)}>{t("delivery.confirmForce")}</button>
+        </div>
+      </section>
+    </dialog>
+  );
+}
+
 function OnboardingWizard({
   config,
   catalog,
@@ -1766,6 +1813,8 @@ function OnboardingWizard({
   const { t, lang, setLang } = useI18n();
   const [step, setStep] = useState(0);
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useNativeDialog(dialogRef, onClose);
 
   const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
@@ -1784,8 +1833,8 @@ function OnboardingWizard({
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+    <dialog ref={dialogRef} className="settings-dialog onboarding-dialog" aria-labelledby="onboardingTitle">
+      <section className="settings-modal onboarding-modal">
         <header>
           <div>
             <p className="eyebrow">{t("onboarding.eyebrow")}</p>
@@ -1926,18 +1975,22 @@ function OnboardingWizard({
           </div>
         )}
       </section>
-    </div>
+    </dialog>
   );
 }
 
-function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; action: string }) {
+function PanelHeader({ icon, title, action, state }: { icon: ReactNode; title: string; action: string; state?: string }) {
+  const { t } = useI18n();
   return (
     <div className="panel-header">
       <div>
         <span className="panel-icon">{icon}</span>
         <h2>{title}</h2>
       </div>
-      <span>{action}</span>
+      <div className="panel-header-meta">
+        <span className="panel-action">{action}</span>
+        {state && <span className={`stage-state stage-state-${state}`}>{stageStateLabel(state, t)}</span>}
+      </div>
     </div>
   );
 }
@@ -2443,7 +2496,7 @@ function SpecLockSummary({ specLock }: { specLock: Record<string, unknown> | nul
         <SpecItem label={t("spec.scaffold")} value={stringValue(lesson.scaffolding_language)} />
         <SpecItem label={t("spec.runtime")} value={stringValue(templates.runtime)} />
         <SpecItem label={t("spec.components")} value={allowed} />
-        <SpecItem label={t("spec.quality")} value={qualityPolicySummary(quality)} />
+        <SpecItem label={t("spec.quality")} value={qualityPolicySummary(quality, t)} />
       </div>
     </section>
   );
@@ -2605,11 +2658,18 @@ function arrayLength(value: unknown): number {
 
 const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
   [/blueprint artifact is missing/i, "status.blocker.blueprintMissing"],
+  [/generate a lesson blueprint first|blueprint.*missing/i, "status.blocker.blueprintMissing"],
   [/render artifact is missing/i, "status.blocker.renderMissing"],
+  [/media artifact is stale|regenerate media before rendering/i, "status.blocker.mediaStale"],
+  [/source material|uploaded source file/i, "status.blocker.sourceMissing"],
+  [/asset manifest/i, "status.blocker.mediaMissing"],
   [/evidence alignment/i, "status.blocker.evidenceAlignment"],
   [/presentation readiness/i, "status.blocker.readiness"],
   [/presentation binding/i, "status.blocker.binding"],
   [/quality gate/i, "status.blocker.quality"],
+  [/credentials or required configuration are missing/i, "status.blocker.providerConfig"],
+  [/not implemented.*capability|not implemented in the production media pipeline/i, "status.blocker.providerUnavailable"],
+  [/ocr engine is not available/i, "status.blocker.ocrUnavailable"],
   [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],
   [/project changed elsewhere|revision conflict/i, "status.blocker.revision"],
 ];
@@ -2756,7 +2816,7 @@ function MediaReviewCard({
         <div className="media-review-actions">
           {(asset.candidates ?? []).map((candidate) => (
             <button type="button" className="small-button" key={candidate.id} disabled={busy || !canReview} onClick={() => onReview(asset.id, candidate.source === "fallback" ? "fallback_accepted" : "accepted", candidate.id)}>
-              {t("media.acceptCandidate", { source: candidate.source })}
+              {t("media.acceptCandidate", { source: mediaCandidateSourceLabel(candidate.source, t) })}
             </button>
           ))}
           <button type="button" className="small-button" disabled={busy || !canReview} onClick={() => onReview(asset.id, "rejected")}>{t("media.reject")}</button>
@@ -2885,13 +2945,22 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function qualityPolicySummary(policy: Record<string, unknown>): string {
+function qualityPolicySummary(policy: Record<string, unknown>, t: (key: string, vars?: Record<string, string | number>) => string): string {
   const parts = [];
-  if (policy.block_on_missing_files) parts.push("block missing files");
-  if (policy.block_on_missing_interaction_answers) parts.push("block missing answers");
-  if (policy.warn_on_placeholder_media) parts.push("warn placeholders");
-  if (policy.allow_forced_export) parts.push("force export allowed");
+  if (policy.block_on_missing_files) parts.push(t("spec.policy.missingFiles"));
+  if (policy.block_on_missing_interaction_answers) parts.push(t("spec.policy.missingAnswers"));
+  if (policy.warn_on_placeholder_media) parts.push(t("spec.policy.placeholders"));
+  if (policy.allow_forced_export) parts.push(t("spec.policy.forceExport"));
   return parts.join(", ");
+}
+
+function mediaCandidateSourceLabel(source: string, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  switch (source) {
+    case "generated": return t("media.source.generated");
+    case "fallback": return t("media.source.fallback");
+    case "teacher": return t("media.source.teacher");
+    default: return t("media.source.generated");
+  }
 }
 
 function artifactMeta(item: ArtifactEntry): string {

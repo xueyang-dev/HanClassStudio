@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig, shouldPersistProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldPersistProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -86,6 +86,26 @@ const nextActionProject = {
 deepEqual(getNextWorkflowAction(nextActionProject), { stageId: "profile", action: "confirm_profile" });
 deepEqual(getNextWorkflowAction(executableProject), { stageId: "quality", action: "render" });
 equal(getNextWorkflowAction(null), null);
+
+const providerCatalog = [
+  {
+    id: "openai_compatible",
+    name: "OpenAI-compatible",
+    category: "cloud" as const,
+    capability: "llm" as const,
+    description: "",
+    fields: [],
+    implemented: true,
+    configurable: true,
+    configured: false,
+    available: true,
+    experimental: false,
+    supported_operations: ["blueprint"],
+  },
+];
+deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "draft" } }, "llm", providerCatalog), { configured: false, available: false });
+deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "saved" } }, "llm", providerCatalog.map((item) => ({ ...item, configured: true }))), { configured: true, available: true });
+deepEqual(providerStatus({ providerId: "openai_compatible", values: {} }, "llm", providerCatalog.map((item) => ({ ...item, configured: true, available: false }))), { configured: true, available: false });
 
 const notRunExport = exportActionsFromProject({
   ...project,
