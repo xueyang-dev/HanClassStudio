@@ -332,6 +332,10 @@ button:disabled,
 .stage-notice { display: grid; gap: 4px; margin: 14px clamp(18px, 3vw, 32px) 0; padding: 10px 12px; border: 1px solid var(--danger); border-radius: 6px; background: var(--danger-soft); color: var(--danger); font-size: 12px; }
 .stage-notice.warning { border-color: var(--warning); background: var(--warning-soft); color: var(--warning); }
 .stage-notice span { line-height: 1.45; }
+.workflow-resolution { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--warning); border-radius: 8px; background: var(--warning-soft); }
+.workflow-resolution > div { display: grid; gap: 3px; min-width: 0; }
+.workflow-resolution strong { color: var(--ink); font-size: 13px; }
+.workflow-resolution span { color: var(--muted-strong); font-size: 12px; line-height: 1.45; }
 
 .media-review {
   display: grid;
@@ -384,8 +388,13 @@ button:disabled,
 .export-format-card span { color: var(--muted); }
 .export-format-card.selected { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
 .export-format-card.selected svg { color: var(--primary); }
+.export-format-card.selected strong { color: var(--primary); }
 
 .more-actions summary { min-height: 32px; color: var(--ink); font-weight: 650; cursor: pointer; }
+.advanced-details { display: grid; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.advanced-details > summary { color: var(--ink); font-weight: 700; cursor: pointer; }
+.advanced-details[open] > summary { margin-bottom: 2px; }
+.advanced-details > .dev-panel { margin: 0; }
 .danger-button { min-height: 44px; padding: 10px 15px; border: 1px solid var(--primary); border-radius: 7px; background: transparent; color: var(--primary); font-weight: 650; cursor: pointer; }
 .danger-button.filled { background: var(--primary); color: #fff; }
 .danger-button:disabled { opacity: .42; cursor: not-allowed; }
@@ -520,6 +529,22 @@ h4 {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+}
+
+@media (min-width: 1101px) {
+  .topbar-aside {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    flex-wrap: nowrap;
+  }
+
+  .top-actions {
+    flex-wrap: nowrap;
+  }
+}
+
+.mobile-workflow {
+  display: none;
 }
 
 .status-strip {
@@ -1513,12 +1538,20 @@ textarea:focus,
   background: var(--paper);
 }
 
-.artifact-group h4 {
-  margin: 0;
+.artifact-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 9px 10px;
-  border-bottom: 1px solid var(--line);
+  color: var(--ink);
   font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
 }
+
+.artifact-group > summary::marker { color: var(--muted); }
+.artifact-group > summary small { color: var(--muted); font-weight: 500; }
 
 .artifact-group ul {
   margin: 0;
@@ -1929,6 +1962,10 @@ dialog.settings-dialog:focus {
   gap: 7px;
 }
 
+.deploy-mode-native-select {
+  display: none;
+}
+
 .segmented-toggle {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2335,6 +2372,42 @@ dialog.settings-dialog:focus {
   .step-list {
     grid-column: 1 / -1;
     grid-row: 2;
+    display: none;
+  }
+
+  .mobile-workflow {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    margin-block: -8px 18px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    background: var(--surface-soft);
+  }
+
+  .mobile-workflow .small-button {
+    min-height: 38px;
+    padding-inline: 9px;
+  }
+
+  .mobile-workflow-current {
+    min-width: 0;
+    text-align: center;
+  }
+
+  .mobile-workflow-current strong {
+    display: block;
+    overflow: hidden;
+    color: var(--ink);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-workflow-prev-icon {
+    transform: rotate(180deg);
   }
 
   .provider-summary-card {
@@ -2383,7 +2456,7 @@ dialog.settings-dialog:focus {
   }
 
   .export-format-grid { grid-template-columns: 1fr; }
-  .state-flow { justify-content: flex-start; overflow-x: auto; }
+  .state-flow { justify-content: flex-start; flex-wrap: wrap; overflow: visible; }
   .project-status-menu { grid-column: 1 / -1; justify-self: end; }
 
   .provider-settings-layout {
@@ -2399,6 +2472,21 @@ dialog.settings-dialog:focus {
 
   .capability-tab {
     min-width: 150px;
+  }
+
+  .deploy-mode-toggle {
+    display: none;
+  }
+
+  .deploy-mode-native-select {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: 9px 11px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
   }
 
   .modal-backdrop {

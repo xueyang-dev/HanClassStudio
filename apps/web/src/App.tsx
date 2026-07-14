@@ -896,6 +896,8 @@ export function App() {
           </div>
         </header>
 
+        <MobileWorkflowNav activeStep={activeStep} stageAccess={stageAccess} onChange={setActiveStep} />
+
         {error && <div className="notice error">{error}</div>}
         {navNotice && <div className="notice">{navNotice}</div>}
         <PipelineStatus steps={pipelineSteps} />
@@ -928,7 +930,7 @@ export function App() {
         {activeStep === "profile" && (
           <section className="panel">
             <PanelHeader icon={<UsersRound size={22} />} title={t("panel.profile.title")} action={t("panel.profile.action")} />
-            <ProfileForm profile={profile} onChange={handleProfileChange} autoFilledFields={autoFilledFields} userEditedFields={userEditedFields} />
+            <ProfileForm profile={profile} onChange={handleProfileChange} editable={stageAccess.profile.editable} autoFilledFields={autoFilledFields} userEditedFields={userEditedFields} />
             <fieldset className="field-group">
               <legend>{t("mode.legend")}</legend>
               <div className="segmented-grid">
@@ -937,6 +939,7 @@ export function App() {
                     key={mode.value}
                     type="button"
                     className={profile.generation_mode === mode.value ? "selected" : ""}
+                    disabled={!stageAccess.profile.editable}
                     onClick={() => setProfile({ ...profile, generation_mode: mode.value })}
                   >
                     <strong>{t(mode.titleKey)}</strong>
@@ -949,6 +952,7 @@ export function App() {
               <span>{t("mode.scaffoldLabel")}</span>
               <select
                 value={profile.scaffolding_language}
+                disabled={!stageAccess.profile.editable}
                 onChange={(event) => setProfile({ ...profile, scaffolding_language: event.target.value })}
               >
                 {languages.map((language) => (
@@ -996,7 +1000,7 @@ export function App() {
             <StageNotice stage={project?.stages?.find((item) => item.stage_id === "presentation")} />
             <p className="production-note">{t("presentation.compatibility")}</p>
             {blueprint ? (
-              <BlueprintEditor blueprint={blueprint} componentRegistry={componentRegistry} componentOptions={componentOptions} onChange={setBlueprint} />
+              <BlueprintEditor blueprint={blueprint} componentRegistry={componentRegistry} componentOptions={componentOptions} editable={stageAccess.presentation.editable} onChange={setBlueprint} />
             ) : (
               <EmptyState text={t("presentation.empty")} />
             )}
@@ -1046,6 +1050,12 @@ export function App() {
           <section className="panel preview-panel">
             <PanelHeader icon={<MonitorPlay size={22} />} title={t("panel.preview.title")} action={project?.preview_url ? t("panel.preview.actionRendered") : t("panel.preview.actionReady")} />
             <StageNotice stage={project?.stages?.find((item) => item.stage_id === "quality")} />
+            <WorkflowResolution
+              blockers={safeList(gateSummary?.blocking_reasons)}
+              nextStage={nextWorkflowAction?.stageId as StepId | undefined}
+              activeStage="quality"
+              onNavigate={setActiveStep}
+            />
             <div className="action-row">
               <button
                 type="button"
@@ -1126,12 +1136,18 @@ export function App() {
               <ShieldCheck size={20} aria-hidden="true" />
               <div><strong>{qualityBlocked ? t("export.blocked") : exportBlocked ? qualityLabel : t("status.qualityPass")}</strong><span>{issueCount ? t("status.issues", { n: issueCount }) : qualityLabel}</span></div>
             </div>
+            <WorkflowResolution
+              blockers={safeList(gateSummary?.blocking_reasons)}
+              nextStage={nextWorkflowAction?.stageId as StepId | undefined}
+              activeStage="delivery"
+              onNavigate={setActiveStep}
+            />
             <div className="export-format-grid" role="radiogroup" aria-label={t("delivery.format") }>
               <button type="button" role="radio" aria-checked={exportFormat === "html"} className={exportFormat === "html" ? "export-format-card selected" : "export-format-card"} onClick={() => setExportFormat("html")}>
-                <FileArchive size={24} /><strong>{t("delivery.html")}</strong><span>{t("delivery.htmlDetail")}</span>
+                <FileArchive size={24} /><strong>{t("delivery.html")}</strong><span>{t("delivery.htmlDetail")}</span>{exportFormat === "html" && <CheckCircle2 size={16} aria-label={t("delivery.selected")} />}
               </button>
               <button type="button" role="radio" aria-checked={exportFormat === "pptx"} className={exportFormat === "pptx" ? "export-format-card selected" : "export-format-card"} onClick={() => setExportFormat("pptx")}>
-                <LayoutTemplate size={24} /><strong>{t("delivery.pptx")}</strong><span>{t("delivery.pptxDetail")}</span>
+                <LayoutTemplate size={24} /><strong>{t("delivery.pptx")}</strong><span>{t("delivery.pptxDetail")}</span>{exportFormat === "pptx" && <CheckCircle2 size={16} aria-label={t("delivery.selected")} />}
               </button>
             </div>
             <div className="action-row">
@@ -1153,20 +1169,23 @@ export function App() {
                 <button type="button" className="danger-button" disabled={!project || !!busy || !gateSummary?.force_export_allowed || gateSummary.export_allowed || !canUseAction("delivery", "force_export")} onClick={() => setForceExportType("pptx")}>{t("btn.forceExportPptx")}</button>
               </div>
             </details>
-            <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
-            <AgentHandoffPanel
-              project={project}
-              agentPackage={agentPackage}
-              validation={agentValidation}
-              copied={agentCopied}
-              busy={Boolean(busy)}
-              canGenerate={canUseAction("delivery", "agent_package")}
-              canValidate={canUseAction("delivery", "agent_validate")}
-              onGenerate={handleGenerateAgentPackage}
-              onCopy={handleCopyAgentTask}
-              onValidate={handleValidateAgentOutput}
-            />
-            <ArtifactInspector tree={artifactTree} />
+            <details className="advanced-details">
+              <summary>{t("delivery.advanced")}</summary>
+              <SpecLockSummary specLock={artifactTree?.spec_lock ?? null} />
+              <AgentHandoffPanel
+                project={project}
+                agentPackage={agentPackage}
+                validation={agentValidation}
+                copied={agentCopied}
+                busy={Boolean(busy)}
+                canGenerate={canUseAction("delivery", "agent_package")}
+                canValidate={canUseAction("delivery", "agent_validate")}
+                onGenerate={handleGenerateAgentPackage}
+                onCopy={handleCopyAgentTask}
+                onValidate={handleValidateAgentOutput}
+              />
+              <ArtifactInspector tree={artifactTree} />
+            </details>
             {project?.export_url && gateSummary?.export_allowed && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.ready")}</span><a href={exportUrl(project.project_id)}>HanClassStudio_Output_*.zip</a></div>}
             {pptxExport && <div className="export-ready"><CheckCircle2 size={18} /><span>{t("export.pptxReady")}</span><a href={previewUrl(pptxExport.download_url) ?? undefined}>{pptxExport.filename}</a></div>}
           </section>
@@ -1258,6 +1277,36 @@ function RecentProjects({
         </button>
       )) : <p>{t("project.noRecent")}</p>}
     </section>
+  );
+}
+
+function MobileWorkflowNav({
+  activeStep,
+  stageAccess,
+  onChange,
+}: {
+  activeStep: StepId;
+  stageAccess: Record<StepId, StageAccess>;
+  onChange: (step: StepId) => void;
+}) {
+  const { t } = useI18n();
+  const index = steps.findIndex((step) => step.id === activeStep);
+  const previous = [...steps.slice(0, index)].reverse().find((step) => stageAccess[step.id].viewable);
+  const next = steps.slice(index + 1).find((step) => stageAccess[step.id].viewable);
+  return (
+    <nav className="mobile-workflow" aria-label={t("nav.workflow")}>
+      <button type="button" className="secondary small-button" disabled={!previous} onClick={() => previous && onChange(previous.id)}>
+        <ChevronRight size={16} className="mobile-workflow-prev-icon" aria-hidden="true" />
+        {t("mobileWorkflow.previous")}
+      </button>
+      <div className="mobile-workflow-current" aria-live="polite">
+        <strong>{t("mobileWorkflow.step", { n: index + 1, stage: stageTitleLabel(activeStep, t) })}</strong>
+      </div>
+      <button type="button" className="secondary small-button" disabled={!next} onClick={() => next && onChange(next.id)}>
+        {t("mobileWorkflow.next")}
+        <ChevronRight size={16} aria-hidden="true" />
+      </button>
+    </nav>
   );
 }
 
@@ -1364,7 +1413,8 @@ function ProviderStatusPanel({
 }) {
   const { t } = useI18n();
   const total = CAPABILITY_ORDER.length;
-  const configured = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
+  const configured = CAPABILITY_ORDER.filter((c) => Boolean(config[c]?.providerId)).length;
+  const available = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
   return (
     <section className="provider-status" aria-label={t("provider.title")}>
@@ -1379,7 +1429,7 @@ function ProviderStatusPanel({
         </div>
         <div className="provider-summary-text">
           <strong>{t("provider.title")}</strong>
-          <span>{t("provider.summary", { configured, total })}</span>
+          <span>{t("provider.summary", { configured, available, total })}</span>
         </div>
         <Settings2 size={18} aria-hidden="true" />
       </button>
@@ -1473,7 +1523,16 @@ function CapabilityConfigPanel({
     <div className="capability-config-panel">
       <div className="deploy-mode">
         <span className="deploy-mode-label">{t("provider.deployMode")}</span>
-        <div className="segmented-toggle" role="group" aria-label={t("provider.deployMode")}>
+        <select
+          className="deploy-mode-native-select"
+          value={mode}
+          onChange={(event) => switchMode(event.target.value as "local" | "cloud")}
+          aria-label={t("provider.deployMode")}
+        >
+          <option value="local">{t("provider.mode.local")}</option>
+          <option value="cloud">{t("provider.mode.cloud")}</option>
+        </select>
+        <div className="segmented-toggle deploy-mode-toggle" role="group" aria-label={t("provider.deployMode")}>
           <button
             type="button"
             className={mode === "local" ? "active" : ""}
@@ -1609,6 +1668,7 @@ function ModelSettingsModal({
       event.preventDefault();
       closeRef.current();
     };
+    const previousBodyOverflow = document.body.style.overflow;
     dialog.addEventListener("keydown", handleKeyDown);
     dialog.addEventListener("cancel", handleCancel);
     document.body.style.overflow = "hidden";
@@ -1617,7 +1677,7 @@ function ModelSettingsModal({
       dialog.removeEventListener("keydown", handleKeyDown);
       dialog.removeEventListener("cancel", handleCancel);
       if (dialog.open) dialog.close();
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousBodyOverflow;
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
   }, []);
@@ -1884,11 +1944,13 @@ function PanelHeader({ icon, title, action }: { icon: ReactNode; title: string; 
 function ProfileForm({
   profile,
   onChange,
+  editable = true,
   autoFilledFields = new Set(),
   userEditedFields = new Set(),
 }: {
   profile: LessonProfile;
   onChange: (profile: LessonProfile) => void;
+  editable?: boolean;
   autoFilledFields?: Set<string>;
   userEditedFields?: Set<string>;
 }) {
@@ -1932,7 +1994,7 @@ function ProfileForm({
             <label key={String(key)} className={`field ${badge ? `field--${badge}` : ""}`}>
               <span>{t(labelKey)}</span>
               <div className="field-input-wrap">
-                <input value={profile[key]} onChange={(event) => set(key, (event.target as HTMLInputElement).value as never)} />
+                <input disabled={!editable} value={profile[key]} onChange={(event) => set(key, (event.target as HTMLInputElement).value as never)} />
                 {badge === "ai" && <span className="field-badge field-badge--ai" title={t("profile.badge.ai")}>{t("profile.badge.aiLabel")}</span>}
                 {badge === "edited" && <span className="field-badge field-badge--edited" title={t("profile.badge.edited")}>{t("profile.badge.editedLabel")}</span>}
               </div>
@@ -2080,11 +2142,13 @@ function BlueprintEditor({
   blueprint,
   componentRegistry,
   componentOptions,
+  editable = true,
   onChange
 }: {
   blueprint: LessonBlueprint;
   componentRegistry: ComponentRegistry;
   componentOptions: string[];
+  editable?: boolean;
   onChange: (blueprint: LessonBlueprint) => void;
 }) {
   const { t } = useI18n();
@@ -2206,23 +2270,23 @@ function BlueprintEditor({
               <div className="outline-fields">
                 <label className="field">
                   <span>{t("editor.pageTitle")}</span>
-                  <input value={slide.title} onChange={(event) => updateSlide(index, { title: event.target.value })} />
+                  <input disabled={!editable} value={slide.title} onChange={(event) => updateSlide(index, { title: event.target.value })} />
                 </label>
                 <div className="compact-grid">
                   <label className="field">
                     <span>{t("editor.pageType")}</span>
-                    <input value={slide.slide_type} onChange={(event) => updateSlide(index, { slide_type: event.target.value })} />
+                    <input disabled={!editable} value={slide.slide_type} onChange={(event) => updateSlide(index, { slide_type: event.target.value })} />
                   </label>
                   <label className="field">
                     <span>{t("editor.layout")}</span>
-                    <input value={slide.layout_variant} onChange={(event) => updateSlide(index, { layout_variant: event.target.value })} />
+                    <input disabled={!editable} value={slide.layout_variant} onChange={(event) => updateSlide(index, { layout_variant: event.target.value })} />
                   </label>
                 </div>
 
                 <section className="editor-section">
                   <div className="editor-section-header">
                     <h3>{t("editor.contentBlocks")}</h3>
-                    <button type="button" className="secondary small-button" onClick={() => addContentBlock(index)}>
+                    <button type="button" className="secondary small-button" disabled={!editable} onClick={() => addContentBlock(index)}>
                       <Plus size={16} aria-hidden="true" />
                       {t("editor.addContent")}
                     </button>
@@ -2232,21 +2296,22 @@ function BlueprintEditor({
                       <div className="compact-grid">
                         <label className="field">
                           <span>{t("editor.blockType")}</span>
-                          <input value={block.block_type} onChange={(event) => updateContentBlock(index, blockIndex, { block_type: event.target.value })} />
+                          <input disabled={!editable} value={block.block_type} onChange={(event) => updateContentBlock(index, blockIndex, { block_type: event.target.value })} />
                         </label>
-                        <button type="button" className="icon-text danger" onClick={() => removeContentBlock(index, blockIndex)}>
+                        <button type="button" className="icon-text danger" disabled={!editable} onClick={() => removeContentBlock(index, blockIndex)}>
                           <Trash2 size={16} aria-hidden="true" />
                           {t("editor.deleteContent")}
                         </button>
                       </div>
                       <label className="field">
                         <span>{t("editor.chineseContent")}</span>
-                        <textarea value={block.text} onChange={(event) => updateContentBlock(index, blockIndex, { text: event.target.value })} />
+                        <textarea readOnly={!editable} value={block.text} onChange={(event) => updateContentBlock(index, blockIndex, { text: event.target.value })} />
                       </label>
                       <label className="field">
                         <span>{t("editor.scaffold")}</span>
                         <textarea
                           value={block.scaffolding_text}
+                          readOnly={!editable}
                           onChange={(event) => updateContentBlock(index, blockIndex, { scaffolding_text: event.target.value })}
                         />
                       </label>
@@ -2260,17 +2325,19 @@ function BlueprintEditor({
                     <span>{t("editor.imagePrompt")}</span>
                     <textarea
                       value={slide.media_requirements.image_prompt ?? ""}
+                      readOnly={!editable}
                       onChange={(event) => updateMedia(index, "image_prompt", event.target.value)}
                     />
                   </label>
                   <div className="compact-grid">
                     <label className="field">
                       <span>{t("editor.audioText")}</span>
-                      <input value={slide.media_requirements.audio_text ?? ""} onChange={(event) => updateMedia(index, "audio_text", event.target.value)} />
+                    <input readOnly={!editable} value={slide.media_requirements.audio_text ?? ""} onChange={(event) => updateMedia(index, "audio_text", event.target.value)} />
                     </label>
                     <label className="field">
                       <span>{t("editor.videoPrompt")}</span>
                       <input
+                        readOnly={!editable}
                         value={slide.media_requirements.video_scene_prompt ?? ""}
                         onChange={(event) => updateMedia(index, "video_scene_prompt", event.target.value)}
                       />
@@ -2284,6 +2351,7 @@ function BlueprintEditor({
                     <select
                       aria-label={t("editor.addComponent")}
                       defaultValue=""
+                      disabled={!editable}
                       onChange={(event) => {
                         if (!event.target.value) return;
                         addComponent(index, event.target.value);
@@ -2309,6 +2377,7 @@ function BlueprintEditor({
                               <span>{t("editor.componentType")}</span>
                               <select
                                 value={component.component_type}
+                                disabled={!editable}
                                 onChange={(event) => updateComponent(index, componentIndex, { component_type: event.target.value })}
                               >
                                 {componentOptions.map((type) => (
@@ -2320,10 +2389,10 @@ function BlueprintEditor({
                             </label>
                             <label className="field">
                               <span>{t("editor.componentTitle")}</span>
-                              <input value={component.title} onChange={(event) => updateComponent(index, componentIndex, { title: event.target.value })} />
+                              <input disabled={!editable} value={component.title} onChange={(event) => updateComponent(index, componentIndex, { title: event.target.value })} />
                             </label>
                           </div>
-                          <button type="button" className="icon-text danger" onClick={() => removeComponent(index, componentIndex)}>
+                          <button type="button" className="icon-text danger" disabled={!editable} onClick={() => removeComponent(index, componentIndex)}>
                             <Trash2 size={16} aria-hidden="true" />
                             {t("editor.deleteComponent")}
                           </button>
@@ -2399,8 +2468,8 @@ function ArtifactInspector({ tree }: { tree: ArtifactTree | null }) {
       </div>
       <div className="artifact-grid">
         {tree.groups.map((group) => (
-          <section className="artifact-group" key={group.name}>
-            <h4>{group.name}</h4>
+          <details className="artifact-group" key={group.name}>
+            <summary><span>{group.name}</span><small>{group.items.length}</small></summary>
             <ul>
               {group.items.map((item) => (
                 <li className={item.exists ? "exists" : "missing"} key={item.path}>
@@ -2410,7 +2479,7 @@ function ArtifactInspector({ tree }: { tree: ArtifactTree | null }) {
                 </li>
               ))}
             </ul>
-          </section>
+          </details>
         ))}
       </div>
     </section>
@@ -2584,6 +2653,32 @@ function StageNotice({ stage }: { stage?: StageStatus }) {
       <strong>{stateLabel}</strong>
       {localizeMessages(stage.blockers, t).map((item) => <span key={`blocker-${item}`}>{item}</span>)}
       {localizeMessages(stage.warnings, t).map((item) => <span key={`warning-${item}`}>{item}</span>)}
+    </div>
+  );
+}
+
+function WorkflowResolution({
+  blockers,
+  nextStage,
+  activeStage,
+  onNavigate,
+}: {
+  blockers: string[];
+  nextStage?: StepId;
+  activeStage: StepId;
+  onNavigate: (stage: StepId) => void;
+}) {
+  const { t } = useI18n();
+  const messages = localizeMessages(blockers, t);
+  const canNavigate = Boolean(nextStage && nextStage !== activeStage);
+  if (!messages.length && !canNavigate) return null;
+  return (
+    <div className="workflow-resolution" role="status">
+      <div>
+        <strong>{messages.length ? t("export.blocked") : t("status.nextStep", { stage: stageTitleLabel(nextStage!, t) })}</strong>
+        {messages.slice(0, 2).map((message) => <span key={message}>{message}</span>)}
+      </div>
+      {canNavigate && <button type="button" className="secondary small-button" onClick={() => onNavigate(nextStage!)}>{t("status.goResolve")}</button>}
     </div>
   );
 }
