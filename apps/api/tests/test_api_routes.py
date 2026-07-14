@@ -60,6 +60,16 @@ def test_cors_allows_vite_fallback_port() -> None:
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
 
+    extra_dev_port = TestClient(app).options(
+        "/api/health",
+        headers={
+            "Origin": "http://127.0.0.1:5175",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert extra_dev_port.status_code == 200
+    assert extra_dev_port.headers["access-control-allow-origin"] == "http://127.0.0.1:5175"
+
 
 def test_agent_skill_docs_exist() -> None:
     root = Path(__file__).resolve().parents[3]

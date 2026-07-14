@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +42,23 @@ from .models import (
 from .parser import parse_source
 from .source_understanding import OCRPolicy, get_engine_status
 from .providers import ProviderError, provider_capability_catalog
+from .provider_registry import (
+    InstallConfirmRequest,
+    ProviderConfigureRequest,
+    ProviderInstallLog,
+    ProviderRegistryError,
+    RegistryCatalogResponse,
+    InstallPrepareResponse,
+    InstallResult,
+    audit_events,
+    confirm_install,
+    configure_install,
+    install_logs,
+    prepare_install,
+    registry_status,
+    retry_install,
+    rollback_install,
+)
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
 from .pptx_exporter import export_editable_pptx
@@ -82,6 +100,8 @@ app.add_middleware(
         "http://127.0.0.1:4173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
         "http://localhost:4174",
         "http://127.0.0.1:4174",
     ],
@@ -722,6 +742,90 @@ def get_provider_settings() -> PublicProviderSettings:
 @app.get("/api/settings/providers/capabilities", response_model=list[ProviderCapabilityDescriptor])
 def get_provider_capabilities() -> list[ProviderCapabilityDescriptor]:
     return provider_capability_catalog(read_provider_settings())
+
+
+def _provider_registry_http_error(error: ProviderRegistryError, *, provider_id: str | None = None) -> HTTPException:
+    if error.code == "provider_not_registered":
+        status = 404
+    elif error.code.endswith("in_progress") or "transition" in error.code or error.code in {
+        "provider_plan_invalid", "provider_plan_expired", "provider_confirmation_invalid", "provider_plan_stale",
+        "provider_not_ready", "provider_retry_unavailable", "provider_configuration_unavailable", "provider_rollback_unavailable",
+    }:
+        status = 409
+    else:
+        status = 400
+    detail = {"code": error.code, "message": error.message, "blockers": error.blockers}
+    if provider_id:
+        detail["provider_id"] = provider_id
+    return HTTPException(status_code=status, detail=detail)
+
+
+@app.get("/api/providers/registry", response_model=RegistryCatalogResponse)
+def get_provider_registry() -> RegistryCatalogResponse:
+    """Return trusted registry metadata and backend-owned installation facts."""
+    return registry_status()
+
+
+@app.get("/api/providers/registry/audit")
+def get_provider_audit(provider_id: str | None = Query(default=None)) -> list[dict[str, Any]]:
+    return [event.model_dump(mode="json") for event in audit_events(provider_id)]
+
+
+@app.get("/api/providers/registry/{provider_id}")
+def get_provider_registry_entry(provider_id: str) -> dict:
+    catalog = registry_status()
+    for item in catalog.providers:
+        if item.entry.provider_id == provider_id:
+            return item.model_dump(mode="json")
+    raise HTTPException(status_code=404, detail={"code": "provider_not_registered", "provider_id": provider_id})
+
+
+@app.post("/api/providers/registry/{provider_id}/install/prepare", response_model=InstallPrepareResponse)
+def prepare_provider_install(provider_id: str) -> InstallPrepareResponse:
+    try:
+        return prepare_install(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/install/confirm", response_model=InstallResult)
+def confirm_provider_install(provider_id: str, payload: InstallConfirmRequest) -> InstallResult:
+    try:
+        return confirm_install(provider_id, payload)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/configure", response_model=InstallResult)
+def configure_provider_install(provider_id: str, payload: ProviderConfigureRequest) -> InstallResult:
+    try:
+        return configure_install(provider_id, payload)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/install/retry", response_model=InstallPrepareResponse)
+def retry_provider_install(provider_id: str) -> InstallPrepareResponse:
+    try:
+        return retry_install(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/rollback", response_model=InstallResult)
+def rollback_provider_install(provider_id: str) -> InstallResult:
+    try:
+        return rollback_install(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.get("/api/providers/registry/{provider_id}/install/logs", response_model=list[ProviderInstallLog])
+def get_provider_install_logs(provider_id: str) -> list[ProviderInstallLog]:
+    try:
+        return install_logs(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
 
 
 # Frontend provider ids that are cloud-hosted (vs. local runtimes). Used to derive
