@@ -1,4 +1,4 @@
-import { exportActionsFromProject, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getStageAccess, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -60,6 +60,22 @@ equal(renderedButQualityNotRun["pipeline.quality"], "pending");
 
 const actions = exportActionsFromProject(project);
 deepEqual(actions, { normal: false, force: true, qualityState: "not_run" });
+
+const qualityAccess = getStageAccess(project, "quality");
+equal(qualityAccess.viewable, true);
+equal(qualityAccess.executable, false);
+equal(canUseStageAction(project, "quality", "render"), false);
+equal(getStageAccess(null, "material").viewable, true);
+equal(getStageAccess(null, "quality").viewable, false);
+
+const executableProject = {
+  ...project,
+  stages: project.stages!.map((stage) => stage.stage_id === "quality"
+    ? { ...stage, state: "ready" as const, available_actions: ["render"] }
+    : stage),
+};
+equal(getStageAccess(executableProject, "quality").editable, false);
+equal(canUseStageAction(executableProject, "quality", "render"), true);
 
 const notRunExport = exportActionsFromProject({
   ...project,

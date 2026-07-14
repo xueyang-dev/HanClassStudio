@@ -1,6 +1,66 @@
-import type { ProjectState, ProviderCapability, ProviderConfig } from "./types";
+import type { ProjectState, ProviderCapability, ProviderConfig, StageState } from "./types";
 
 export type PipelineStepStatus = "pending" | "running" | "done" | "error";
+
+export type WorkflowStageId = "material" | "profile" | "design" | "presentation" | "quality" | "delivery";
+
+export interface StageAccess {
+  viewable: boolean;
+  editable: boolean;
+  executable: boolean;
+  state: StageState;
+  availableActions: string[];
+  blockers: string[];
+  warnings: string[];
+}
+
+const EDITABLE_ACTIONS = new Set([
+  "upload",
+  "rerun_ocr",
+  "infer_profile",
+  "confirm_profile",
+  "edit_blueprint",
+  "generate_blueprint",
+  "generate_media",
+  "review_media",
+  "replace_media",
+  "force_regenerate_media",
+]);
+
+/**
+ * Keep navigation visibility separate from backend-declared operations. A
+ * blocked or not-yet-run stage remains viewable so its explanation can be
+ * inspected, while only actions returned by the backend are executable.
+ */
+export function getStageAccess(project: ProjectState | null, stageId: WorkflowStageId): StageAccess {
+  const stage = project?.stages?.find((item) => item.stage_id === stageId);
+  if (!stage) {
+    return {
+      viewable: stageId === "material",
+      editable: false,
+      executable: false,
+      state: "not_started",
+      availableActions: [],
+      blockers: [],
+      warnings: [],
+    };
+  }
+  const availableActions = Array.isArray(stage.available_actions) ? stage.available_actions : [];
+  return {
+    viewable: true,
+    editable: availableActions.some((action) => EDITABLE_ACTIONS.has(action)),
+    executable: availableActions.length > 0,
+    state: stage.state,
+    availableActions,
+    blockers: stage.blockers ?? [],
+    warnings: stage.warnings ?? [],
+  };
+}
+
+export function canUseStageAction(project: ProjectState | null, stageId: WorkflowStageId, action: string): boolean {
+  const access = getStageAccess(project, stageId);
+  return access.executable && access.availableActions.includes(action);
+}
 
 export const PIPELINE_STEP_KEYS = [
   "pipeline.contract",

@@ -94,7 +94,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus } from "./state";
+import { canUseStageAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
@@ -199,6 +199,11 @@ function asStepId(value: string | null | undefined): StepId | undefined {
   return steps.some((step) => step.id === value) ? value as StepId : undefined;
 }
 
+function requestedProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("project_id");
+}
+
 const emptyProfile: LessonProfile = {
   lesson_title: "",
   subject: "国际中文",
@@ -231,8 +236,10 @@ function readableError(err: unknown, t: (key: string, vars?: Record<string, stri
 
 export function App() {
   const { t } = useI18n();
+  const routeProjectId = requestedProjectId();
   const [activeStep, setActiveStep] = useState<StepId>("material");
   const [project, setProject] = useState<ProjectState | null>(null);
+  const [projectLoading, setProjectLoading] = useState(Boolean(routeProjectId));
   const [designSummary, setDesignSummary] = useState<StateFirstTeacherSummary | null>(null);
   const [profile, setProfile] = useState<LessonProfile>(emptyProfile);
   const [blueprint, setBlueprint] = useState<LessonBlueprint | null>(null);
@@ -271,20 +278,12 @@ export function App() {
   const projectLoadSequenceRef = useRef(0);
   const artifactRequestSequenceRef = useRef(0);
 
-  const availableSteps = useMemo<Record<StepId, boolean>>(() => {
-    const canOpen = (stageId: string) => {
-      const state = project?.stages?.find((stage) => stage.stage_id === stageId)?.state;
-      return Boolean(state && state !== "not_started");
-    };
-    return {
-      material: true,
-      profile: canOpen("profile"),
-      design: canOpen("design"),
-      presentation: canOpen("presentation"),
-      quality: canOpen("quality"),
-      delivery: canOpen("delivery") || Boolean(pptxExport),
-    };
-  }, [project, pptxExport]);
+  const stageAccess = useMemo<Record<StepId, StageAccess>>(
+    () => Object.fromEntries(steps.map((step) => [step.id, getStageAccess(project, step.id as WorkflowStageId)])) as Record<StepId, StageAccess>,
+    [project],
+  );
+
+  const canUseAction = (stageId: StepId, action: string) => canUseStageAction(project, stageId as WorkflowStageId, action);
 
   const completedSteps = useMemo<Record<StepId, boolean>>(() => ({
     material: project?.stages?.find((stage) => stage.stage_id === "material")?.state === "completed",
@@ -304,10 +303,10 @@ export function App() {
     getComponentRegistry()
       .then(setComponentRegistry)
       .catch((err) => setError(readableError(err, t)));
-    if (!readOnboardingSeen()) {
+    if (!readOnboardingSeen() && !routeProjectId) {
       setOnboardingOpen(true);
     }
-  }, []);
+  }, [routeProjectId, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -325,6 +324,7 @@ export function App() {
     const params = new URLSearchParams(window.location.search);
     const projectId = params.get("project_id");
     if (projectId) {
+      setProjectLoading(true);
       const loadSequence = ++projectLoadSequenceRef.current;
       activeProjectIdRef.current = projectId;
       void fetchProject(projectId)
@@ -335,7 +335,12 @@ export function App() {
         })
         .catch((err) => {
           if (!cancelled) setError(readableError(err, t));
+        })
+        .finally(() => {
+          if (!cancelled) setProjectLoading(false);
         });
+    } else {
+      setProjectLoading(false);
     }
     return () => {
       cancelled = true;
@@ -489,6 +494,9 @@ export function App() {
   async function openProject(projectId: string, stage?: string) {
     const loadSequence = ++projectLoadSequenceRef.current;
     activeProjectIdRef.current = projectId;
+    setProject(null);
+    setProfile(emptyProfile);
+    setProjectLoading(true);
     setBusy(t("busy.openingProject"));
     setError("");
     try {
@@ -499,6 +507,7 @@ export function App() {
     } catch (err) {
       setError(readableError(err, t));
     } finally {
+      setProjectLoading(false);
       setBusy("");
     }
   }
@@ -772,16 +781,18 @@ export function App() {
         <nav className="step-list" aria-label={t("nav.workflow")}>
           {steps.map((step) => {
             const Icon = step.icon;
-            const available = availableSteps[step.id];
+            const access = stageAccess[step.id];
             return (
               <button
                 key={step.id}
                 type="button"
                 className={activeStep === step.id ? "active" : ""}
-                aria-disabled={!available}
-                title={!available ? t("nav.locked") : undefined}
+                aria-current={activeStep === step.id ? "step" : undefined}
+                aria-disabled={!access.viewable || undefined}
+                disabled={!access.viewable}
+                title={!access.viewable ? t("nav.locked") : undefined}
                 onClick={() => {
-                  if (available) {
+                  if (access.viewable) {
                     setActiveStep(step.id);
                     setNavNotice("");
                   } else {
@@ -804,13 +815,13 @@ export function App() {
         <header className="topbar">
           <div className="topbar-title">
             <p className="eyebrow">{t("topbar.eyebrow")}</p>
-            <h1>{profile.lesson_title || t("topbar.newLesson")}</h1>
+            <h1>{projectLoading ? <span className="skeleton-line skeleton-line-title" aria-hidden="true" /> : profile.lesson_title || t("topbar.newLesson")}</h1>
           </div>
           <div className="topbar-aside">
             <details className="project-status-menu">
               <summary>
                 <ShieldCheck size={17} aria-hidden="true" />
-                {project ? t("status.quality", { state: qualityLabel }) : t("status.ready")}
+                {projectLoading ? t("status.loadingProject") : project ? t("status.quality", { state: qualityLabel }) : t("status.ready")}
                 <ChevronDown size={16} aria-hidden="true" />
               </summary>
               <div>
@@ -852,7 +863,9 @@ export function App() {
           </div>
         )}
 
-        {activeStep === "material" && (
+        {projectLoading ? (
+          <ProjectLoadingSkeleton />
+        ) : activeStep === "material" && (
           <section className="panel">
             <PanelHeader icon={<FileUp size={22} />} title={t("panel.upload.title")} action={t("panel.upload.action")} />
             <label className="upload-zone">
@@ -929,7 +942,7 @@ export function App() {
             <StateFirstSummaryView summary={designSummary} />
             <div className="action-row">
               <button type="button" className="secondary" onClick={() => setActiveStep("profile")}>{t("design.back")}</button>
-              <button type="button" className="primary" disabled={!availableSteps.presentation} onClick={() => setActiveStep("presentation")}>{t("design.continue")}</button>
+              <button type="button" className="primary" disabled={!stageAccess.presentation.viewable} onClick={() => setActiveStep("presentation")}>{t("design.continue")}</button>
             </div>
           </section>
         )}
@@ -2620,4 +2633,22 @@ function downloadBlob(blob: Blob, filename: string) {
 
 function EmptyState({ text }: { text: string }) {
   return <div className="empty-state">{text}</div>;
+}
+
+function ProjectLoadingSkeleton() {
+  const { t } = useI18n();
+  return (
+    <section className="panel project-loading" role="status" aria-live="polite" aria-label={t("status.loadingProject")}>
+      <div className="skeleton-block skeleton-block-heading" aria-hidden="true" />
+      <div className="skeleton-block skeleton-block-copy" aria-hidden="true" />
+      <div className="skeleton-block skeleton-block-copy short" aria-hidden="true" />
+      <div className="skeleton-grid" aria-hidden="true">
+        <div className="skeleton-block" />
+        <div className="skeleton-block" />
+        <div className="skeleton-block" />
+        <div className="skeleton-block" />
+      </div>
+      <span className="sr-only">{t("status.loadingProject")}</span>
+    </section>
+  );
 }
