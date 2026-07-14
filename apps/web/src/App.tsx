@@ -2324,7 +2324,7 @@ function BlueprintEditor({
               <span className="slide-number">{slide.id}</span>
               <span>
                 <strong>{slide.title || t("editor.pageFallback", { id: slide.id })}</strong>
-                <small>{slide.slide_type || "页面"} · {slide.layout_variant || "布局"}</small>
+                <small>{slide.slide_type || t("editor.pageDefaultType")} · {slide.layout_variant || t("editor.layoutDefault")}</small>
               </span>
               {isExpanded ? <ChevronDown size={18} aria-hidden="true" /> : <ChevronRight size={18} aria-hidden="true" />}
             </button>
