@@ -102,10 +102,19 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
   await languageField.fill(firstValue);
   await expect.poll(() => providerPuts).toBeGreaterThan(0);
   await expect.poll(() => aborted).toBe(true);
-  await expect(page.locator(".notice.error")).toContainText("后端");
-  const failedRequestCount = providerPuts;
+  const providerSaveError = dialog
+    .locator(".notice.error")
+    .filter({ hasText: "后端" });
+  await expect(providerSaveError).toHaveCount(1);
+  await expect(providerSaveError).toBeVisible();
+  const retryResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/settings/providers") &&
+      response.ok()
+  );
   await languageField.fill(secondValue);
-  await expect.poll(() => providerPuts).toBeGreaterThan(failedRequestCount);
+  await retryResponsePromise;
   await page.unroute("**/api/settings/providers");
-  await expect(page.locator(".notice.error")).toHaveCount(0);
+  await expect(providerSaveError).toHaveCount(0);
 });

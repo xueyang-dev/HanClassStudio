@@ -324,6 +324,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  const [providerSaveError, setProviderSaveError] = useState("");
   const [artifactTree, setArtifactTree] = useState<ArtifactTree | null>(null);
   const [componentRegistry, setComponentRegistry] = useState<ComponentRegistry>({});
   const [ocrStatus, setOcrStatus] = useState<OcrStatusResponse | null>(null);
@@ -513,7 +514,7 @@ export function App() {
           if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           providerSettingsRef.current = next;
           providerConfigBaselineRef.current = snapshot;
-          setError("");
+          setProviderSaveError("");
           setSettingsSynced(true);
           return fetchProviderCapabilities().then((catalog) => {
             if (isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) setProviderCatalog(catalog);
@@ -522,7 +523,7 @@ export function App() {
         .catch((error: unknown) => {
           if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           setSettingsSynced(false);
-          setError(readableError(error, t));
+          setProviderSaveError(readableError(error, t));
         });
     }, 400);
     return () => {
@@ -1283,6 +1284,7 @@ export function App() {
           config={providerConfig}
           catalog={providerCatalog}
           synced={settingsSynced}
+          error={providerSaveError}
           onChange={(next) => {
             setProviderConfig(next);
             writeStoredProviderConfig(next);
@@ -1699,12 +1701,14 @@ function ModelSettingsModal({
   onChange,
   onClose,
   synced,
+  error,
 }: {
   config: ProviderConfig;
   catalog: ProviderDefinition[];
   onChange: (next: ProviderConfig) => void;
   onClose: () => void;
   synced?: boolean;
+  error?: string;
 }) {
   const { t } = useI18n();
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
@@ -1727,6 +1731,7 @@ function ModelSettingsModal({
         </header>
 
         <p id="modelSettingsDescription" className="sr-only">{t("settings.autoSaveNote")}</p>
+        {error && <div className="notice error" role="alert" aria-live="assertive">{error}</div>}
 
         <div className="settings-progress">
           <span>{t("provider.configuredCount", { n: configuredCount, total: CAPABILITY_ORDER.length })}</span>
