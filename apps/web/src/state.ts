@@ -88,6 +88,14 @@ export function canUseStageAction(project: ProjectState | null, stageId: Workflo
   return access.executable && access.availableActions.includes(action);
 }
 
+/** Only ask for the teacher summary after the design stage has produced
+ * authoritative State-first artifacts. A ready/not-started stage is an
+ * expected empty state, not an API error to surface in the browser console. */
+export function shouldFetchDesignSummary(project: ProjectState | null): boolean {
+  const stage = project?.stages?.find((item) => item.stage_id === "design");
+  return Boolean(stage && !stage.stale && ["completed", "warning"].includes(stage.state));
+}
+
 /**
  * Return one backend-declared action that moves the workflow forward. This is
  * intentionally a single answer: when an upstream prerequisite is available,

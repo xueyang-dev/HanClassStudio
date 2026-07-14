@@ -260,8 +260,16 @@ button:disabled,
   color: var(--ink);
   font-size: 12px;
   font-weight: 650;
+  white-space: nowrap;
   cursor: pointer;
   list-style: none;
+}
+
+.project-status-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-status-menu summary::-webkit-details-marker { display: none; }
@@ -540,6 +548,21 @@ h4 {
 
   .top-actions {
     flex-wrap: nowrap;
+  }
+}
+
+@media (min-width: 1101px) and (max-width: 1320px) {
+  /* Keep the primary actions on one line at laptop widths. The detailed
+     * backend/project status remains available in the open menu; only its
+     * secondary label collapses here. */
+  .project-status-label {
+    display: none;
+  }
+
+  .project-status-menu summary {
+    width: 44px;
+    justify-content: center;
+    padding-inline: 8px;
   }
 }
 
@@ -2439,6 +2462,30 @@ dialog.confirm-dialog {
   .workspace {
     padding: 28px 20px 56px;
   }
+
+  /* The mobile N/6 navigator replaces the sidebar workflow. The pipeline
+     summary follows the same rule at tablet widths so it never becomes an
+     unlabeled horizontal scroller. */
+  .pipeline-status {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .pipeline-step {
+    min-width: 0;
+    flex: none;
+    border-inline-end: 1px solid var(--line);
+    border-block-end: 1px solid var(--line);
+  }
+
+  .pipeline-step:nth-child(3n) {
+    border-inline-end: 0;
+  }
+
+  .pipeline-step:nth-last-child(-n + 3) {
+    border-block-end: 0;
+  }
 }
 
 @media (max-width: 700px) {
@@ -2587,6 +2634,38 @@ dialog.confirm-dialog {
 
   .courseware-preview {
     min-height: 520px;
+  }
+
+  /* The compact N/6 navigator is the mobile workflow control. Keep the
+     pipeline summary readable without leaving an unlabeled horizontal scroller
+     underneath it. */
+  .pipeline-status {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .pipeline-step {
+    min-width: 0;
+    flex: none;
+    border-inline-end: 1px solid var(--line);
+    border-block-end: 1px solid var(--line);
+  }
+
+  .pipeline-step:nth-child(2n) {
+    border-inline-end: 0;
+  }
+
+  .pipeline-step:nth-child(3n) {
+    border-inline-end: 1px solid var(--line);
+  }
+
+  .pipeline-step:nth-last-child(-n + 2) {
+    border-block-end: 0;
+  }
+
+  .pipeline-step:nth-last-child(3) {
+    border-block-end: 1px solid var(--line);
   }
 }
 

@@ -94,7 +94,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -483,10 +483,18 @@ export function App() {
       setDesignSummary(null);
       return;
     }
+    // A ready/not-started design stage has no State-first artifacts yet. Do not
+    // probe the summary endpoint in that state: the backend correctly returns
+    // 404 for an unavailable summary, but a request for an expected empty state
+    // would still surface as a browser console error.
+    if (!shouldFetchDesignSummary(project)) {
+      setDesignSummary(null);
+      return;
+    }
     fetchDesignSummary(project.project_id)
       .then(setDesignSummary)
       .catch(() => setDesignSummary(null));
-  }, [project?.project_id, project?.project_revision]);
+  }, [project?.project_id, project?.project_revision, project?.stages]);
 
   // Persist provider settings to the backend whenever they change (best-effort,
   // debounced, and skipped until the initial load has resolved).
@@ -505,6 +513,7 @@ export function App() {
           if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           providerSettingsRef.current = next;
           providerConfigBaselineRef.current = snapshot;
+          setError("");
           setSettingsSynced(true);
           return fetchProviderCapabilities().then((catalog) => {
             if (isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) setProviderCatalog(catalog);
@@ -513,7 +522,7 @@ export function App() {
         .catch((error: unknown) => {
           if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           setSettingsSynced(false);
-          setError(error instanceof Error ? error.message : String(error));
+          setError(readableError(error, t));
         });
     }, 400);
     return () => {
@@ -938,9 +947,11 @@ export function App() {
           </div>
           <div className="topbar-aside">
             <details className="project-status-menu">
-              <summary>
+              <summary aria-label={projectLoading ? t("status.loadingProject") : project ? qualityLabel : t("status.ready")}>
                 <ShieldCheck size={17} aria-hidden="true" />
-                {projectLoading ? t("status.loadingProject") : project ? t("status.quality", { state: qualityLabel }) : t("status.ready")}
+                <span className="project-status-label">
+                  {projectLoading ? t("status.loadingProject") : project ? qualityLabel : t("status.ready")}
+                </span>
                 <ChevronDown size={16} aria-hidden="true" />
               </summary>
               <div>
@@ -1703,7 +1714,7 @@ function ModelSettingsModal({
   const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
   return (
-    <dialog ref={dialogRef} className="modal-backdrop settings-dialog" aria-labelledby="modelSettingsTitle">
+    <dialog ref={dialogRef} className="modal-backdrop settings-dialog" aria-labelledby="modelSettingsTitle" aria-describedby="modelSettingsDescription" aria-modal="true">
       <section className="settings-modal provider-settings-modal">
         <header>
           <div>
@@ -1714,6 +1725,8 @@ function ModelSettingsModal({
             <X size={20} aria-hidden="true" />
           </button>
         </header>
+
+        <p id="modelSettingsDescription" className="sr-only">{t("settings.autoSaveNote")}</p>
 
         <div className="settings-progress">
           <span>{t("provider.configuredCount", { n: configuredCount, total: CAPABILITY_ORDER.length })}</span>
@@ -1790,10 +1803,10 @@ function ForceExportDialog({
   const allowed = Boolean(project && gateSummary?.force_export_allowed && !gateSummary.export_allowed && canExport);
 
   return (
-    <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="forceExportTitle">
+    <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="forceExportTitle" aria-describedby="forceExportDescription" aria-modal="true">
       <section className="confirm-modal" role="alertdialog" aria-modal="true">
         <h2 id="forceExportTitle">{t("delivery.forceTitle")}</h2>
-        <p>{t("delivery.forceBody", { n: issueCount })}</p>
+        <p id="forceExportDescription">{t("delivery.forceBody", { n: issueCount })}</p>
         <div className="action-row">
           <button type="button" className="secondary" onClick={onCancel}>{t("delivery.cancel")}</button>
           <button type="button" className="danger-button filled" disabled={busy || !allowed} onClick={() => void onConfirm(type)}>{t("delivery.confirmForce")}</button>
@@ -1841,7 +1854,7 @@ function OnboardingWizard({
   }
 
   return (
-    <dialog ref={dialogRef} className="settings-dialog onboarding-dialog" aria-labelledby="onboardingTitle">
+    <dialog ref={dialogRef} className="settings-dialog onboarding-dialog" aria-labelledby="onboardingTitle" aria-describedby="onboardingDescription" aria-modal="true">
       <section className="settings-modal onboarding-modal">
         <header>
           <div>
@@ -1852,6 +1865,8 @@ function OnboardingWizard({
             <X size={20} aria-hidden="true" />
           </button>
         </header>
+
+        <p id="onboardingDescription" className="sr-only">{t("onboarding.welcome.body")}</p>
 
         <div className="onboarding-steps">
           {steps.map((s, idx) => {
@@ -2619,8 +2634,8 @@ function ValidationList({ title, items, empty }: { title: string; items: string[
       <h4>{title}</h4>
       {items.length ? (
         <ul>
-          {items.map((item) => (
-            <li key={item}>{item}</li>
+          {items.map((item, index) => (
+            <li key={`${item}-${index}`}>{item}</li>
           ))}
         </ul>
       ) : (
@@ -2652,8 +2667,8 @@ function StateFirstSummaryView({ summary }: { summary: StateFirstTeacherSummary 
       </div>
       {(summary.blockers.length > 0 || summary.warnings.length > 0) && (
         <div className="summary-issues">
-          {localizeMessages(summary.blockers, t).map((item) => <p className="error-text" key={`blocker-${item}`}>{item}</p>)}
-          {localizeMessages(summary.warnings, t).map((item) => <p className="warning-text" key={`warning-${item}`}>{item}</p>)}
+          {localizeMessages(summary.blockers, t).map((item, index) => <p className="error-text" key={`blocker-${item}-${index}`}>{item}</p>)}
+          {localizeMessages(summary.warnings, t).map((item, index) => <p className="warning-text" key={`warning-${item}-${index}`}>{item}</p>)}
         </div>
       )}
     </section>
@@ -2721,8 +2736,8 @@ function StageNotice({ stage }: { stage?: StageStatus }) {
   return (
     <div className={`stage-notice ${stage.state === "warning" ? "warning" : "blocked"}`} role="status">
       <strong>{stateLabel}</strong>
-      {localizeMessages(stage.blockers, t).map((item) => <span key={`blocker-${item}`}>{item}</span>)}
-      {localizeMessages(stage.warnings, t).map((item) => <span key={`warning-${item}`}>{item}</span>)}
+      {localizeMessages(stage.blockers, t).map((item, index) => <span key={`blocker-${item}-${index}`}>{item}</span>)}
+      {localizeMessages(stage.warnings, t).map((item, index) => <span key={`warning-${item}-${index}`}>{item}</span>)}
     </div>
   );
 }
@@ -2910,8 +2925,8 @@ function QualityReportView({ project }: { project: ProjectState | null }) {
                 <p>{detail}</p>
                 {items.length ? (
                   <ul>
-                        {localizeMessages(items, t).map((item) => (
-                          <li key={item}>{item}</li>
+                        {localizeMessages(items, t).map((item, index) => (
+                          <li key={`${item}-${index}`}>{item}</li>
                     ))}
                   </ul>
                 ) : (

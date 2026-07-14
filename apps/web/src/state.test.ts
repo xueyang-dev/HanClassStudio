@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldPersistProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -86,6 +86,9 @@ const nextActionProject = {
 deepEqual(getNextWorkflowAction(nextActionProject), { stageId: "profile", action: "confirm_profile" });
 deepEqual(getNextWorkflowAction(executableProject), { stageId: "quality", action: "render" });
 equal(getNextWorkflowAction(null), null);
+equal(shouldFetchDesignSummary(project), true);
+equal(shouldFetchDesignSummary({ ...project, stages: project.stages!.map((stage) => stage.stage_id === "design" ? { ...stage, state: "ready" as const } : stage) }), false);
+equal(shouldFetchDesignSummary({ ...project, stages: project.stages!.map((stage) => stage.stage_id === "design" ? { ...stage, stale: true } : stage) }), false);
 
 const providerCatalog = [
   {
