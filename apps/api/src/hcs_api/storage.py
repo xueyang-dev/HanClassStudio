@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -371,10 +372,25 @@ def read_provider_settings() -> ProviderSettings:
 
 def write_provider_settings(settings: ProviderSettings) -> None:
     ensure_runtime()
-    PROVIDER_SETTINGS_PATH.write_text(
-        json.dumps(settings.model_dump(mode="json"), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    payload = json.dumps(settings.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    # Browser startup requests read this file concurrently (settings, catalog,
+    # OCR status). Replace it atomically so a reader never observes a partial
+    # JSON document while another request is saving settings.
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{PROVIDER_SETTINGS_PATH.name}.",
+        dir=str(PROVIDER_SETTINGS_PATH.parent),
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, PROVIDER_SETTINGS_PATH)
+    finally:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
 
 
 def get_project_state(project_id: str) -> ProjectState:

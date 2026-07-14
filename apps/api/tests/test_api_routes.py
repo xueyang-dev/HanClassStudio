@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -180,6 +181,23 @@ def test_provider_settings_partial_update_preserves_omitted_sections(tmp_path, m
     assert body["llm"]["api_key_present"] is True
     assert body["audio"]["provider"] == initial["audio"]["provider"]
     assert body["audio"]["model"] == initial["audio"]["model"]
+
+
+def test_provider_settings_atomic_write_survives_concurrent_reads(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", tmp_path / "config" / "provider_settings.json")
+    settings = ProviderSettings(llm=LLMProviderSettings(provider="deterministic", model="deterministic-v1"))
+    storage.write_provider_settings(settings)
+
+    def read_or_write(index: int) -> ProviderSettings:
+        if index % 2:
+            storage.write_provider_settings(settings)
+        return storage.read_provider_settings()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(read_or_write, range(24)))
+
+    assert all(result.llm.provider == "deterministic" for result in results)
 
 
 def test_provider_capability_empty_api_key_does_not_erase_existing_secret(tmp_path, monkeypatch) -> None:
