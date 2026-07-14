@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig, shouldPersistProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -114,6 +114,12 @@ equal(providerConfigSnapshot({
 equal(providerConfigSnapshot({
   llm: { providerId: "deterministic", values: { model: "teacher-edited", api_key: "" } },
 }) === providerBaseline, false);
+equal(shouldPersistProviderConfig({
+  llm: { providerId: "deterministic", values: { model: "deterministic-v1", api_key: "" } },
+}, providerBaseline, false), false);
+equal(shouldPersistProviderConfig({
+  llm: { providerId: "deterministic", values: { model: "teacher-edited", api_key: "" } },
+}, providerBaseline, true), true);
 
 equal(isCurrentRequest(2, 2), true);
 equal(isCurrentRequest(1, 2), false);

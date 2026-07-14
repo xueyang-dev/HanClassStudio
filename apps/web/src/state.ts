@@ -139,6 +139,10 @@ export function providerConfigSnapshot(config: ProviderConfig): string {
   return JSON.stringify(ordered);
 }
 
+export function shouldPersistProviderConfig(config: ProviderConfig, baseline: string | null, loaded: boolean): boolean {
+  return loaded && baseline !== providerConfigSnapshot(config);
+}
+
 export function isCurrentRequest(sequence: number, currentSequence: number, aborted = false): boolean {
   return !aborted && sequence === currentSequence;
 }

@@ -94,7 +94,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -418,7 +418,7 @@ export function App() {
   useEffect(() => {
     if (!settingsLoadedRef.current) return;
     const snapshot = providerConfigSnapshot(providerConfig);
-    if (providerConfigBaselineRef.current === snapshot) return;
+    if (!shouldPersistProviderConfig(providerConfig, providerConfigBaselineRef.current, settingsLoadedRef.current)) return;
     const sequence = ++settingsSaveSequenceRef.current;
     settingsSaveControllerRef.current?.abort();
     const controller = new AbortController();

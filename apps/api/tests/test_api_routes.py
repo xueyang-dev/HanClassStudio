@@ -318,6 +318,23 @@ def test_quality_stage_does_not_advertise_render_without_lesson_artifact(tmp_pat
     assert "Blueprint artifact is missing" in quality["blockers"]
 
 
+def test_project_stage_actions_expose_pipeline_and_handoff_operations(tmp_path, monkeypatch) -> None:
+    runtime_dir = tmp_path / "runtime"
+    projects_dir = runtime_dir / "projects"
+    monkeypatch.setattr(storage, "RUNTIME_DIR", runtime_dir)
+    monkeypatch.setattr(storage, "PROJECTS_DIR", projects_dir)
+    monkeypatch.setattr(main, "PROJECTS_DIR", projects_dir)
+    project_id = "stage-action-operations"
+    storage.ensure_project(project_id)
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(lesson_title="契约"))
+    storage.set_profile_state(project_id, "confirmed")
+
+    body = TestClient(app).get(f"/api/projects/{project_id}").json()
+    stages = {stage["stage_id"]: stage for stage in body["stages"]}
+    assert "run_pipeline" in stages["design"]["available_actions"]
+    assert {"agent_package", "agent_validate"}.issubset(stages["delivery"]["available_actions"])
+
+
 def test_gate_summary_requires_all_four_gates_and_render_before_export(tmp_path, monkeypatch) -> None:
     runtime_dir = tmp_path / "runtime"
     projects_dir = runtime_dir / "projects"
