@@ -201,6 +201,14 @@ function asStepId(value: string | null | undefined): StepId | undefined {
   return steps.some((step) => step.id === value) ? value as StepId : undefined;
 }
 
+function resolveProjectStage(project: ProjectState, requestedStage?: string | null): StepId {
+  const requested = asStepId(requestedStage);
+  if (requested && getStageAccess(project, requested).viewable) return requested;
+  const current = asStepId(project.current_stage);
+  if (current && getStageAccess(project, current).viewable) return current;
+  return "material";
+}
+
 function requestedProjectId(): string | null {
   if (typeof window === "undefined") return null;
   return new URLSearchParams(window.location.search).get("project_id");
@@ -398,7 +406,7 @@ export function App() {
         .then((next) => {
           if (cancelled || loadSequence !== projectLoadSequenceRef.current) return;
           updateProject(next);
-          setActiveStep(asStepId(params.get("stage")) ?? asStepId(next.current_stage) ?? "material");
+          setActiveStep(resolveProjectStage(next, params.get("stage")));
         })
         .catch((err) => {
           if (!cancelled) setError(readableError(err, t));
@@ -576,7 +584,7 @@ export function App() {
       const next = await fetchProject(projectId);
       if (loadSequence !== projectLoadSequenceRef.current) return;
       updateProject(next);
-      setActiveStep(asStepId(stage) ?? asStepId(next.current_stage) ?? "material");
+      setActiveStep(resolveProjectStage(next, stage));
     } catch (err) {
       setError(readableError(err, t));
     } finally {
