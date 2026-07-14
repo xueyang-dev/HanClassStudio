@@ -94,7 +94,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
@@ -272,6 +272,7 @@ export function App() {
   const [forceExportType, setForceExportType] = useState<"html" | "pptx" | null>(null);
   const providerSettingsRef = useRef<BackendProviderSettings | null>(null);
   const settingsLoadedRef = useRef(false);
+  const providerConfigBaselineRef = useRef<string | null>(null);
   const settingsSaveSequenceRef = useRef(0);
   const settingsSaveControllerRef = useRef<AbortController | null>(null);
   const activeProjectIdRef = useRef<string | null>(null);
@@ -379,18 +380,19 @@ export function App() {
       .then((backend) => {
         providerSettingsRef.current = backend;
         const fromBackend = backendToConfig(backend);
-        if (Object.keys(fromBackend).length > 0) {
-          setProviderConfig(fromBackend);
-          writeStoredProviderConfig(fromBackend);
-        } else if (Object.keys(providerConfig).length > 0) {
-          // Promote any existing local-only config to the server.
-          putProviderSettings(configToBackend(providerConfig, backend)).catch(() => {});
-        }
+        const initialConfig = Object.keys(fromBackend).length > 0 ? fromBackend : providerConfig;
+        providerConfigBaselineRef.current = providerConfigSnapshot(initialConfig);
+        if (Object.keys(fromBackend).length > 0) setProviderConfig(fromBackend);
+        writeStoredProviderConfig(initialConfig);
         setSettingsSynced(true);
-      })
-      .catch(() => setSettingsSynced(false))
-      .finally(() => {
         settingsLoadedRef.current = true;
+      })
+      .catch(() => {
+        // Do not promote browser-only settings while the backend is unavailable.
+        // A later, explicit field edit may retry the save through the normal
+        // debounced path.
+        providerConfigBaselineRef.current = providerConfigSnapshot(providerConfig);
+        setSettingsSynced(false);
       });
   }, []);
 
@@ -414,6 +416,8 @@ export function App() {
   // debounced, and skipped until the initial load has resolved).
   useEffect(() => {
     if (!settingsLoadedRef.current) return;
+    const snapshot = providerConfigSnapshot(providerConfig);
+    if (providerConfigBaselineRef.current === snapshot) return;
     const sequence = ++settingsSaveSequenceRef.current;
     settingsSaveControllerRef.current?.abort();
     const controller = new AbortController();
@@ -424,6 +428,7 @@ export function App() {
         .then((next) => {
           if (!isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) return;
           providerSettingsRef.current = next;
+          providerConfigBaselineRef.current = snapshot;
           setSettingsSynced(true);
           return fetchProviderCapabilities().then((catalog) => {
             if (isCurrentRequest(sequence, settingsSaveSequenceRef.current, controller.signal.aborted)) setProviderCatalog(catalog);
@@ -1558,12 +1563,70 @@ function ModelSettingsModal({
 }) {
   const { t } = useI18n();
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>("ocr");
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef(onClose);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!dialog.open) dialog.showModal();
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+    ));
+    const focusFirst = () => {
+      const first = focusable()[0];
+      (first ?? dialog).focus();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const handleCancel = (event: Event) => {
+      event.preventDefault();
+      closeRef.current();
+    };
+    dialog.addEventListener("keydown", handleKeyDown);
+    dialog.addEventListener("cancel", handleCancel);
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(focusFirst);
+    return () => {
+      dialog.removeEventListener("keydown", handleKeyDown);
+      dialog.removeEventListener("cancel", handleCancel);
+      if (dialog.open) dialog.close();
+      document.body.style.overflow = "";
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
 
   const configuredCount = CAPABILITY_ORDER.filter((c) => isCapabilityConfigured(config[c], c, catalog)).length;
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="settings-modal provider-settings-modal" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
+    <dialog ref={dialogRef} className="modal-backdrop settings-dialog" aria-labelledby="modelSettingsTitle">
+      <section className="settings-modal provider-settings-modal">
         <header>
           <div>
             <p className="eyebrow">{t("settings.eyebrow")}</p>
@@ -1620,7 +1683,7 @@ function ModelSettingsModal({
           </button>
         </div>
       </section>
-    </div>
+    </dialog>
   );
 }
 

@@ -116,6 +116,29 @@ export function sanitizeProviderConfig(config: ProviderConfig): ProviderConfig {
   return sanitized;
 }
 
+/** Stable in-memory comparison key for provider edits. It intentionally keeps
+ * credential fields in memory for change detection but is never persisted or
+ * sent to logs/storage by this helper. */
+export function providerConfigSnapshot(config: ProviderConfig): string {
+  const ordered = Object.keys(config)
+    .sort()
+    .reduce<Record<string, unknown>>((result, capability) => {
+      const value = config[capability as ProviderCapability];
+      if (!value) return result;
+      result[capability] = {
+        providerId: value.providerId,
+        values: Object.keys(value.values ?? {})
+          .sort()
+          .reduce<Record<string, string>>((values, key) => {
+            values[key] = value.values[key];
+            return values;
+          }, {}),
+      };
+      return result;
+    }, {});
+  return JSON.stringify(ordered);
+}
+
 export function isCurrentRequest(sequence: number, currentSequence: number, aborted = false): boolean {
   return !aborted && sequence === currentSequence;
 }

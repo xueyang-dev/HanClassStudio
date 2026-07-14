@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, sanitizeProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, sanitizeProviderConfig } from "./state";
 import type { ProjectState } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -104,6 +104,16 @@ deepEqual(persisted, {
   llm: { providerId: "openai_compatible", values: { model: "teacher" } },
   image: { providerId: "placeholder", values: { model: "svg" } },
 });
+
+const providerBaseline = providerConfigSnapshot({
+  llm: { providerId: "deterministic", values: { model: "deterministic-v1", api_key: "" } },
+});
+equal(providerConfigSnapshot({
+  llm: { providerId: "deterministic", values: { api_key: "", model: "deterministic-v1" } },
+}), providerBaseline);
+equal(providerConfigSnapshot({
+  llm: { providerId: "deterministic", values: { model: "teacher-edited", api_key: "" } },
+}) === providerBaseline, false);
 
 equal(isCurrentRequest(2, 2), true);
 equal(isCurrentRequest(1, 2), false);

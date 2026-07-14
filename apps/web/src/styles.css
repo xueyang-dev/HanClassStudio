@@ -1742,6 +1742,30 @@ textarea:focus,
   background: rgba(24, 25, 22, 0.64);
 }
 
+dialog.settings-dialog {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  padding: 24px;
+  background: transparent;
+  color: inherit;
+}
+
+dialog.settings-dialog::backdrop {
+  background: rgba(24, 25, 22, 0.64);
+}
+
+dialog.settings-dialog[open] {
+  display: grid;
+  place-items: center;
+}
+
+dialog.settings-dialog:focus {
+  outline: none;
+}
+
 .settings-modal {
   width: min(920px, 100%);
   max-height: min(880px, calc(100dvh - 48px));
