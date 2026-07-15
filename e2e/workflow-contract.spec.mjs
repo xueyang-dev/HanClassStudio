@@ -78,6 +78,23 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
     if (request.method() === "PUT" && request.url().endsWith("/api/settings/providers")) providerPuts += 1;
   });
 
+  // This persistence test intentionally supplies a backend-shaped capability
+  // response so it remains independent of whether the CI image has the local
+  // Tesseract binary installed. It does not change the product contract: the
+  // UI still renders the availability returned by the capability endpoint.
+  await page.route("**/api/settings/providers/capabilities", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({
+      response,
+      json: body.map((descriptor) =>
+        descriptor.provider_id === "tesseract"
+          ? { ...descriptor, implemented: true, configurable: true, available: true }
+          : descriptor
+      ),
+    });
+  });
+
   await page.goto("/");
   const onboarding = page.locator("dialog.onboarding-dialog[open]");
   if (await onboarding.count()) await onboarding.getByRole("button", { name: "跳过", exact: true }).click();
@@ -85,7 +102,8 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
   await trigger.click();
   const dialog = page.locator("dialog.settings-dialog[open]");
   await dialog.getByRole("button", { name: "OCR 文字识别", exact: true }).click();
-  const providerSelect = dialog.locator("select").nth(1);
+  const providerSelect = dialog.getByRole("combobox", { name: "选择服务商", exact: true });
+  await expect(providerSelect).toHaveCount(1);
   await page.route("**/api/settings/providers", async (route) => {
     if (route.request().method() === "PUT" && !aborted) {
       aborted = true;
@@ -107,6 +125,12 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
     .filter({ hasText: "后端" });
   await expect(providerSaveError).toHaveCount(1);
   await expect(providerSaveError).toBeVisible();
+  const capabilityRefreshPromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response.url().endsWith("/api/settings/providers/capabilities") &&
+      response.ok()
+  );
   const retryResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
@@ -116,6 +140,8 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
   await languageField.fill(secondValue);
   await retryResponsePromise;
   await page.unroute("**/api/settings/providers");
+  await capabilityRefreshPromise;
+  await page.unroute("**/api/settings/providers/capabilities");
   await expect(providerSaveError).toHaveCount(0);
 });
 
