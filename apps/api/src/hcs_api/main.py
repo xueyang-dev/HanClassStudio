@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from dataclasses import asdict
 from pathlib import Path
@@ -58,6 +59,7 @@ from .provider_registry import (
     registry_status,
     retry_install,
     rollback_install,
+    _redact_sensitive_text,
 )
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
@@ -706,6 +708,7 @@ def _public_provider_settings(settings: ProviderSettings) -> PublicProviderSetti
         "video": bool(str(settings.video.api_key or "").strip()),
     }
     raw_capabilities = settings.capabilities if isinstance(settings.capabilities, dict) else {}
+    sensitive_keys = re.compile(r"(?i)^(?:api[_-]?key|access[_-]?token|authorization|bearer|password|secret|credential|token)$")
     for capability, raw in raw_capabilities.items():
         if not isinstance(raw, dict) or not raw.get("providerId"):
             continue
@@ -713,13 +716,13 @@ def _public_provider_settings(settings: ProviderSettings) -> PublicProviderSetti
         safe_values = {
             str(key): str(value)
             for key, value in values.items()
-            if str(key) not in {"api_key", "apiKey"}
+            if not sensitive_keys.search(str(key))
         }
         capabilities[str(capability)] = PublicCapabilityConfig(
             providerId=str(raw["providerId"]),
             values=safe_values,
             api_key_present=bool(
-                str(values.get("api_key", values.get("apiKey", "")) or "").strip()
+                any(sensitive_keys.search(str(key)) and str(value or "").strip() for key, value in values.items())
                 or flat_api_key_present.get(str(capability), False)
             ),
         )
@@ -741,20 +744,37 @@ def get_provider_settings() -> PublicProviderSettings:
 
 @app.get("/api/settings/providers/capabilities", response_model=list[ProviderCapabilityDescriptor])
 def get_provider_capabilities() -> list[ProviderCapabilityDescriptor]:
-    return provider_capability_catalog(read_provider_settings())
+    try:
+        return provider_capability_catalog(read_provider_settings())
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error) from error
 
 
 def _provider_registry_http_error(error: ProviderRegistryError, *, provider_id: str | None = None) -> HTTPException:
     if error.code == "provider_not_registered":
         status = 404
+    elif error.code.startswith("provider_persistence_") or error.code == "provider_registry_unavailable":
+        status = 503
     elif error.code.endswith("in_progress") or "transition" in error.code or error.code in {
         "provider_plan_invalid", "provider_plan_expired", "provider_confirmation_invalid", "provider_plan_stale",
-        "provider_not_ready", "provider_retry_unavailable", "provider_configuration_unavailable", "provider_rollback_unavailable",
+        "provider_plan_consumed", "provider_not_ready", "provider_retry_unavailable", "provider_configuration_unavailable", "provider_rollback_unavailable",
     }:
         status = 409
     else:
         status = 400
-    detail = {"code": error.code, "message": error.message, "blockers": error.blockers}
+    detail = {
+        "code": error.code,
+        "message": _redact_sensitive_text(error.message),
+        "blockers": [
+            {
+                **item,
+                "message": _redact_sensitive_text(str(item.get("message", ""))),
+            }
+            if isinstance(item, dict)
+            else item
+            for item in error.blockers
+        ],
+    }
     if provider_id:
         detail["provider_id"] = provider_id
     return HTTPException(status_code=status, detail=detail)
@@ -763,7 +783,10 @@ def _provider_registry_http_error(error: ProviderRegistryError, *, provider_id: 
 @app.get("/api/providers/registry", response_model=RegistryCatalogResponse)
 def get_provider_registry() -> RegistryCatalogResponse:
     """Return trusted registry metadata and backend-owned installation facts."""
-    return registry_status()
+    try:
+        return registry_status()
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error) from error
 
 
 @app.get("/api/providers/registry/audit")
@@ -773,7 +796,10 @@ def get_provider_audit(provider_id: str | None = Query(default=None)) -> list[di
 
 @app.get("/api/providers/registry/{provider_id}")
 def get_provider_registry_entry(provider_id: str) -> dict:
-    catalog = registry_status()
+    try:
+        catalog = registry_status()
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
     for item in catalog.providers:
         if item.entry.provider_id == provider_id:
             return item.model_dump(mode="json")

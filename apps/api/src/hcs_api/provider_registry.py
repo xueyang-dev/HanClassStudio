@@ -12,8 +12,10 @@ import hashlib
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
+import sys
 import tempfile
 import threading
 import uuid
@@ -79,7 +81,7 @@ class RegistryConfigField(BaseModel):
 
 
 class RegistryManifest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
     schema_: str = Field(default="hanclassstudio.provider_manifest.v1", alias="schema")
     provider_id: str
@@ -131,20 +133,35 @@ class ProviderRegistryEntry(BaseModel):
             raise ValueError("provider source_ref is required")
         return value
 
+    @field_validator("version")
+    @classmethod
+    def _fixed_version(cls, value: str) -> str:
+        if not value.strip() or value.lower() in {"main", "master", "latest", "head", "develop"}:
+            raise ValueError("provider version must be fixed")
+        return value.strip()
+
     @model_validator(mode="after")
     def _validate_manifest(self) -> "ProviderRegistryEntry":
         if self.manifest.provider_id != self.provider_id or self.manifest.version != self.version:
             raise ValueError("manifest identity does not match registry entry")
+        if self.manifest_version != "1" or self.manifest.schema_ != "hanclassstudio.provider_manifest.v1":
+            raise ValueError("unknown provider manifest version")
         digest = _digest(self.manifest.model_dump(mode="json", by_alias=True))
         if digest != self.manifest_digest:
             raise ValueError("manifest digest cannot be verified")
         if self.trust_level not in {"first_party", "verified_maintainer"}:
             raise ValueError("registry source is not trusted")
-        host = urlparse(self.source_url).hostname or ""
+        source = urlparse(self.source_url)
+        host = source.hostname or ""
+        if source.scheme != "https" or source.username or source.password or source.port:
+            raise ValueError("registry source must use HTTPS without embedded credentials")
         if host not in {"github.com", "huggingface.co"}:
             raise ValueError("registry source host is not trusted")
-        if self.trust_level == "first_party" and not self.repository.startswith("xueyang-dev/HanClassStudio"):
+        if self.trust_level == "first_party" and self.repository != "xueyang-dev/HanClassStudio":
             raise ValueError("first-party entries must point to the HanClassStudio repository")
+        source_parts = [part for part in source.path.strip("/").split("/") if part]
+        if len(source_parts) < 2 or "/".join(source_parts[:2]) != self.repository:
+            raise ValueError("registry source URL does not match its repository")
         if not self.checksum_sha256:
             raise ValueError("artifact checksum is required")
         if not self.manifest.steps:
@@ -215,6 +232,7 @@ class ProviderInstallationRecord(BaseModel):
     failure: ProviderFailure | None = None
     rollback_available: bool = False
     current_plan_id: str | None = None
+    install_started_at: str | None = None
     updated_at: str = ""
 
 
@@ -243,6 +261,7 @@ class ProviderAuditEvent(BaseModel):
     success: bool
     failure_code: str | None = None
     rollback: bool = False
+    reason: str | None = None
 
 
 class RegistryProviderStatus(BaseModel):
@@ -289,8 +308,25 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_SECRET_KEY_PATTERN = re.compile(
+    r"(?i)([\"']?\b(?:api[_-]?key|access[_-]?token|authorization|bearer|password|secret|credential|token)\b[\"']?\s*[:=]\s*[\"']?)([^\"'\s,;}\]]+)"
+)
+_BEARER_PATTERN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_URL_SECRET_PATTERN = re.compile(r"(?i)([?&](?:api[_-]?key|access[_-]?token|token|secret|password)=)[^&\s]+")
+
+
+def _redact_sensitive_text(value: str) -> str:
+    redacted = _BEARER_PATTERN.sub("Bearer [REDACTED]", value)
+    redacted = _SECRET_KEY_PATTERN.sub(r"\1[REDACTED]", redacted)
+    return _URL_SECRET_PATTERN.sub(r"\1[REDACTED]", redacted)
+
+
 def _artifact_checksum(provider_id: str, version: str, source_ref: str) -> str:
     return hashlib.sha256(f"{provider_id}:{version}:{source_ref}".encode("utf-8")).hexdigest()
+
+
+def _plan_digest(plan: InstallationPlan) -> str:
+    return _digest(plan.model_dump(mode="json"))
 
 
 def _fixture(
@@ -310,7 +346,7 @@ def _fixture(
         capability=capability,
         display_name=display_name,
         description=description,
-        source_url="https://github.com/xueyang-dev/HanClassStudio/tree/main/providers",
+        source_url="https://github.com/xueyang-dev/HanClassStudio/tree/v0.1.0/providers",
         repository="xueyang-dev/HanClassStudio",
         publisher="HanClassStudio first-party",
         license="MIT",
@@ -374,6 +410,7 @@ def _state_path(name: str) -> Path:
 
 _persistence_lock = threading.RLock()
 _provider_locks: dict[str, threading.Lock] = {}
+_INSTALL_RECOVERY_AFTER = timedelta(minutes=15)
 
 
 def _provider_lock(provider_id: str) -> threading.Lock:
@@ -387,9 +424,17 @@ def _read_mapping(name: str) -> dict[str, Any]:
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-    return value if isinstance(value, dict) else {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProviderRegistryError(
+            "provider_persistence_corrupt",
+            f"Provider persistence file {path.name} could not be read safely",
+        ) from exc
+    if not isinstance(value, dict):
+        raise ProviderRegistryError(
+            "provider_persistence_corrupt",
+            f"Provider persistence file {path.name} has an invalid shape",
+        )
+    return value
 
 
 def _write_mapping(name: str, value: dict[str, Any]) -> None:
@@ -410,6 +455,22 @@ def _write_mapping(name: str, value: dict[str, Any]) -> None:
             pass
 
 
+def _update_mapping(name: str, update: Any) -> dict[str, Any]:
+    """Atomically read, transform and replace one mapping under one process lock.
+
+    The lock is intentionally process-local.  The current API is deployed as a
+    single worker; multi-worker deployments must add an external lock before
+    advertising cross-process installation concurrency.
+    """
+    with _persistence_lock:
+        current = _read_mapping(name)
+        next_value = update(current)
+        if not isinstance(next_value, dict):
+            raise ProviderRegistryError("provider_persistence_invalid_update", "Provider persistence update was invalid")
+        _write_mapping(name, next_value)
+        return next_value
+
+
 def _append_jsonl(name: str, payload: BaseModel) -> None:
     path = _state_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -421,35 +482,73 @@ def _append_jsonl(name: str, payload: BaseModel) -> None:
 
 
 def _record_from_json(provider_id: str, entry: ProviderRegistryEntry, payload: Any) -> ProviderInstallationRecord:
+    if payload is None:
+        return ProviderInstallationRecord(provider_id=provider_id, capability=entry.capability, available_version=entry.version, updated_at=_iso())
     if isinstance(payload, dict):
         try:
-            return ProviderInstallationRecord.model_validate(payload)
+            record = ProviderInstallationRecord.model_validate(payload)
+            if record.provider_id != provider_id or record.capability != entry.capability:
+                raise ValueError("persisted provider identity does not match its registry entry")
+            return record
         except ValueError:
-            pass
-    return ProviderInstallationRecord(provider_id=provider_id, capability=entry.capability, available_version=entry.version, updated_at=_iso())
+            return ProviderInstallationRecord(
+                provider_id=provider_id,
+                capability=entry.capability,
+                available_version=entry.version,
+                install_state="failed",
+                blockers=[EnvironmentBlocker(code="provider_state_corrupt", message="Persisted provider state is invalid and must be repaired")],
+                failure=ProviderFailure(code="provider_state_corrupt", message="Persisted provider state is invalid and must be repaired", stage="persistence", recoverable=True),
+                updated_at=_iso(),
+            )
+    return ProviderInstallationRecord(
+        provider_id=provider_id,
+        capability=entry.capability,
+        available_version=entry.version,
+        install_state="failed",
+        blockers=[EnvironmentBlocker(code="provider_state_corrupt", message="Persisted provider state is invalid and must be repaired")],
+        failure=ProviderFailure(code="provider_state_corrupt", message="Persisted provider state is invalid and must be repaired", stage="persistence", recoverable=True),
+        updated_at=_iso(),
+    )
 
 
 def _environment(entry: ProviderRegistryEntry) -> EnvironmentReport:
     storage.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     system = platform.system().lower()
     platform_id = {"darwin": "macos", "windows": "windows", "linux": "linux"}.get(system, system)
-    arch = platform.machine().lower() or "unknown"
+    raw_arch = platform.machine().lower() or "unknown"
+    arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(raw_arch, raw_arch)
     blockers: list[EnvironmentBlocker] = []
     if platform_id not in entry.requirements.platforms:
         blockers.append(EnvironmentBlocker(code="platform_unsupported", message=f"Platform {platform_id} is not supported", requirement=", ".join(entry.requirements.platforms)))
-    if arch not in {item.lower() for item in entry.requirements.architectures} and arch not in {"amd64", "x86_64", "aarch64", "arm64"}:
+    required_architectures = { {"amd64": "x86_64", "aarch64": "arm64"}.get(item.lower(), item.lower()) for item in entry.requirements.architectures }
+    if arch not in required_architectures:
         blockers.append(EnvironmentBlocker(code="architecture_unsupported", message=f"Architecture {arch} is not supported", requirement=", ".join(entry.requirements.architectures)))
+    python_version = platform.python_version()
+    if entry.requirements.python == ">=3.11,<3.12" and not ((sys.version_info.major, sys.version_info.minor) >= (3, 11) and (sys.version_info.major, sys.version_info.minor) < (3, 12)):
+        blockers.append(EnvironmentBlocker(code="python_unsupported", message=f"Python {python_version} is not supported", requirement=entry.requirements.python))
     try:
         free_disk_mb = int(shutil.disk_usage(storage.CONFIG_DIR).free / (1024 * 1024))
     except OSError:
         free_disk_mb = 0
     if free_disk_mb < entry.requirements.min_disk_mb:
         blockers.append(EnvironmentBlocker(code="disk_space_insufficient", message="Not enough free disk space for this provider", requirement=f">={entry.requirements.min_disk_mb} MB"))
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        page_count = int(os.sysconf("SC_PHYS_PAGES"))
+        memory_mb = int(page_size * page_count / (1024 * 1024))
+    except (AttributeError, OSError, ValueError):
+        memory_mb = 0
+    if memory_mb and memory_mb < entry.requirements.min_memory_mb:
+        blockers.append(EnvironmentBlocker(code="memory_insufficient", message="Not enough memory for this provider", requirement=f">={entry.requirements.min_memory_mb} MB"))
+    gpu_available = False
+    if entry.requirements.requires_gpu and not gpu_available:
+        blockers.append(EnvironmentBlocker(code="gpu_unavailable", message="A compatible GPU is required for this provider", requirement="GPU"))
     return EnvironmentReport(
         platform=platform_id,
         architecture=arch,
-        python_version=platform.python_version(),
+        python_version=python_version,
         free_disk_mb=free_disk_mb,
+        gpu_available=gpu_available,
         blockers=blockers,
         checked_at=_iso(),
     )
@@ -462,7 +561,7 @@ TRANSITIONS: dict[str, set[str]] = {
     "installed": {"configuring", "available", "installing", "failed"},
     "configuring": {"available", "failed"},
     "available": {"installing", "configuring"},
-    "failed": {"ready"},
+    "failed": {"ready", "available"},
 }
 
 
@@ -473,14 +572,49 @@ def _transition(record: ProviderInstallationRecord, target: ProviderInstallState
             f"Cannot transition {record.provider_id} from {record.install_state} to {target}",
         )
     record.install_state = target
+    if target == "installing":
+        record.install_started_at = _iso()
+    elif target in {"installed", "configuring", "available", "failed", "ready"}:
+        record.install_started_at = None
     record.updated_at = _iso()
 
 
 def _save_record(record: ProviderInstallationRecord) -> None:
-    with _persistence_lock:
-        data = _read_mapping("provider_installations.json")
-        data[record.provider_id] = record.model_dump(mode="json")
-        _write_mapping("provider_installations.json", data)
+    _update_mapping(
+        "provider_installations.json",
+        lambda data: {**data, record.provider_id: record.model_dump(mode="json")},
+    )
+
+
+def _recover_interrupted_installation(record: ProviderInstallationRecord, entry: ProviderRegistryEntry) -> ProviderInstallationRecord:
+    if record.install_state != "installing":
+        return record
+    timestamp = record.install_started_at or record.updated_at
+    try:
+        started_at = datetime.fromisoformat(timestamp)
+    except (TypeError, ValueError):
+        started_at = _now() - _INSTALL_RECOVERY_AFTER - timedelta(seconds=1)
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    if _now() - started_at <= _INSTALL_RECOVERY_AFTER:
+        return record
+    previous = record.active_version
+    record.install_state = "failed"
+    record.install_started_at = None
+    record.installed_version = previous
+    record.active_version = previous
+    record.rollback_available = bool(previous)
+    record.failure = ProviderFailure(
+        code="provider_install_interrupted",
+        message="Provider installation was interrupted and must be retried",
+        stage="installing",
+        recoverable=True,
+    )
+    record.blockers = [EnvironmentBlocker(code="provider_install_interrupted", message="Provider installation was interrupted and must be retried")]
+    record.updated_at = _iso()
+    _save_record(record)
+    _log(entry.provider_id, "failed", "recover", record.failure.message, plan_id=record.current_plan_id, success=False, failure_code=record.failure.code)
+    return record
 
 
 def _load_record(entry: ProviderRegistryEntry) -> ProviderInstallationRecord:
@@ -488,10 +622,27 @@ def _load_record(entry: ProviderRegistryEntry) -> ProviderInstallationRecord:
     record.available_version = entry.version
     report = _environment(entry)
     record.environment_blockers = report.blockers
+    if record.install_state == "available" and (
+        record.configuration_status != "configured"
+        or not record.active_version
+        or record.blockers
+    ):
+        record.install_state = "failed"
+        record.install_started_at = None
+        record.failure = ProviderFailure(
+            code="provider_state_inconsistent",
+            message="Persisted provider state is inconsistent and must be repaired",
+            stage="persistence",
+            recoverable=False,
+        )
+        record.blockers = [EnvironmentBlocker(code="provider_state_inconsistent", message="Persisted provider state is inconsistent and must be repaired")]
+        record.rollback_available = False
+        record.updated_at = _iso()
+        _save_record(record)
     if record.install_state == "discovered" and report.available:
         _transition(record, "ready")
         _save_record(record)
-    return record
+    return _recover_interrupted_installation(record, entry)
 
 
 def _actions(record: ProviderInstallationRecord, report: EnvironmentReport) -> list[InstallAction]:
@@ -502,6 +653,8 @@ def _actions(record: ProviderInstallationRecord, report: EnvironmentReport) -> l
         return ["prepare_install"]
     if state == "failed":
         actions: list[InstallAction] = ["retry_install", "view_logs"]
+        if record.failure and record.failure.code in {"provider_state_corrupt", "provider_state_inconsistent"}:
+            return ["view_logs"]
         if record.rollback_available:
             actions.append("rollback")
         return actions
@@ -534,20 +687,21 @@ def _entry(provider_id: str) -> ProviderRegistryEntry:
 
 
 def _log(provider_id: str, stage: str, operation: str, message: str, *, plan_id: str | None = None, success: bool | None = None, failure_code: str | None = None) -> None:
-    sanitized = message.replace("api_key", "credential").replace("API key", "credential")
+    sanitized = _redact_sensitive_text(message)[:500]
     _append_jsonl("provider_install_logs.jsonl", ProviderInstallLog(
         timestamp=_iso(), provider_id=provider_id, plan_id=plan_id, stage=stage,
-        operation=operation, message=sanitized[:500], success=success, failure_code=failure_code,
+        operation=operation, message=sanitized, success=success, failure_code=failure_code,
     ))
 
 
-def _audit(provider_id: str, *, plan: InstallationPlan | None, stage: str, operation: str, success: bool, previous_version: str | None = None, failure_code: str | None = None, rollback: bool = False) -> None:
+def _audit(provider_id: str, *, plan: InstallationPlan | None, stage: str, operation: str, success: bool, previous_version: str | None = None, target_version: str | None = None, failure_code: str | None = None, rollback: bool = False, reason: str | None = None) -> None:
     _append_jsonl("provider_audit_events.jsonl", ProviderAuditEvent(
         event_id=uuid.uuid4().hex, timestamp=_iso(), provider_id=provider_id,
         plan_id=plan.plan_id if plan else None, manifest_digest=plan.manifest_digest if plan else None,
         source=plan.source_ref if plan else None,
-        previous_version=previous_version, target_version=plan.version if plan else None,
+        previous_version=previous_version, target_version=target_version if target_version is not None else (plan.version if plan else None),
         stage=stage, operation=operation, success=success, failure_code=failure_code, rollback=rollback,
+        reason=reason,
     ))
 
 
@@ -592,6 +746,41 @@ def _build_plan(entry: ProviderRegistryEntry, report: EnvironmentReport) -> Inst
     )
 
 
+def _update_plan_record(plan_id: str, **updates: Any) -> None:
+    def update(plans: dict[str, Any]) -> dict[str, Any]:
+        stored = plans.get(plan_id)
+        if not isinstance(stored, dict):
+            raise ProviderRegistryError("provider_plan_invalid", "Installation plan is not available")
+        next_stored = {**stored, **updates}
+        return {**plans, plan_id: next_stored}
+
+    _update_mapping("provider_install_plans.json", update)
+
+
+def _mark_install_failed(
+    record: ProviderInstallationRecord,
+    provider_id: str,
+    plan: InstallationPlan,
+    previous: str | None,
+    failure: ProviderRegistryError,
+    *,
+    unexpected: Exception | None = None,
+) -> None:
+    del unexpected  # Never persist or expose an arbitrary executor exception.
+    record.install_state = "failed"
+    record.install_started_at = None
+    record.failure = ProviderFailure(code=failure.code, message=_redact_sensitive_text(failure.message), stage="installing")
+    record.blockers = [EnvironmentBlocker(code=failure.code, message=_redact_sensitive_text(failure.message))]
+    # Keep the old active version visible as a usable fact after an upgrade failure.
+    record.installed_version = previous
+    record.active_version = previous
+    record.rollback_available = bool(previous)
+    record.updated_at = _iso()
+    _save_record(record)
+    _log(provider_id, "failed", "install", failure.message, plan_id=plan.plan_id, success=False, failure_code=failure.code)
+    _audit(provider_id, plan=plan, stage="failed", operation="install", success=False, previous_version=previous, failure_code=failure.code)
+
+
 def prepare_install(provider_id: str) -> InstallPrepareResponse:
     entry = _entry(provider_id)
     lock = _provider_lock(provider_id)
@@ -606,20 +795,28 @@ def prepare_install(provider_id: str) -> InstallPrepareResponse:
         record = _load_record(entry)
         if record.install_state == "installing":
             raise ProviderRegistryError("provider_install_in_progress", "An installation is already running")
+        if record.failure and record.failure.code in {"provider_state_corrupt", "provider_state_inconsistent"}:
+            raise ProviderRegistryError(record.failure.code, record.failure.message)
         if record.install_state == "failed":
             _transition(record, "ready")
         if record.install_state not in {"ready", "available"}:
             raise ProviderRegistryError("provider_not_ready", f"Provider is {record.install_state}; prepare is unavailable")
         plan = _build_plan(entry, report)
         token = secrets.token_urlsafe(32)
-        plans = _read_mapping("provider_install_plans.json")
-        plans[plan.plan_id] = {
-            "plan": plan.model_dump(mode="json"),
-            "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
-            "provider_id": provider_id,
-            "expires_at": plan.expires_at,
-        }
-        _write_mapping("provider_install_plans.json", plans)
+        def save_plan(plans: dict[str, Any]) -> dict[str, Any]:
+            if record.current_plan_id and isinstance(plans.get(record.current_plan_id), dict):
+                previous_plan = {**plans[record.current_plan_id], "superseded_at": _iso()}
+                plans = {**plans, record.current_plan_id: previous_plan}
+            plans[plan.plan_id] = {
+                "plan": plan.model_dump(mode="json"),
+                "plan_digest": _plan_digest(plan),
+                "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                "provider_id": provider_id,
+                "expires_at": plan.expires_at,
+            }
+            return plans
+
+        _update_mapping("provider_install_plans.json", save_plan)
         record.current_plan_id = plan.plan_id
         record.blockers = []
         record.failure = None
@@ -637,25 +834,58 @@ def confirm_install(provider_id: str, request: InstallConfirmRequest) -> Install
         stored = plans.get(request.plan_id)
         if not isinstance(stored, dict) or stored.get("provider_id") != provider_id:
             raise ProviderRegistryError("provider_plan_invalid", "Installation plan is not bound to this provider")
-        plan = InstallationPlan.model_validate(stored.get("plan"))
-        if datetime.fromisoformat(plan.expires_at) <= _now():
+        if stored.get("superseded_at"):
+            raise ProviderRegistryError("provider_plan_stale", "Installation plan has been superseded by a newer plan")
+        if stored.get("consumed_at"):
+            raise ProviderRegistryError("provider_plan_consumed", "Installation plan has already been confirmed")
+        try:
+            plan = InstallationPlan.model_validate(stored.get("plan"))
+        except ValueError as exc:
+            raise ProviderRegistryError("provider_plan_invalid", "Installation plan is invalid") from exc
+        try:
+            expires_at = datetime.fromisoformat(plan.expires_at)
+        except ValueError as exc:
+            raise ProviderRegistryError("provider_plan_invalid", "Installation plan expiry is invalid") from exc
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= _now():
             raise ProviderRegistryError("provider_plan_expired", "Installation confirmation has expired")
         expected_token = str(stored.get("token_hash", ""))
         if not secrets.compare_digest(expected_token, hashlib.sha256(request.confirmation_token.encode("utf-8")).hexdigest()):
             raise ProviderRegistryError("provider_confirmation_invalid", "Installation confirmation token is invalid")
-        if plan.manifest_digest != entry.manifest_digest or plan.checksum_sha256 != entry.checksum_sha256 or plan.version != entry.version:
+        expected_steps = [InstallStep(kind=kind, label=kind.replace("_", " ").capitalize()).model_dump(mode="json") for kind in entry.manifest.steps]
+        actual_steps = [step.model_dump(mode="json") for step in plan.steps]
+        if (
+            plan.provider_id != provider_id
+            or plan.source_ref != entry.source_ref
+            or plan.manifest_digest != entry.manifest_digest
+            or plan.checksum_sha256 != entry.checksum_sha256
+            or plan.version != entry.version
+            or actual_steps != expected_steps
+            or stored.get("plan_digest") != _plan_digest(plan)
+        ):
             raise ProviderRegistryError("provider_plan_stale", "Installation plan no longer matches the registry manifest")
         record = _load_record(entry)
+        if record.current_plan_id != plan.plan_id:
+            raise ProviderRegistryError("provider_plan_stale", "Installation plan is no longer the active plan")
         if record.install_state == "installing":
             raise ProviderRegistryError("provider_install_in_progress", "An installation is already running")
         if record.install_state not in {"ready", "available"}:
             raise ProviderRegistryError("provider_not_ready", f"Provider is {record.install_state}; confirmation is unavailable")
+        report = _environment(entry)
+        if not report.available:
+            raise ProviderRegistryError(
+                "provider_environment_blocked",
+                "Provider cannot be installed in this environment",
+                blockers=[item.model_dump(mode="json") for item in report.blockers],
+            )
         previous = record.active_version
         _transition(record, "installing")
         record.current_plan_id = plan.plan_id
         record.failure = None
         record.blockers = []
         _save_record(record)
+        _update_plan_record(plan.plan_id, consumed_at=_iso())
         _audit(provider_id, plan=plan, stage="installing", operation="confirm", success=True, previous_version=previous)
         try:
             EXECUTOR.execute(entry, plan)
@@ -677,18 +907,12 @@ def confirm_install(provider_id: str, request: InstallConfirmRequest) -> Install
             _save_record(record)
             _audit(provider_id, plan=plan, stage=record.install_state, operation="activate", success=True, previous_version=previous)
         except ProviderRegistryError as exc:
-            record.install_state = "failed"
-            record.failure = ProviderFailure(code=exc.code, message=exc.message, stage="installing")
-            record.blockers = [EnvironmentBlocker(code=exc.code, message=exc.message)]
-            # Keep the old active version visible as a usable fact after an upgrade failure.
-            record.installed_version = previous
-            record.active_version = previous
-            record.rollback_available = bool(previous)
-            record.updated_at = _iso()
-            _save_record(record)
-            _log(provider_id, "failed", "install", exc.message, plan_id=plan.plan_id, success=False, failure_code=exc.code)
-            _audit(provider_id, plan=plan, stage="failed", operation="install", success=False, previous_version=previous, failure_code=exc.code)
+            _mark_install_failed(record, provider_id, plan, previous, exc)
             raise
+        except Exception as exc:
+            failure = ProviderRegistryError("provider_install_failed", "Provider installation failed unexpectedly")
+            _mark_install_failed(record, provider_id, plan, previous, failure, unexpected=exc)
+            raise failure from exc
         return InstallResult(installation=record, install_actions=_actions(record, _environment(entry)))
 
 
@@ -732,17 +956,28 @@ def rollback_install(provider_id: str) -> InstallResult:
         if not record.rollback_available or not record.previous_version:
             raise ProviderRegistryError("provider_rollback_unavailable", "No previous active version is available for rollback")
         previous = record.previous_version
+        active_before = record.active_version
         record.active_version = previous
         record.installed_version = previous
-        record.install_state = "available"
+        _transition(record, "available")
         record.rollback_available = False
+        record.previous_version = None
         record.failure = None
         record.blockers = []
         record.configuration_status = "configured"
-        record.updated_at = _iso()
         _save_record(record)
         _log(provider_id, "available", "rollback", "Previous active version restored", plan_id=record.current_plan_id, success=True)
-        _audit(provider_id, plan=None, stage="available", operation="rollback", success=True, previous_version=record.active_version, rollback=True)
+        _audit(
+            provider_id,
+            plan=None,
+            stage="available",
+            operation="rollback",
+            success=True,
+            previous_version=active_before,
+            target_version=previous,
+            rollback=True,
+            reason="restore_previous_active_version",
+        )
         return InstallResult(installation=record, install_actions=_actions(record, _environment(entry)))
 
 
