@@ -10,8 +10,10 @@ provider-supplied shell commands.
 Each entry has a stable `provider_id`, capability, publisher, license, trust
 level, fixed version/ref, artifact SHA-256, manifest version/digest, structured
 configuration schema, and environment requirements. Floating refs (`main`,
-`latest`, and similar values), untrusted hosts, missing checksums, and invalid
-manifest digests are rejected before the entry can be served.
+`latest`, and similar values), untrusted hosts, repository/source mismatches,
+missing checksums, unknown manifest schemas, and invalid manifest digests are
+rejected before the entry can be served. Manifest steps are a closed enum; the
+registry never accepts an arbitrary command or shell fragment.
 
 The `GET /api/providers/registry` response separates registry availability from
 installation facts:
@@ -45,19 +47,43 @@ discovered → ready → installing → installed → configuring → available
 ```
 
 Illegal transitions are rejected. `POST .../install/prepare` only creates a
-short-lived plan and confirmation token. `POST .../install/confirm` requires the
-token to match the provider, fixed version, manifest digest, and plan id. The
-executor accepts only the closed set of structured step kinds in the manifest.
+short-lived plan and confirmation token. A newer prepare supersedes the prior
+plan. `POST .../install/confirm` requires the persisted plan to be current and
+single-use, and validates the token, provider, fixed version, source ref,
+checksum, manifest digest, exact structured steps, plan digest, and expiry. A
+consumed or superseded plan cannot be replayed. The executor accepts only the
+closed set of structured step kinds in the manifest.
 
 Secret-required providers stop in `configuring` until the schema-driven form is
 submitted. The API stores only non-secret configuration and presence flags; API
 keys never appear in registry responses, installation records, logs, or audit
 events.
 
-Installation records and plans are atomically replaced. Logs and audit events
-are append-only JSONL files with sanitized messages. A failed upgrade retains
-the previous active version and only exposes rollback when the backend reports
-that action.
+Installation records and plans use temporary files plus atomic replacement;
+read/transform/write operations are serialized by a process-local lock so
+concurrent providers do not lose each other's plans. Corrupt JSON is reported as
+a structured persistence error instead of being treated as an empty registry or
+silently reset. Logs and audit events are append-only JSONL files with sanitized
+messages and stable event IDs. A failed upgrade retains the previous active
+version and only exposes rollback when the backend reports that action;
+rollback records the original version, target version, reason, and result.
+
+An `installing` record older than 15 minutes (or with an invalid start marker)
+is recovered as a retryable `failed` state on the next read. Unexpected
+executor exceptions are converted to a controlled failure code and are never
+stored verbatim. An available record with missing activation/configuration facts
+is failed closed as `provider_state_inconsistent` rather than being exposed as
+usable.
+
+The persistence lock is intentionally process-local. The current development
+API runs as one worker; a multi-worker or multi-process deployment must add an
+external lock or transactional store before claiming cross-process installation
+mutual exclusion. This PR does not pretend to provide that distributed lock.
+
+Secret-like fields are removed from public settings and browser persistence; the
+API exposes only presence flags. Logs, audit messages, and structured error
+messages redact API keys, bearer/authorization values, token/password/secret
+fields, and URL query credentials, including JSON-shaped messages.
 
 ## Current scope
 
@@ -66,4 +92,6 @@ API and Playwright tests. Real provider discovery, downloads, dependency
 installation, GPU validation, and model acquisition require a future executor
 implementation and a separate security review. Until then the UI labels these
 entries as sandbox-only and the backend never reports an external provider as
-installed or available.
+installed or available. Environment checks can report platform, architecture,
+Python, disk, memory, and GPU blockers, but no real executor consumes those
+requirements yet.
