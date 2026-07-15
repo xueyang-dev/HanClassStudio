@@ -180,10 +180,12 @@ deepEqual(notRunExport, { normal: false, force: false, qualityState: "not_run" }
 const persisted = sanitizeProviderConfig({
   llm: { providerId: "openai_compatible", values: { api_key: "secret", model: "teacher" } },
   image: { providerId: "placeholder", values: { apiKey: "another-secret", model: "svg" } },
+  tts: { providerId: "custom", values: { token: "third-secret", voice: "default" } },
 });
 deepEqual(persisted, {
   llm: { providerId: "openai_compatible", values: { model: "teacher" } },
   image: { providerId: "placeholder", values: { model: "svg" } },
+  tts: { providerId: "custom", values: { voice: "default" } },
 });
 
 const providerBaseline = providerConfigSnapshot({

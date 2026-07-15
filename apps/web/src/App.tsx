@@ -366,6 +366,7 @@ export function App() {
   const activeProjectIdRef = useRef<string | null>(null);
   const projectLoadSequenceRef = useRef(0);
   const artifactRequestSequenceRef = useRef(0);
+  const providerRefreshSequenceRef = useRef(0);
 
   const stageAccess = useMemo<Record<StepId, StageAccess>>(
     () => Object.fromEntries(steps.map((step) => [step.id, getStageAccess(project, step.id as WorkflowStageId)])) as Record<StepId, StageAccess>,
@@ -486,19 +487,21 @@ export function App() {
       });
   }, []);
 
-  useEffect(() => {
-    fetchProviderCapabilities()
-      .then(setProviderCatalog)
-      .catch(() => setProviderCatalog([]));
-    fetchProviderRegistry()
-      .then(setProviderRegistry)
-      .catch(() => setProviderRegistry(null));
-  }, []);
+  function refreshProviderSources() {
+    const sequence = ++providerRefreshSequenceRef.current;
+    void Promise.allSettled([fetchProviderRegistry(), fetchProviderCapabilities()]).then(([registryResult, catalogResult]) => {
+      if (sequence !== providerRefreshSequenceRef.current) return;
+      setProviderRegistry(registryResult.status === "fulfilled" ? registryResult.value : null);
+      setProviderCatalog(catalogResult.status === "fulfilled" ? catalogResult.value : []);
+    });
+  }
 
-  const refreshProviderSources = () => {
-    void fetchProviderRegistry().then(setProviderRegistry).catch(() => setProviderRegistry(null));
-    void fetchProviderCapabilities().then(setProviderCatalog).catch(() => setProviderCatalog([]));
-  };
+  useEffect(() => {
+    refreshProviderSources();
+    return () => {
+      providerRefreshSequenceRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     if (!project?.project_id) {
@@ -1595,6 +1598,13 @@ function CapabilityConfigPanel({
   const showOnboardingRegistry = showRegistryEntry && mode === "local" && availableProviders.length === 0 && registryProviders.length > 0;
   const providerSelectRef = useRef<HTMLSelectElement>(null);
   const hadAvailableProviderRef = useRef(availableProviders.length > 0);
+  const previousCapabilityRef = useRef(capability);
+
+  useEffect(() => {
+    if (previousCapabilityRef.current === capability) return;
+    previousCapabilityRef.current = capability;
+    setMode(selectedProvider?.category ?? "local");
+  }, [capability, selectedProvider?.category]);
 
   useEffect(() => {
     const wasAvailable = hadAvailableProviderRef.current;
@@ -1757,6 +1767,9 @@ function CapabilityConfigPanel({
 function registryBlockerLabel(code: string, t: (key: string) => string): string {
   if (code === "platform_unsupported" || code === "architecture_unsupported") return t("provider.registry.blocker.platform");
   if (code === "disk_space_insufficient") return t("provider.registry.blocker.disk");
+  if (code === "python_unsupported") return t("provider.registry.blocker.python");
+  if (code === "memory_insufficient") return t("provider.registry.blocker.memory");
+  if (code === "gpu_unavailable") return t("provider.registry.blocker.gpu");
   if (code === "configuration_required" || code === "provider_configuration_missing") return t("provider.registry.blocker.configuration");
   return t("provider.registry.blocker.generic");
 }

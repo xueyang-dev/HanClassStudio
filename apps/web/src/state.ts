@@ -162,11 +162,12 @@ export const PIPELINE_STEP_KEYS = [
  * localStorage or other persisted client state.
  */
 export function sanitizeProviderConfig(config: ProviderConfig): ProviderConfig {
+  const sensitiveKey = /^(?:api[_-]?key|access[_-]?token|authorization|bearer|password|secret|credential|token)$/i;
   const sanitized: ProviderConfig = {};
   for (const [capability, value] of Object.entries(config) as [ProviderCapability, ProviderConfig[ProviderCapability]][]) {
     if (!value?.providerId) continue;
     const values = Object.fromEntries(
-      Object.entries(value.values ?? {}).filter(([key]) => key !== "api_key" && key !== "apiKey"),
+      Object.entries(value.values ?? {}).filter(([key]) => !sensitiveKey.test(key)),
     );
     sanitized[capability] = { providerId: value.providerId, values };
   }
