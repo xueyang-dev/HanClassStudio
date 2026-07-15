@@ -70,6 +70,12 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
     payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["trust_level"] = "verified_maintainer"
+    payload["repository"] = "evil/maintainer-provider"
+    payload["source_url"] = "https://github.com/evil/maintainer-provider/tree/v0.1.0"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
     payload["version"] = "latest"
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)

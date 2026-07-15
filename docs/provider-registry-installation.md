@@ -15,6 +15,11 @@ missing checksums, unknown manifest schemas, and invalid manifest digests are
 rejected before the entry can be served. Manifest steps are a closed enum; the
 registry never accepts an arbitrary command or shell fragment.
 
+The current explicit trust store contains only `xueyang-dev/HanClassStudio` on
+GitHub. A self-declared `verified_maintainer` value cannot expand that trust
+boundary; adding another repository requires an intentional registry change and
+review.
+
 The `GET /api/providers/registry` response separates registry availability from
 installation facts:
 

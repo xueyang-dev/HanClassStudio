@@ -51,6 +51,12 @@ InstallStepKind = Literal[
 ]
 
 
+_TRUSTED_SOURCE_REPOSITORIES: dict[str, set[str]] = {
+    "github.com": {"xueyang-dev/HanClassStudio"},
+    "huggingface.co": set(),
+}
+
+
 class ProviderRegistryError(RuntimeError):
     def __init__(self, code: str, message: str, *, blockers: list[dict[str, Any]] | None = None) -> None:
         super().__init__(message)
@@ -157,6 +163,8 @@ class ProviderRegistryEntry(BaseModel):
             raise ValueError("registry source must use HTTPS without embedded credentials")
         if host not in {"github.com", "huggingface.co"}:
             raise ValueError("registry source host is not trusted")
+        if self.repository not in _TRUSTED_SOURCE_REPOSITORIES.get(host, set()):
+            raise ValueError("registry repository is not in the explicit trust store")
         if self.trust_level == "first_party" and self.repository != "xueyang-dev/HanClassStudio":
             raise ValueError("first-party entries must point to the HanClassStudio repository")
         source_parts = [part for part in source.path.strip("/").split("/") if part]
