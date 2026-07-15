@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,6 +52,23 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
             manifest_digest="0" * 64,
             manifest={"provider_id": "unsafe", "version": "1.0.0", "source_ref": "main", "steps": ["checkout_exact_ref"]},
         )
+
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["source_url"] = "http://github.com/xueyang-dev/HanClassStudio/tree/v0.1.0/providers"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["manifest_version"] = "2"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["source_url"] = "https://github.com/xueyang-dev/HanClassStudio-evil/tree/v0.1.0/providers"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["manifest"]["unexpected_step_metadata"] = True
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
 
 
 def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monkeypatch) -> None:
@@ -218,3 +237,282 @@ def test_failed_install_preserves_previous_active_version(tmp_path, monkeypatch)
     assert current["install_state"] == "failed"
     assert current["installed_version"] == "0.1.0"
     assert current["active_version"] == "0.1.0"
+
+
+@pytest.mark.parametrize("failed_step", ["run_health_check"])
+def test_health_check_failure_enters_failed_not_available(tmp_path, monkeypatch, failed_step) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(registry, "EXECUTOR", registry.MockProviderExecutor(failed_step))
+    prepared = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+    response = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": prepared["plan"]["plan_id"], "confirmation_token": prepared["confirmation_token"]},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "provider_install_step_failed"
+    state = client.get("/api/providers/registry/hcs_mock_ocr").json()["installation"]
+    assert state["install_state"] == "failed"
+    assert state["failure"]["code"] == "provider_install_step_failed"
+
+
+def test_checksum_failure_enters_failed_not_available(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    prepared = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+
+    class TamperingExecutor(registry.MockProviderExecutor):
+        def execute(self, entry, plan) -> None:
+            entry.checksum_sha256 = "0" * 64
+            super().execute(entry, plan)
+
+    monkeypatch.setattr(registry, "EXECUTOR", TamperingExecutor())
+    response = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": prepared["plan"]["plan_id"], "confirmation_token": prepared["confirmation_token"]},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "provider_checksum_mismatch"
+    state = client.get("/api/providers/registry/hcs_mock_ocr").json()["installation"]
+    assert state["install_state"] == "failed"
+    assert state["failure"]["code"] == "provider_checksum_mismatch"
+    assert state["install_state"] != "available"
+
+
+def test_prepare_supersedes_old_plan_and_confirm_is_single_use(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    first = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+    second = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+
+    stale = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": first["plan"]["plan_id"], "confirmation_token": first["confirmation_token"]},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "provider_plan_stale"
+
+    confirmed = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": second["plan"]["plan_id"], "confirmation_token": second["confirmation_token"]},
+    )
+    assert confirmed.status_code == 200
+
+    repeated = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": second["plan"]["plan_id"], "confirmation_token": second["confirmation_token"]},
+    )
+    assert repeated.status_code == 409
+    assert repeated.json()["detail"]["code"] == "provider_plan_consumed"
+
+
+def test_confirmation_rejects_tampered_plan_and_expired_plan(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    prepared = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+    plans_path = storage.CONFIG_DIR / "provider_install_plans.json"
+    plans = json.loads(plans_path.read_text(encoding="utf-8"))
+    plan_id = prepared["plan"]["plan_id"]
+    plans[plan_id]["plan"]["source_ref"] = "v9.9.9"
+    plans_path.write_text(json.dumps(plans), encoding="utf-8")
+
+    tampered = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": plan_id, "confirmation_token": prepared["confirmation_token"]},
+    )
+    assert tampered.status_code == 409
+    assert tampered.json()["detail"]["code"] == "provider_plan_stale"
+
+    prepared = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+    plans = json.loads(plans_path.read_text(encoding="utf-8"))
+    plan_id = prepared["plan"]["plan_id"]
+    expired = datetime.now(timezone.utc) - timedelta(minutes=1)
+    plans[plan_id]["plan"]["expires_at"] = expired.isoformat()
+    plans[plan_id]["expires_at"] = expired.isoformat()
+    plans_path.write_text(json.dumps(plans), encoding="utf-8")
+
+    expired_response = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": plan_id, "confirmation_token": prepared["confirmation_token"]},
+    )
+    assert expired_response.status_code == 409
+    assert expired_response.json()["detail"]["code"] == "provider_plan_expired"
+
+
+def test_concurrent_confirm_executes_once(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    prepared = registry.prepare_install("hcs_mock_ocr")
+    request = registry.InstallConfirmRequest(plan_id=prepared.plan.plan_id, confirmation_token=prepared.confirmation_token)
+
+    class CountingExecutor(registry.ProviderExecutor):
+        calls = 0
+
+        def execute(self, entry, plan) -> None:
+            type(self).calls += 1
+
+    executor = CountingExecutor()
+    monkeypatch.setattr(registry, "EXECUTOR", executor)
+
+    def confirm_once():
+        try:
+            registry.confirm_install("hcs_mock_ocr", request)
+            return "success"
+        except registry.ProviderRegistryError as error:
+            return error.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: confirm_once(), range(2)))
+    assert sorted(outcomes) == ["provider_plan_consumed", "success"]
+    assert executor.calls == 1
+
+
+def test_unexpected_executor_failure_is_persisted_as_failed_without_raw_error(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    prepared = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+
+    class RaisingExecutor(registry.ProviderExecutor):
+        def execute(self, entry, plan) -> None:
+            raise RuntimeError("Authorization: Bearer super-secret-value")
+
+    monkeypatch.setattr(registry, "EXECUTOR", RaisingExecutor())
+    response = client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": prepared["plan"]["plan_id"], "confirmation_token": prepared["confirmation_token"]},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "provider_install_failed"
+    assert "super-secret-value" not in response.text
+    state = client.get("/api/providers/registry/hcs_mock_ocr").json()["installation"]
+    assert state["install_state"] == "failed"
+    assert state["failure"]["code"] == "provider_install_failed"
+    assert "super-secret-value" not in (storage.CONFIG_DIR / "provider_install_logs.jsonl").read_text(encoding="utf-8")
+
+
+def test_interrupted_install_is_recovered_as_retryable_failure(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    interrupted_at = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+    registry._save_record(registry.ProviderInstallationRecord(
+        provider_id="hcs_mock_ocr",
+        capability="ocr",
+        install_state="installing",
+        install_started_at=interrupted_at,
+        updated_at=interrupted_at,
+    ))
+
+    status = client.get("/api/providers/registry/hcs_mock_ocr").json()
+    assert status["installation"]["install_state"] == "failed"
+    assert status["installation"]["failure"]["code"] == "provider_install_interrupted"
+    assert status["install_actions"] == ["retry_install", "view_logs"]
+
+
+def test_concurrent_prepare_preserves_plans_for_each_provider(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        prepared = list(pool.map(registry.prepare_install, ["hcs_mock_ocr", "hcs_mock_llm"]))
+    plans = json.loads((storage.CONFIG_DIR / "provider_install_plans.json").read_text(encoding="utf-8"))
+    assert {item.plan.provider_id for item in prepared} <= {"hcs_mock_ocr", "hcs_mock_llm"}
+    assert all(item.plan.plan_id in plans for item in prepared)
+
+
+def test_rollback_audit_records_original_and_target_versions(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    registry._save_record(registry.ProviderInstallationRecord(
+        provider_id="hcs_mock_ocr",
+        capability="ocr",
+        install_state="failed",
+        installed_version="0.2.0",
+        active_version="0.2.0",
+        previous_version="0.1.0",
+        configuration_status="configured",
+        rollback_available=True,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    ))
+
+    response = client.post("/api/providers/registry/hcs_mock_ocr/rollback")
+    assert response.status_code == 200
+    audit = client.get("/api/providers/registry/audit?provider_id=hcs_mock_ocr").json()[-1]
+    assert audit["operation"] == "rollback"
+    assert audit["previous_version"] == "0.2.0"
+    assert audit["target_version"] == "0.1.0"
+    assert audit["reason"] == "restore_previous_active_version"
+
+
+def test_public_capability_values_redact_secret_like_keys(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    secret = "capability-token-secret"
+    saved = client.put("/api/settings/providers", json={
+        "capabilities": {"llm": {"providerId": "deterministic", "values": {"token": secret, "model": "deterministic-v1"}}},
+    })
+    assert saved.status_code == 200
+    public = client.get("/api/settings/providers")
+    assert public.status_code == 200
+    assert secret not in public.text
+    assert "token" not in public.json()["capabilities"]["llm"]["values"]
+    assert public.json()["capabilities"]["llm"]["api_key_present"] is True
+
+
+def test_redaction_handles_json_headers_and_url_secrets() -> None:
+    text = '{"api_key":"json-secret","authorization":"Bearer header-secret","token":"field-secret"} https://example.test/?access_token=query-secret'
+    redacted = registry._redact_sensitive_text(text)
+    assert all(secret not in redacted for secret in ("json-secret", "header-secret", "field-secret", "query-secret"))
+    assert redacted.count("[REDACTED]") >= 4
+
+
+def test_corrupt_persistence_is_reported_without_overwriting_file(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    path = storage.CONFIG_DIR / "provider_installations.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not-json", encoding="utf-8")
+
+    response = client.get("/api/providers/registry")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "provider_persistence_corrupt"
+    assert path.read_text(encoding="utf-8") == "{not-json"
+
+
+def test_corrupt_record_fails_closed_without_retry_overwrite(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    path = storage.CONFIG_DIR / "provider_installations.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = json.dumps({"hcs_mock_ocr": {"provider_id": "other-provider"}})
+    path.write_text(original, encoding="utf-8")
+
+    status = client.get("/api/providers/registry/hcs_mock_ocr")
+    assert status.status_code == 200
+    assert status.json()["installation"]["install_state"] == "failed"
+    assert status.json()["installation"]["failure"]["code"] == "provider_state_corrupt"
+    assert status.json()["install_actions"] == ["view_logs"]
+
+    retry = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare")
+    assert retry.status_code == 400
+    assert retry.json()["detail"]["code"] == "provider_state_corrupt"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["hcs_mock_ocr"] == {"provider_id": "other-provider"}
+
+
+def test_inconsistent_available_record_is_failed_closed(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    registry._save_record(registry.ProviderInstallationRecord(
+        provider_id="hcs_mock_ocr",
+        capability="ocr",
+        install_state="available",
+        configuration_status="missing",
+        active_version="0.1.0",
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    ))
+
+    status = client.get("/api/providers/registry/hcs_mock_ocr")
+    assert status.status_code == 200
+    installation = status.json()["installation"]
+    assert installation["install_state"] == "failed"
+    assert installation["failure"]["code"] == "provider_state_inconsistent"
+    assert status.json()["install_actions"] == ["view_logs"]
+
+
+def test_registry_failure_is_not_silently_removed_from_capability_contract(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+
+    def unavailable():
+        raise registry.ProviderRegistryError("provider_registry_unavailable", "registry unavailable")
+
+    monkeypatch.setattr(registry, "registry_status", unavailable)
+    response = client.get("/api/settings/providers/capabilities")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "provider_registry_unavailable"
