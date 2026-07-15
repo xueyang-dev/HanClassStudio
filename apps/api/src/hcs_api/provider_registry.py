@@ -560,7 +560,7 @@ TRANSITIONS: dict[str, set[str]] = {
     "installing": {"installed", "failed"},
     "installed": {"configuring", "available", "installing", "failed"},
     "configuring": {"available", "failed"},
-    "available": {"installing", "configuring"},
+    "available": {"available", "installing", "configuring"},
     "failed": {"ready", "available"},
 }
 
