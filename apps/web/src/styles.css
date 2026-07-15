@@ -882,6 +882,12 @@ h4 {
   color: var(--danger);
 }
 
+.notice.success {
+  border-inline-start-color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, var(--paper));
+  color: var(--success);
+}
+
 .notice.loading {
   border-inline-start-color: var(--primary);
 }
@@ -1997,6 +2003,37 @@ dialog.confirm-dialog {
   border-top: 1px solid var(--line);
 }
 
+.provider-registry-compact {
+  margin: 0;
+  padding-top: 14px;
+}
+
+.onboarding-provider-registry {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.onboarding-provider-registry-intro {
+  display: grid;
+  gap: 4px;
+}
+
+.onboarding-provider-registry-intro strong,
+.onboarding-provider-registry-intro p {
+  margin: 0;
+}
+
+.onboarding-provider-registry-intro p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .provider-registry-header,
 .provider-registry-card-heading {
   display: flex;
@@ -2691,6 +2728,10 @@ dialog.confirm-dialog {
 
   .provider-registry {
     margin-inline: 18px;
+  }
+
+  .provider-registry-compact {
+    margin-inline: 0;
   }
 
   .provider-registry-meta {

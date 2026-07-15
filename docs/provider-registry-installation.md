@@ -24,6 +24,19 @@ installation facts:
 - Environment blockers, configuration status, rollback availability, and
   structured failures are persisted and returned as facts.
 
+The same facts are projected into `GET /api/settings/providers/capabilities`.
+Registry-backed descriptors keep `install_state`, `configuration_status`,
+`install_actions`, blockers, and failure details aligned with the registry; a
+provider is `available` only after the backend lifecycle reaches `available`.
+The WebUI uses this contract for both model settings and first-use onboarding.
+
+When the selected local capability has no available provider, onboarding shows
+only the matching registry entries. Preparing and confirming an installation
+or completing configuration refreshes both endpoints in place, so the user
+returns to the same capability selector without a browser refresh. Installed
+but unconfigured entries remain out of the usable provider options until the
+backend reports them as available.
+
 ## Lifecycle
 
 ```text

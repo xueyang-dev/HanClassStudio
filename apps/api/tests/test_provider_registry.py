@@ -84,6 +84,55 @@ def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monk
     assert all("api_key" not in json.dumps(item) for item in logs.json())
 
 
+def test_registry_install_state_flows_into_capability_contract(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+
+    before = client.get("/api/settings/providers/capabilities")
+    assert before.status_code == 200
+    ocr_before = next(item for item in before.json() if item["provider_id"] == "hcs_mock_ocr")
+    assert ocr_before["available"] is False
+    assert ocr_before["configured"] is False
+    assert ocr_before["install_state"] == "ready"
+    assert ocr_before["install_actions"] == ["prepare_install"]
+
+    prepared = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()
+    assert client.post(
+        "/api/providers/registry/hcs_mock_ocr/install/confirm",
+        json={"plan_id": prepared["plan"]["plan_id"], "confirmation_token": prepared["confirmation_token"]},
+    ).status_code == 200
+
+    after = client.get("/api/settings/providers/capabilities")
+    assert after.status_code == 200
+    ocr_after = next(item for item in after.json() if item["provider_id"] == "hcs_mock_ocr")
+    assert ocr_after["available"] is True
+    assert ocr_after["configured"] is False
+    assert ocr_after["install_state"] == "available"
+    assert ocr_after["configuration_status"] == "configured"
+
+
+def test_registry_configuration_state_flows_into_capability_contract_without_secret(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    prepared = client.post("/api/providers/registry/hcs_mock_llm/install/prepare").json()
+    confirmed = client.post(
+        "/api/providers/registry/hcs_mock_llm/install/confirm",
+        json={"plan_id": prepared["plan"]["plan_id"], "confirmation_token": prepared["confirmation_token"]},
+    )
+    assert confirmed.status_code == 200
+
+    configuring = next(item for item in client.get("/api/settings/providers/capabilities").json() if item["provider_id"] == "hcs_mock_llm")
+    assert configuring["available"] is False
+    assert configuring["configuration_status"] == "missing"
+    assert configuring["install_actions"] == ["configure", "view_logs"]
+
+    secret = "capability-contract-secret"
+    assert client.post("/api/providers/registry/hcs_mock_llm/configure", json={"values": {"api_key": secret}}).status_code == 200
+    available = next(item for item in client.get("/api/settings/providers/capabilities").json() if item["provider_id"] == "hcs_mock_llm")
+    assert available["available"] is True
+    assert available["configured"] is False
+    assert available["configuration_status"] == "configured"
+    assert secret not in json.dumps(available)
+
+
 def test_confirmation_token_is_bound_to_plan_and_provider(tmp_path, monkeypatch) -> None:
     client = _isolate(tmp_path, monkeypatch)
     prepared = client.post("/api/providers/registry/hcs_mock_ocr/install/prepare").json()

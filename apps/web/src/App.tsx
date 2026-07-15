@@ -105,7 +105,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -495,8 +495,9 @@ export function App() {
       .catch(() => setProviderRegistry(null));
   }, []);
 
-  const refreshProviderRegistry = () => {
+  const refreshProviderSources = () => {
     void fetchProviderRegistry().then(setProviderRegistry).catch(() => setProviderRegistry(null));
+    void fetchProviderCapabilities().then(setProviderCatalog).catch(() => setProviderCatalog([]));
   };
 
   useEffect(() => {
@@ -1304,7 +1305,7 @@ export function App() {
           config={providerConfig}
           catalog={providerCatalog}
           registry={providerRegistry}
-          onRegistryRefresh={refreshProviderRegistry}
+          onRegistryRefresh={refreshProviderSources}
           synced={settingsSynced}
           error={providerSaveError}
           onChange={(next) => {
@@ -1334,11 +1335,13 @@ export function App() {
         <OnboardingWizard
           config={providerConfig}
           catalog={providerCatalog}
+          registry={providerRegistry}
           theme={theme}
           onChange={(next) => {
             setProviderConfig(next);
             writeStoredProviderConfig(next);
           }}
+          onRegistryRefresh={refreshProviderSources}
           onThemeChange={handleThemeChange}
           onClose={() => {
             writeOnboardingSeen();
@@ -1563,31 +1566,43 @@ function PipelineStatus({ steps }: { steps: Record<string, PipelineStepStatus> }
   );
 }
 
-function getProvidersForCapabilityByMode(
-  capability: ProviderCapability,
-  mode: "local" | "cloud",
-  catalog: ProviderDefinition[]
-): ProviderDefinition[] {
-  return catalog.filter((p) => p.capability === capability && p.category === mode && (p.configurable || p.experimental || !p.implemented));
-}
-
 function CapabilityConfigPanel({
   capability,
   config,
   catalog,
   onChange,
+  registry,
+  onRegistryRefresh,
+  showRegistryEntry = false,
 }: {
   capability: ProviderCapability;
   config: ProviderConfig;
   catalog: ProviderDefinition[];
   onChange: (next: ProviderConfig) => void;
+  registry?: ProviderRegistryCatalog | null;
+  onRegistryRefresh?: () => void;
+  showRegistryEntry?: boolean;
 }) {
   const { t } = useI18n();
   const cfg = config[capability];
   const selectedProvider = cfg ? getProviderById(cfg.providerId, capability, catalog) : undefined;
   const [mode, setMode] = useState<"local" | "cloud">(selectedProvider?.category ?? "local");
-  const providers = getProvidersForCapabilityByMode(capability, mode, catalog);
+  const providers = getCapabilityProviders(capability, mode, catalog);
+  const availableProviders = getAvailableCapabilityProviders(capability, mode, catalog);
   const selectedId = selectedProvider && selectedProvider.category === mode ? selectedProvider.id : "";
+  const optionProviders = providers.filter((provider) => provider.available || provider.id === selectedId);
+  const registryProviders = getCapabilityRegistryProviders(capability, registry ?? null);
+  const showOnboardingRegistry = showRegistryEntry && mode === "local" && availableProviders.length === 0 && registryProviders.length > 0;
+  const providerSelectRef = useRef<HTMLSelectElement>(null);
+  const hadAvailableProviderRef = useRef(availableProviders.length > 0);
+
+  useEffect(() => {
+    const wasAvailable = hadAvailableProviderRef.current;
+    hadAvailableProviderRef.current = availableProviders.length > 0;
+    if (showRegistryEntry && !wasAvailable && availableProviders.length > 0) {
+      window.requestAnimationFrame(() => providerSelectRef.current?.focus());
+    }
+  }, [availableProviders.length, showRegistryEntry]);
 
   useEffect(() => {
     if (selectedProvider && selectedProvider.category !== mode) {
@@ -1595,14 +1610,14 @@ function CapabilityConfigPanel({
       return;
     }
     if (!cfg) {
-      const first = catalog.find((provider) => provider.capability === capability && (provider.configurable || provider.experimental || !provider.implemented));
+      const first = getAvailableCapabilityProviders(capability, mode, catalog)[0];
       if (first && first.category !== mode) setMode(first.category);
     }
   }, [capability, catalog, cfg, mode, selectedProvider]);
 
   function applyProvider(id: string) {
     const def = getProviderById(id, capability, catalog);
-    if (!def) return;
+    if (!def || !def.implemented || !def.available) return;
     const defaults: Record<string, string> = {};
     def.fields.forEach((f) => {
       defaults[f.key] = f.type === "select" && f.options?.length ? f.options[0].value : "";
@@ -1612,8 +1627,7 @@ function CapabilityConfigPanel({
 
   function switchMode(next: "local" | "cloud") {
     setMode(next);
-    const list = getProvidersForCapabilityByMode(capability, next, catalog);
-    const selectable = list.find((provider) => provider.implemented && provider.available);
+    const selectable = getAvailableCapabilityProviders(capability, next, catalog)[0];
     if (selectable) {
       applyProvider(selectable.id);
     } else {
@@ -1660,20 +1674,43 @@ function CapabilityConfigPanel({
         </div>
       </div>
 
-      {providers.length === 0 ? (
+      {availableProviders.length === 0 ? (
         <p className="muted-text">{t("provider.noProviders")}</p>
       ) : (
         <label className="field">
           <span>{t("provider.selectProvider")}</span>
-          <select value={selectedId} onChange={(e) => applyProvider(e.target.value)}>
+          <select ref={providerSelectRef} value={selectedId} onChange={(e) => applyProvider(e.target.value)}>
             <option value="">{t("provider.chooseProvider")}</option>
-            {providers.map((p) => (
+            {optionProviders.map((p) => (
                 <option key={p.id} value={p.id} disabled={!p.implemented || !p.available}>
-                  {p.name}{!p.implemented || !p.available ? ` (${t("provider.unavailable")})` : ""} — {p.description}
+                  {p.name} — {p.description}
                 </option>
             ))}
           </select>
         </label>
+      )}
+
+      {availableProviders.length === 0 && showOnboardingRegistry && (
+        <section className="onboarding-provider-registry" aria-labelledby={`onboardingRegistryTitle-${capability}`}>
+          <div className="onboarding-provider-registry-intro">
+            <strong id={`onboardingRegistryTitle-${capability}`}>
+              {t("provider.registry.onboarding.emptyTitle", { capability: t(CAPABILITY_META[capability].labelKey) })}
+            </strong>
+            <p>{t("provider.registry.onboarding.emptyBody")}</p>
+          </div>
+          <ProviderRegistryPanel
+            registry={registry ?? null}
+            capability={capability}
+            compact
+            onRefresh={onRegistryRefresh ?? (() => undefined)}
+          />
+        </section>
+      )}
+
+      {availableProviders.length > 0 && showRegistryEntry && registryProviders.some((status) => status.installation.install_state === "available") && (
+        <div className="notice success" role="status">
+          {t("provider.registry.onboarding.availableNotice")}
+        </div>
       )}
 
       {cfg && (!selectedProvider || !selectedProvider.implemented || !selectedProvider.available) && (
@@ -1773,9 +1810,13 @@ function RegistryInstallConfirmDialog({
 
 function ProviderRegistryPanel({
   registry,
+  capability,
+  compact = false,
   onRefresh,
 }: {
   registry: ProviderRegistryCatalog | null;
+  capability?: ProviderCapability;
+  compact?: boolean;
   onRefresh: () => void;
 }) {
   const { t } = useI18n();
@@ -1787,6 +1828,10 @@ function ProviderRegistryPanel({
   const pendingTriggerRef = useRef<HTMLElement | null>(null);
 
   if (!registry) return null;
+  const statuses = capability
+    ? registry.providers.filter((status) => status.entry.capability === capability)
+    : registry.providers;
+  const titleId = capability ? `providerRegistryTitle-${capability}` : "providerRegistryTitle";
 
   async function prepare(status: ProviderRegistryStatus, retry = false, trigger?: HTMLElement) {
     pendingTriggerRef.current = trigger ?? null;
@@ -1863,17 +1908,17 @@ function ProviderRegistryPanel({
   }
 
   return (
-    <section className="provider-registry" aria-labelledby="providerRegistryTitle">
+    <section className={`provider-registry${compact ? " provider-registry-compact" : ""}`} aria-labelledby={titleId}>
       <header className="provider-registry-header">
         <div>
-          <h3 id="providerRegistryTitle">{t("provider.registry.title")}</h3>
-          <p>{t("provider.registry.subtitle")}</p>
+          <h3 id={titleId}>{capability ? t("provider.registry.onboarding.title", { capability: t(CAPABILITY_META[capability].labelKey) }) : t("provider.registry.title")}</h3>
+          <p>{capability ? t("provider.registry.onboarding.subtitle") : t("provider.registry.subtitle")}</p>
         </div>
         <ShieldCheck size={20} aria-hidden="true" />
       </header>
       {error && <div className="notice error" role="alert">{error}</div>}
       <div className="provider-registry-list">
-        {registry.providers.map((status) => {
+        {statuses.map((status) => {
           const entry = status.entry;
           const installation = status.installation;
           const providerBusy = busyProvider === entry.provider_id;
@@ -1945,6 +1990,7 @@ function ProviderRegistryPanel({
           );
         })}
       </div>
+      {statuses.length === 0 && <p className="muted-text">{t("provider.registry.onboarding.noProviders")}</p>}
       {prepared && <RegistryInstallConfirmDialog prepared={prepared} onCancel={closePrepared} onConfirm={confirm} />}
     </section>
   );
@@ -2085,15 +2131,19 @@ function ForceExportDialog({
 function OnboardingWizard({
   config,
   catalog,
+  registry,
   theme,
   onChange,
+  onRegistryRefresh,
   onThemeChange,
   onClose,
 }: {
   config: ProviderConfig;
   catalog: ProviderDefinition[];
+  registry: ProviderRegistryCatalog | null;
   theme: ThemeMode;
   onChange: (next: ProviderConfig) => void;
+  onRegistryRefresh: () => void;
   onThemeChange: (theme: ThemeMode) => void;
   onClose: () => void;
 }) {
@@ -2210,7 +2260,15 @@ function OnboardingWizard({
                   })}
                 </nav>
                 <div className="capability-tab-content">
-                  <CapabilityConfigPanel capability={activeCapability} config={config} catalog={catalog} onChange={onChange} />
+                  <CapabilityConfigPanel
+                    capability={activeCapability}
+                    config={config}
+                    catalog={catalog}
+                    onChange={onChange}
+                    registry={registry}
+                    onRegistryRefresh={onRegistryRefresh}
+                    showRegistryEntry
+                  />
                 </div>
               </div>
             </div>

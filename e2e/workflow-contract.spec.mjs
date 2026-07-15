@@ -154,3 +154,131 @@ test("trusted provider registry requires explicit confirmation and keeps dialog 
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 });
+
+test("first-use provider selection installs a capability-scoped local provider", async ({ page }) => {
+  let blockCapabilities = new Set(["ocr"]);
+  await page.addInitScript(() => {
+    window.localStorage.removeItem("hcs_onboarding_seen");
+  });
+  await page.route("**/api/settings/providers/capabilities", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const filtered = body.map((descriptor) => blockCapabilities.has(descriptor.capability)
+      ? { ...descriptor, available: false, configured: false }
+      : descriptor);
+    await route.fulfill({ response, json: filtered });
+  });
+
+  await page.goto("/");
+  const onboarding = page.locator("dialog.onboarding-dialog[open]");
+  await expect(onboarding).toBeVisible();
+  await onboarding.getByRole("button", { name: "选择服务商", exact: true }).click();
+  await expect(onboarding.getByRole("heading", { level: 2, name: "选择服务商", exact: true })).toBeVisible();
+
+  const registry = onboarding.locator(".provider-registry");
+  await expect(registry).toHaveCount(1);
+  await expect(registry.locator(".provider-registry-card")).toHaveCount(1);
+  await expect(registry).toContainText("HanClassStudio OCR Sandbox");
+  await expect(registry).not.toContainText("HanClassStudio LLM Sandbox");
+
+  const prepare = registry.getByRole("button", { name: "生成安装计划", exact: true });
+  await expect(prepare).toHaveCount(1);
+  await prepare.click();
+  const confirmDialog = page.locator("dialog.confirm-dialog[open]");
+  await expect(confirmDialog).toBeVisible();
+  await expect(confirmDialog).toContainText("固定版本");
+  await confirmDialog.getByRole("button", { name: "确认安装", exact: true }).click();
+  blockCapabilities = new Set();
+
+  const providerSelect = onboarding.getByRole("combobox", { name: "选择服务商", exact: true });
+  await expect(providerSelect).toContainText("HanClassStudio OCR Sandbox");
+  await expect(providerSelect).toBeEnabled();
+  await expect(providerSelect).toBeFocused();
+  await providerSelect.selectOption("hcs_mock_ocr");
+  await expect(providerSelect).toHaveValue("hcs_mock_ocr");
+  await expect(onboarding.getByText("新的服务商已经可用，请在上方下拉菜单中选择。", { exact: true })).toBeVisible();
+});
+
+test("first-use registry keeps an installed provider blocked until configuration", async ({ page }) => {
+  let blockCapabilities = new Set(["llm"]);
+  await page.addInitScript(() => {
+    window.localStorage.removeItem("hcs_onboarding_seen");
+  });
+  await page.route("**/api/settings/providers/capabilities", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const filtered = body.map((descriptor) => blockCapabilities.has(descriptor.capability)
+      ? { ...descriptor, available: false, configured: false }
+      : descriptor);
+    await route.fulfill({ response, json: filtered });
+  });
+
+  await page.goto("/");
+  const onboarding = page.locator("dialog.onboarding-dialog[open]");
+  await onboarding.getByRole("button", { name: "选择服务商", exact: true }).click();
+  const llmTab = onboarding.getByRole("button", { name: "LLM 语言模型", exact: true });
+  await llmTab.click();
+
+  const registry = onboarding.locator(".provider-registry");
+  await expect(registry.locator(".provider-registry-card")).toHaveCount(1);
+  await expect(registry).toContainText("HanClassStudio LLM Sandbox");
+  const prepare = registry.getByRole("button", { name: "生成安装计划", exact: true });
+  await prepare.click();
+  const confirmDialog = page.locator("dialog.confirm-dialog[open]");
+  await confirmDialog.getByRole("button", { name: "确认安装", exact: true }).click();
+
+  await expect(registry).toContainText("已安装，待配置");
+  await expect(registry.getByRole("button", { name: "配置并启用", exact: true })).toHaveCount(1);
+  const secretField = registry.locator("input[type='password']");
+  await expect(secretField).toHaveCount(1);
+  await secretField.fill("onboarding-test-secret");
+  blockCapabilities = new Set();
+  await registry.getByRole("button", { name: "配置并启用", exact: true }).click();
+  const providerSelect = onboarding.getByRole("combobox", { name: "选择服务商", exact: true });
+  await expect(providerSelect).toContainText("HanClassStudio LLM Sandbox");
+  await expect(providerSelect).toBeEnabled();
+  await expect(providerSelect).toBeFocused();
+  await expect(page.locator("body")).not.toContainText("onboarding-test-secret");
+});
+
+test("first-use capability registry remains readable on a 390px viewport", async ({ page }) => {
+  const blockCapabilities = new Set(["ocr"]);
+  await page.addInitScript(() => {
+    window.localStorage.removeItem("hcs_onboarding_seen");
+  });
+  await page.route("**/api/settings/providers/capabilities", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({
+      response,
+      json: body.map((descriptor) => blockCapabilities.has(descriptor.capability)
+        ? { ...descriptor, available: false, configured: false }
+        : descriptor),
+    });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const onboarding = page.locator("dialog.onboarding-dialog[open]");
+  await onboarding.getByRole("button", { name: "选择服务商", exact: true }).click();
+  const registry = onboarding.locator(".provider-registry");
+  await expect(registry).toBeVisible();
+  await expect(registry.locator(".provider-registry-card")).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: window.innerWidth,
+  }))).toEqual({ documentWidth: 390, viewportWidth: 390 });
+  const cardOverflow = await registry.locator(".provider-registry-card").evaluate((element) => ({
+    scrollWidth: element.scrollWidth,
+    clientWidth: element.clientWidth,
+  }));
+  expect(cardOverflow.scrollWidth).toBeLessThanOrEqual(cardOverflow.clientWidth);
+
+  const prepare = registry.getByRole("button", { name: "生成安装计划", exact: true });
+  await prepare.click();
+  const confirmDialog = page.locator("dialog.confirm-dialog[open]");
+  await expect(confirmDialog).toBeVisible();
+  await expect.poll(() => confirmDialog.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(confirmDialog).toBeHidden();
+  await expect(prepare).toBeFocused();
+});

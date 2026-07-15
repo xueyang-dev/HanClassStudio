@@ -1,4 +1,4 @@
-import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, StageState } from "./types";
+import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, ProviderRegistryCatalog, ProviderRegistryStatus, StageState } from "./types";
 
 export type PipelineStepStatus = "pending" | "running" | "done" | "error";
 
@@ -22,6 +22,34 @@ export interface WorkflowAction {
 export interface ProviderStatus {
   configured: boolean;
   available: boolean;
+}
+
+export function getCapabilityProviders(
+  capability: ProviderCapability,
+  mode: "local" | "cloud",
+  catalog: ProviderDefinition[],
+): ProviderDefinition[] {
+  return catalog.filter((provider) => (
+    provider.capability === capability
+      && provider.category === mode
+      && (provider.configurable || provider.experimental || !provider.implemented)
+  ));
+}
+
+export function getAvailableCapabilityProviders(
+  capability: ProviderCapability,
+  mode: "local" | "cloud",
+  catalog: ProviderDefinition[],
+): ProviderDefinition[] {
+  return getCapabilityProviders(capability, mode, catalog)
+    .filter((provider) => provider.implemented && provider.available);
+}
+
+export function getCapabilityRegistryProviders(
+  capability: ProviderCapability,
+  registry: ProviderRegistryCatalog | null,
+): ProviderRegistryStatus[] {
+  return registry?.providers.filter((status) => status.entry.capability === capability) ?? [];
 }
 
 /** Provider status is derived only from the backend capability catalog. Local

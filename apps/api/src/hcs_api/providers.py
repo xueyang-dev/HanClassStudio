@@ -208,6 +208,62 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             category="cloud", configured=False, available=False,
             unavailable_reason="This provider is not implemented for this capability.",
         ))
+
+    # Registry-backed providers are part of the same capability contract. The
+    # registry owns install/configuration facts; this adapter only translates
+    # those facts into the descriptor shape consumed by settings and onboarding.
+    # Keep this import local so the provider catalog remains usable by the
+    # registry module without creating an import cycle.
+    try:
+        from .provider_registry import registry_status
+
+        registry = registry_status()
+    except Exception:
+        registry = None
+    if registry is not None:
+        for status in registry.providers:
+            entry = status.entry
+            if (entry.capability, entry.provider_id) in known:
+                continue
+            installation = status.installation
+            blockers = [*status.environment.blockers, *installation.blockers]
+            selected = _selected_provider(settings, entry.capability)[0] == entry.provider_id
+            available = installation.install_state == "available" and not blockers
+            configured = selected and available and installation.configuration_status == "configured"
+            if available:
+                unavailable_reason = None
+            elif blockers:
+                unavailable_reason = blockers[0].message
+            elif installation.install_state in {"installed", "configuring"}:
+                unavailable_reason = "Provider configuration is required before activation."
+            elif installation.failure:
+                unavailable_reason = installation.failure.message
+            else:
+                unavailable_reason = "Provider is not installed."
+            result.append(ProviderCapabilityDescriptor(
+                capability=entry.capability,
+                provider_id=entry.provider_id,
+                display_name=entry.display_name,
+                category="local",
+                description=entry.description,
+                implemented=True,
+                configurable=True,
+                configured=configured,
+                available=available,
+                experimental=entry.experimental,
+                unavailable_reason=unavailable_reason,
+                configuration_schema=[field.model_dump(mode="json") for field in entry.configuration_schema],
+                supported_operations=entry.supported_operations,
+                install_state=installation.install_state,
+                installed_version=installation.installed_version,
+                available_version=installation.available_version,
+                environment_requirements=entry.requirements.model_dump(mode="json"),
+                environment_blockers=[item.model_dump(mode="json") for item in blockers],
+                install_actions=status.install_actions,
+                configuration_status=installation.configuration_status,
+                rollback_available=installation.rollback_available,
+                failure=installation.failure.model_dump(mode="json") if installation.failure else None,
+            ))
     return result
 
 
