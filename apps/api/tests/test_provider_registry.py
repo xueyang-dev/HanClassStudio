@@ -66,6 +66,18 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
     payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["source_url"] = "https://evil.example/providers/tree/v0.1.0"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["version"] = "latest"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["checksum_sha256"] = ""
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
     payload["manifest"]["unexpected_step_metadata"] = True
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
@@ -189,6 +201,24 @@ def test_secret_required_provider_never_echoes_or_persists_secret(tmp_path, monk
     assert secret not in configured.text
     assert secret not in client.get("/api/providers/registry").text
     assert secret not in (storage.CONFIG_DIR / "provider_installations.json").read_text(encoding="utf-8")
+
+
+def test_configuration_failure_keeps_provider_out_of_available(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    prepared = client.post("/api/providers/registry/hcs_mock_llm/install/prepare").json()
+    assert client.post(
+        "/api/providers/registry/hcs_mock_llm/install/confirm",
+        json={"plan_id": prepared["plan"]["plan_id"], "confirmation_token": prepared["confirmation_token"]},
+    ).status_code == 200
+
+    missing = client.post("/api/providers/registry/hcs_mock_llm/configure", json={"values": {}})
+    assert missing.status_code == 400
+    assert missing.json()["detail"]["code"] == "provider_configuration_missing"
+    state = client.get("/api/providers/registry/hcs_mock_llm").json()["installation"]
+    assert state["install_state"] == "configuring"
+    assert state["configuration_status"] == "missing"
+    llm = next(item for item in client.get("/api/settings/providers/capabilities").json() if item["provider_id"] == "hcs_mock_llm")
+    assert llm["available"] is False
 
 
 def test_environment_blocker_removes_install_actions(tmp_path, monkeypatch) -> None:
@@ -382,6 +412,7 @@ def test_unexpected_executor_failure_is_persisted_as_failed_without_raw_error(tm
     assert state["install_state"] == "failed"
     assert state["failure"]["code"] == "provider_install_failed"
     assert "super-secret-value" not in (storage.CONFIG_DIR / "provider_install_logs.jsonl").read_text(encoding="utf-8")
+    assert "super-secret-value" not in client.get("/api/providers/registry/audit").text
 
 
 def test_interrupted_install_is_recovered_as_retryable_failure(tmp_path, monkeypatch) -> None:
@@ -432,6 +463,26 @@ def test_rollback_audit_records_original_and_target_versions(tmp_path, monkeypat
     assert audit["previous_version"] == "0.2.0"
     assert audit["target_version"] == "0.1.0"
     assert audit["reason"] == "restore_previous_active_version"
+
+
+def test_rollback_from_available_upgrade_restores_previous_version(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    registry._save_record(registry.ProviderInstallationRecord(
+        provider_id="hcs_mock_ocr",
+        capability="ocr",
+        install_state="available",
+        installed_version="0.2.0",
+        active_version="0.2.0",
+        previous_version="0.1.0",
+        configuration_status="configured",
+        rollback_available=True,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    ))
+
+    response = client.post("/api/providers/registry/hcs_mock_ocr/rollback")
+    assert response.status_code == 200
+    assert response.json()["installation"]["install_state"] == "available"
+    assert response.json()["installation"]["active_version"] == "0.1.0"
 
 
 def test_public_capability_values_redact_secret_like_keys(tmp_path, monkeypatch) -> None:
