@@ -66,7 +66,8 @@ a structured persistence error instead of being treated as an empty registry or
 silently reset. Logs and audit events are append-only JSONL files with sanitized
 messages and stable event IDs. A failed upgrade retains the previous active
 version and only exposes rollback when the backend reports that action;
-rollback records the original version, target version, reason, and result.
+rollback from either `failed` or an upgraded `available` state records the
+original version, target version, reason, and result.
 
 An `installing` record older than 15 minutes (or with an invalid start marker)
 is recovered as a retryable `failed` state on the next read. Unexpected
