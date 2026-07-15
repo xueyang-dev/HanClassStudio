@@ -74,8 +74,14 @@ test("responsive workflow and settings dialog remain keyboard-safe", async ({ pa
 test("provider save reports a failed edit and retries the next edit", async ({ page }) => {
   let providerPuts = 0;
   let aborted = false;
+  const providerPutFailures = [];
   page.on("request", (request) => {
     if (request.method() === "PUT" && request.url().endsWith("/api/settings/providers")) providerPuts += 1;
+  });
+  page.on("requestfailed", (request) => {
+    if (request.method() === "PUT" && request.url().endsWith("/api/settings/providers")) {
+      providerPutFailures.push(request.failure()?.errorText ?? "unknown");
+    }
   });
 
   // This persistence test intentionally supplies a backend-shaped capability
@@ -125,6 +131,7 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
     .filter({ hasText: "后端" });
   await expect(providerSaveError).toHaveCount(1);
   await expect(providerSaveError).toBeVisible();
+  await expect.poll(() => providerPutFailures).toEqual(["net::ERR_FAILED"]);
   const capabilityRefreshPromise = page.waitForResponse(
     (response) =>
       response.request().method() === "GET" &&
@@ -143,6 +150,7 @@ test("provider save reports a failed edit and retries the next edit", async ({ p
   await capabilityRefreshPromise;
   await page.unroute("**/api/settings/providers/capabilities");
   await expect(providerSaveError).toHaveCount(0);
+  expect(providerPutFailures).toEqual(["net::ERR_FAILED"]);
 });
 
 test("trusted provider registry requires explicit confirmation and keeps dialog focus", async ({ page }) => {
