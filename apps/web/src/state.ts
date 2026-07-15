@@ -41,8 +41,20 @@ export function getAvailableCapabilityProviders(
   mode: "local" | "cloud",
   catalog: ProviderDefinition[],
 ): ProviderDefinition[] {
+  return getConfigurableCapabilityProviders(capability, mode, catalog)
+    .filter((provider) => provider.available);
+}
+
+/** The full settings dialog must allow a user to select an implemented Provider
+ * before entering its required credentials. Onboarding deliberately uses the
+ * stricter available-only helper above. */
+export function getConfigurableCapabilityProviders(
+  capability: ProviderCapability,
+  mode: "local" | "cloud",
+  catalog: ProviderDefinition[],
+): ProviderDefinition[] {
   return getCapabilityProviders(capability, mode, catalog)
-    .filter((provider) => provider.implemented && provider.available);
+    .filter((provider) => provider.implemented && provider.configurable);
 }
 
 export function getCapabilityRegistryProviders(

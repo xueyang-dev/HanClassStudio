@@ -170,7 +170,7 @@ def test_provider_capability_contract_marks_unimplemented_provider_unavailable(t
     assert runway["available"] is False
     assert runway["unavailable_reason"]
     image_ids = {item["provider_id"] for item in descriptors if item["capability"] == "image" and item["configurable"]}
-    assert image_ids == {"placeholder", "openai_images", "experimental_openai_images"}
+    assert image_ids == {"placeholder", "openai_images", "experimental_openai_images", "codex_image"}
 
 
 def test_provider_settings_partial_update_preserves_omitted_sections(tmp_path, monkeypatch) -> None:

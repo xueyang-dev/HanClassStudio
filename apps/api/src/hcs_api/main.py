@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +15,18 @@ from .agent import generate_agent_package, validate_agent_output
 from .agents import infer_profile
 from .asset_review import apply_review, render_review_page, replace_with_teacher_image
 from .components import load_component_registry
+from .codex_bridge import (
+    CodexBridgeActionRequired,
+    CodexBridgeError,
+    CodexBridgeHeartbeat,
+    CodexBridgeJob,
+    authorize_token as authorize_codex_bridge_token,
+    complete_blueprint as complete_codex_blueprint,
+    complete_image as complete_codex_image,
+    get_job as get_codex_bridge_job,
+    heartbeat as codex_bridge_heartbeat,
+    pending_or_completed_jobs as codex_bridge_jobs,
+)
 from .models import (
     AgentPackage,
     AgentValidation,
@@ -120,6 +132,95 @@ app.mount("/runtime/projects", StaticFiles(directory=PROJECTS_DIR), name="runtim
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _bearer_token(authorization: str | None) -> str:
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail={
+            "code": "codex_bridge_unauthorized",
+            "message": "A Codex bridge bearer token is required.",
+        })
+    return token.strip()
+
+
+def _codex_bridge_http_error(error: CodexBridgeError) -> HTTPException:
+    status_code = 401 if error.code == "codex_bridge_unauthorized" else 404 if error.code == "codex_bridge_job_not_found" else 400
+    return HTTPException(status_code=status_code, detail={"code": error.code, "message": error.message})
+
+
+def _codex_action_required(error: CodexBridgeActionRequired) -> HTTPException:
+    return HTTPException(status_code=409, detail={
+        "code": "codex_agent_action_required",
+        "capability": "codex_bridge",
+        "job_ids": error.job_ids,
+        "message": "A connected Codex agent must complete the queued provider jobs, then retry this action.",
+    })
+
+
+@app.post("/api/providers/codex-bridge/heartbeat")
+def heartbeat_codex_bridge(
+    payload: CodexBridgeHeartbeat,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    try:
+        return codex_bridge_heartbeat(read_provider_settings(), _bearer_token(authorization), payload.capabilities)
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
+
+
+@app.get("/api/providers/codex-bridge/jobs", response_model=list[CodexBridgeJob])
+def list_codex_bridge_jobs(
+    state: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+) -> list[CodexBridgeJob]:
+    token = _bearer_token(authorization)
+    try:
+        authorized = authorize_codex_bridge_token(read_provider_settings(), token)
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
+    if state not in {None, "pending", "completed"}:
+        raise HTTPException(status_code=400, detail={"code": "codex_bridge_state_invalid", "message": "Unsupported job state"})
+    return [job for job in codex_bridge_jobs(state) if job.capability in authorized]
+
+
+@app.post("/api/providers/codex-bridge/jobs/{job_id}/complete-blueprint", response_model=CodexBridgeJob)
+def submit_codex_blueprint(
+    job_id: str,
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> CodexBridgeJob:
+    token = _bearer_token(authorization)
+    try:
+        authorized = authorize_codex_bridge_token(read_provider_settings(), token)
+        job = get_codex_bridge_job(job_id)
+        if job.capability not in authorized:
+            raise CodexBridgeError("codex_bridge_capability_denied", "Token cannot complete this job")
+        return complete_codex_blueprint(job, payload)
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail={
+            "code": "codex_bridge_blueprint_invalid",
+            "message": str(error),
+        }) from error
+
+
+@app.post("/api/providers/codex-bridge/jobs/{job_id}/complete-image", response_model=CodexBridgeJob)
+async def submit_codex_image(
+    job_id: str,
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> CodexBridgeJob:
+    token = _bearer_token(authorization)
+    try:
+        authorized = authorize_codex_bridge_token(read_provider_settings(), token)
+        job = get_codex_bridge_job(job_id)
+        if job.capability not in authorized:
+            raise CodexBridgeError("codex_bridge_capability_denied", "Token cannot complete this job")
+        return complete_codex_image(job, await file.read(), file.content_type or "")
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -1134,7 +1235,9 @@ def generate_blueprint(project_id: str, expected_revision: int | None = Query(de
     _assert_llm_provider_supported(read_provider_settings())
     write_spec_artifacts(project_id, source, profile)
     try:
-        blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings())
+        blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings(), project_id=project_id)
+    except CodexBridgeActionRequired as exc:
+        raise _codex_action_required(exc) from exc
     except ProviderError as exc:
         raise HTTPException(
             status_code=502,
@@ -1179,6 +1282,8 @@ def generate_media(project_id: str, force_regenerate: bool = Query(False), expec
         manifest = generate_project_media(
             root, blueprint, settings, force_regenerate=force_regenerate, strict_provider=True,
         )
+    except CodexBridgeActionRequired as exc:
+        raise _codex_action_required(exc) from exc
     except ProviderError as exc:
         raise HTTPException(
             status_code=502,
@@ -1279,6 +1384,8 @@ def render_project(project_id: str, expected_revision: int | None = Query(defaul
         _assert_media_provider_ready(settings)
         try:
             manifest = generate_project_media(root, blueprint, settings, strict_provider=True)
+        except CodexBridgeActionRequired as exc:
+            raise _codex_action_required(exc) from exc
         except ProviderError as exc:
             capability = "image" if settings.image.provider != "placeholder" else "tts"
             provider_id = settings.image.provider if capability == "image" else settings.audio.provider
@@ -1344,6 +1451,8 @@ def run_project_pipeline(project_id: str, expected_revision: int | None = Query(
             )
         bump_project_revision(project_id)
         return get_project_state(project_id)
+    except CodexBridgeActionRequired as exc:
+        raise _codex_action_required(exc) from exc
     except ProviderError as exc:
         settings = read_provider_settings()
         capability = "llm" if settings.llm.provider != "deterministic" else "image"

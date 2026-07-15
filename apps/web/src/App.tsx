@@ -105,7 +105,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -367,6 +367,8 @@ export function App() {
   const projectLoadSequenceRef = useRef(0);
   const artifactRequestSequenceRef = useRef(0);
   const providerRefreshSequenceRef = useRef(0);
+  const codexBridgeSelected = providerConfig.llm?.providerId === "codex_chatgpt"
+    || providerConfig.image?.providerId === "codex_image";
 
   const stageAccess = useMemo<Record<StepId, StageAccess>>(
     () => Object.fromEntries(steps.map((step) => [step.id, getStageAccess(project, step.id as WorkflowStageId)])) as Record<StepId, StageAccess>,
@@ -502,6 +504,16 @@ export function App() {
       providerRefreshSequenceRef.current += 1;
     };
   }, []);
+
+  // Codex availability is tied to a short-lived agent heartbeat. Refresh the
+  // backend-owned capability facts while either bridge Provider is selected so
+  // connect/disconnect state changes without a manual browser reload.
+  useEffect(() => {
+    if (!codexBridgeSelected) return;
+    refreshProviderSources();
+    const timer = window.setInterval(refreshProviderSources, 15_000);
+    return () => window.clearInterval(timer);
+  }, [codexBridgeSelected]);
 
   useEffect(() => {
     if (!project?.project_id) {
@@ -1592,8 +1604,13 @@ function CapabilityConfigPanel({
   const [mode, setMode] = useState<"local" | "cloud">(selectedProvider?.category ?? "local");
   const providers = getCapabilityProviders(capability, mode, catalog);
   const availableProviders = getAvailableCapabilityProviders(capability, mode, catalog);
+  const selectableProviders = showRegistryEntry
+    ? availableProviders
+    : getConfigurableCapabilityProviders(capability, mode, catalog);
   const selectedId = selectedProvider && selectedProvider.category === mode ? selectedProvider.id : "";
-  const optionProviders = providers.filter((provider) => provider.available || provider.id === selectedId);
+  const optionProviders = selectableProviders.some((provider) => provider.id === selectedId)
+    ? selectableProviders
+    : [...selectableProviders, ...providers.filter((provider) => provider.id === selectedId)];
   const registryProviders = getCapabilityRegistryProviders(capability, registry ?? null);
   const showOnboardingRegistry = showRegistryEntry && mode === "local" && availableProviders.length === 0 && registryProviders.length > 0;
   const providerSelectRef = useRef<HTMLSelectElement>(null);
@@ -1627,7 +1644,7 @@ function CapabilityConfigPanel({
 
   function applyProvider(id: string) {
     const def = getProviderById(id, capability, catalog);
-    if (!def || !def.implemented || !def.available) return;
+    if (!def || !def.implemented || !def.configurable || (showRegistryEntry && !def.available)) return;
     const defaults: Record<string, string> = {};
     def.fields.forEach((f) => {
       defaults[f.key] = f.type === "select" && f.options?.length ? f.options[0].value : "";
@@ -1637,7 +1654,9 @@ function CapabilityConfigPanel({
 
   function switchMode(next: "local" | "cloud") {
     setMode(next);
-    const selectable = getAvailableCapabilityProviders(capability, next, catalog)[0];
+    const selectable = (showRegistryEntry
+      ? getAvailableCapabilityProviders(capability, next, catalog)
+      : getConfigurableCapabilityProviders(capability, next, catalog))[0];
     if (selectable) {
       applyProvider(selectable.id);
     } else {
@@ -1684,7 +1703,7 @@ function CapabilityConfigPanel({
         </div>
       </div>
 
-      {availableProviders.length === 0 ? (
+      {selectableProviders.length === 0 ? (
         <p className="muted-text">{t("provider.noProviders")}</p>
       ) : (
         <label className="field">
@@ -1692,7 +1711,7 @@ function CapabilityConfigPanel({
           <select ref={providerSelectRef} value={selectedId} onChange={(e) => applyProvider(e.target.value)}>
             <option value="">{t("provider.chooseProvider")}</option>
             {optionProviders.map((p) => (
-                <option key={p.id} value={p.id} disabled={!p.implemented || !p.available}>
+                <option key={p.id} value={p.id} disabled={!p.implemented || !p.configurable || (showRegistryEntry && !p.available)}>
                   {p.name} — {p.description}
                 </option>
             ))}
@@ -3027,7 +3046,8 @@ const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
   [/presentation readiness/i, "status.blocker.readiness"],
   [/presentation binding/i, "status.blocker.binding"],
   [/quality gate/i, "status.blocker.quality"],
-  [/credentials or required configuration are missing/i, "status.blocker.providerConfig"],
+  [/credentials or required configuration are missing|configure a bridge token/i, "status.blocker.providerConfig"],
+  [/codex agent bridge.*no live agent heartbeat/i, "status.blocker.codexBridgeDisconnected"],
   [/not implemented.*capability|not implemented in the production media pipeline/i, "status.blocker.providerUnavailable"],
   [/ocr engine is not available/i, "status.blocker.ocrUnavailable"],
   [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],

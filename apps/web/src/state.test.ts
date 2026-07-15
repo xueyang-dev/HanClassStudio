@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
 import type { ProjectState, ProviderRegistryCatalog } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -162,11 +162,22 @@ const ocrCatalog = [
   { ...providerCatalog[0], id: "hcs_mock_ocr", name: "OCR sandbox", capability: "ocr" as const, category: "local" as const, available: false, experimental: true },
 ];
 equal(getCapabilityProviders("ocr", "local", ocrCatalog).length, 2);
+equal(getConfigurableCapabilityProviders("ocr", "local", ocrCatalog).length, 2);
 equal(getAvailableCapabilityProviders("ocr", "local", ocrCatalog).length, 0);
 equal(getCapabilityRegistryProviders("ocr", registry).length, 1);
 deepEqual(getCapabilityRegistryProviders("llm", registry), []);
 const availableOcrCatalog = ocrCatalog.map((item) => item.id === "hcs_mock_ocr" ? { ...item, available: true, configured: true } : item);
 equal(getAvailableCapabilityProviders("ocr", "local", availableOcrCatalog).map((item) => item.id).join(","), "hcs_mock_ocr");
+const codexBridgeCatalog = [{
+  ...providerCatalog[0],
+  id: "codex_chatgpt",
+  name: "Codex ChatGPT Bridge",
+  category: "local" as const,
+  available: false,
+  configured: false,
+}];
+equal(getConfigurableCapabilityProviders("llm", "local", codexBridgeCatalog).map((item) => item.id).join(","), "codex_chatgpt");
+equal(getAvailableCapabilityProviders("llm", "local", codexBridgeCatalog).length, 0);
 
 const notRunExport = exportActionsFromProject({
   ...project,

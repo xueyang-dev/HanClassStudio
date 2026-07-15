@@ -72,6 +72,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "operations": ["blueprint", "illustration"],
         },
         {
+            "capability": "llm", "provider_id": "codex_chatgpt", "display_name": "Codex ChatGPT Bridge",
+            "category": "local", "description": "Audited asynchronous handoff to a live Codex agent session",
+            "fields": [_field("api_key", "Bridge token", "password", required=True),
+                       _field("model", "Model label", placeholder="codex-chatgpt")],
+            "operations": ["blueprint", "illustration"],
+        },
+        {
             "capability": "image", "provider_id": "placeholder", "display_name": "Deterministic SVG",
             "category": "local", "description": "Offline-safe deterministic illustration fallback",
             "fields": [], "operations": ["placeholder"],
@@ -91,6 +98,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
             "operations": ["image"], "experimental": True,
+        },
+        {
+            "capability": "image", "provider_id": "codex_image", "display_name": "Codex Image Bridge",
+            "category": "local", "description": "Audited asynchronous image handoff to a live Codex agent session",
+            "fields": [_field("api_key", "Bridge token", "password", required=True),
+                       _field("model", "Model label", placeholder="codex-image")],
+            "operations": ["image"],
         },
         {
             "capability": "tts", "provider_id": "placeholder", "display_name": "Deterministic tone",
@@ -184,6 +198,14 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
         implemented = item.get("implemented", True)
         available = implemented
         reason = item.get("unavailable_reason")
+        if item["provider_id"] in {"codex_chatgpt", "codex_image"}:
+            from .codex_bridge import is_active
+
+            available = configured and is_active(item["capability"], values.get("api_key", ""))
+            if not configured:
+                reason = "Configure a bridge token and select this Provider before connecting a Codex agent."
+            elif not available:
+                reason = "Codex agent bridge is configured but no live agent heartbeat is available."
         if provider_id == item["provider_id"] and not configured:
             reason = "Provider credentials or required configuration are missing."
         if item["capability"] == "ocr" and item["provider_id"] in engine_status:
@@ -272,6 +294,7 @@ def generate_blueprint_with_llm(
     source: SourceMaterial,
     profile: LessonProfile,
     settings: LLMProviderSettings,
+    project_id: str | None = None,
 ) -> LessonBlueprint | None:
     if not _llm_enabled(settings):
         return None
@@ -286,6 +309,23 @@ def generate_blueprint_with_llm(
         },
         {"role": "user", "content": _blueprint_prompt(source, profile)},
     ]
+    if settings.provider == "codex_chatgpt":
+        if not project_id:
+            raise ProviderError("Codex ChatGPT Bridge requires a project workspace")
+        from .codex_bridge import CodexBridgeActionRequired, completed_json, request_job
+
+        job = request_job(project_id, "llm", "blueprint", {
+            "messages": messages,
+            "response_schema": "LessonBlueprint",
+        })
+        data = completed_json(job)
+        if data is None:
+            raise CodexBridgeActionRequired([job.job_id])
+        blueprint = LessonBlueprint.model_validate(data)
+        if not blueprint.slides:
+            raise ProviderError("Codex ChatGPT Bridge returned an empty lesson blueprint")
+        return _normalize_blueprint(blueprint, profile)
+
     content = _chat_completion(settings, messages)
     data = _extract_json(content)
     if isinstance(data, dict) and "blueprint" in data:
@@ -334,6 +374,8 @@ def _llm_enabled(settings: LLMProviderSettings) -> bool:
         return bool(settings.model.strip())
     if provider in {"openai_compatible", "custom"}:
         return bool(settings.base_url.strip() and settings.model.strip() and settings.api_key.strip())
+    if provider == "codex_chatgpt":
+        return bool(settings.api_key.strip())
     return False
 
 
