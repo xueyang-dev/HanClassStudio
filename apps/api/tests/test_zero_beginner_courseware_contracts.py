@@ -1,0 +1,274 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from hcs_api import storage
+from hcs_api.learner_comprehension import build_learner_model, check_comprehensibility
+from hcs_api.models import (
+    AssetManifest,
+    ContentBlock,
+    LessonBlueprint,
+    LessonProfile,
+    LessonSlide,
+    QualityReport,
+    SlideComponent,
+    SourceMaterial,
+    SourcePage,
+    TextBlock,
+)
+from hcs_api.pipeline import render_and_check
+from hcs_api.pptx_deck import build_pptx_deck_plan, build_pptx_structure_report
+from hcs_api.pptx_exporter import export_editable_pptx
+from hcs_api.providers import _blueprint_prompt
+from hcs_api.syllabus_engine import build_difficulty_profile, build_source_lesson_profile
+
+
+def _first_lesson_source() -> SourceMaterial:
+    return SourceMaterial(
+        source_type="pdf",
+        original_filename="第一课.pdf",
+        pages=[
+            SourcePage(
+                page_number=1,
+                title="第1课 你好",
+                text_blocks=[
+                    TextBlock(
+                        id="source",
+                        text=(
+                            "LESSON 1 Hello 入门篇 语音 Phonetics "
+                            "声母 Initials 韵母 Finals 声调 Tones 声调位置 Tone position "
+                            "轻声 Neutral tone 变调 Tone changes nǐ hǎo → ní hǎo "
+                            "你好 您 谢谢 不客气 对不起 没关系 再见"
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def test_confirmed_zero_beginner_profile_preserves_adult_age_group() -> None:
+    learner = build_learner_model(
+        LessonProfile(
+            learner_level="零基础（Pre-HSK / CEFR Pre-A1）",
+            target_students="成年初学者",
+        )
+    )
+    assert learner.level == "zero_beginner"
+    assert learner.age_group == "adult"
+    assert learner.known_words == []
+
+
+def test_difficulty_uses_confirmed_zero_beginner_instead_of_textbook_explanation_density() -> None:
+    source = _first_lesson_source()
+    profile = LessonProfile(learner_level="零基础（Pre-A1）", target_students="成年初学者")
+    difficulty = build_difficulty_profile(source, profile, build_source_lesson_profile(source))
+    assert difficulty.estimated_level == "zero_beginner"
+    assert any("confirmed learner profile" in item for item in difficulty.evidence)
+
+
+def test_codex_prompt_requires_source_first_phonetics_and_scaffold_language() -> None:
+    prompt = _blueprint_prompt(
+        _first_lesson_source(),
+        LessonProfile(
+            learner_level="零基础（Pre-A1）",
+            target_students="成年初学者",
+            generation_mode="faithful",
+            scaffolding_language="English",
+        ),
+    )
+    assert "source order and textbook scope" in prompt
+    assert "声母, 韵母, 声调" in prompt
+    assert "learner-facing instructions and explanations" in prompt
+    assert "decorative stock imagery" in prompt
+
+
+def test_zero_beginner_gate_blocks_missing_phonetics_chinese_instructions_and_vocab_overload() -> None:
+    blueprint = LessonBlueprint(
+        lesson_title="你好",
+        slides=[
+            LessonSlide(
+                id=1,
+                slide_type="VocabularySlide",
+                layout_variant="cards",
+                title="你好",
+                content_blocks=[
+                    ContentBlock(id="instruction", block_type="instruction", text="先看中文，再跟老师读三遍。")
+                ],
+                components=[
+                    SlideComponent(
+                        id="vocab",
+                        component_type="VocabularyFlipCard",
+                        data={
+                            "hint": "请跟老师读。",
+                            "items": [
+                                {"word": "你好", "pinyin": "nǐ hǎo", "meaning": "hello"},
+                                {"word": "谢谢", "pinyin": "xièxie", "meaning": "thank you"},
+                                {"word": "再见", "pinyin": "zàijiàn", "meaning": "goodbye"},
+                            ]
+                        },
+                    )
+                ],
+            )
+        ],
+    )
+    report = check_comprehensibility(
+        blueprint,
+        [],
+        build_learner_model(LessonProfile(learner_level="零基础", scaffolding_language="English")),
+        _first_lesson_source(),
+    )
+    assert report.state == "blocked"
+    assert any("新词数" in item for item in report.blocking)
+    assert any("拼音教学覆盖" in item for item in report.blocking)
+    assert any("中介语" in item for item in report.blocking)
+
+
+def test_zero_beginner_gate_blocks_lesson_vocab_budget() -> None:
+    slides = []
+    for index in range(6):
+        slides.append(
+            LessonSlide(
+                id=index + 1,
+                slide_type="VocabularySlide",
+                layout_variant="cards",
+                title=f"Vocabulary {index + 1}",
+                components=[
+                    SlideComponent(
+                        id=f"vocab-{index}",
+                        component_type="VocabularyFlipCard",
+                        data={
+                            "items": [
+                                {"word": f"词{index * 2 + 1}", "meaning": "item"},
+                                {"word": f"词{index * 2 + 2}", "meaning": "item"},
+                            ]
+                        },
+                    )
+                ],
+            )
+        )
+    report = check_comprehensibility(
+        LessonBlueprint(lesson_title="你好", slides=slides),
+        [],
+        build_learner_model(LessonProfile(learner_level="零基础", scaffolding_language="English")),
+    )
+    assert any("全课新词数" in item for item in report.blocking)
+
+
+def test_pptx_structure_blocks_dense_summary_cards() -> None:
+    blueprint = LessonBlueprint(
+        lesson_title="你好",
+        slides=[
+            LessonSlide(
+                id=1,
+                slide_type="SummarySlide",
+                layout_variant="summary",
+                title="Exit task",
+                content_blocks=[
+                    ContentBlock(
+                        id="dense",
+                        block_type="summary",
+                        text="This instruction is much too long to fit inside a single summary card without wrapping across the card boundary.",
+                    )
+                ],
+            )
+        ],
+    )
+    report = build_pptx_structure_report(build_pptx_deck_plan(blueprint, learner_level="zero_beginner"))
+    assert report["state"] == "blocked"
+    assert any("summary card" in item for item in report["blocked"])
+
+
+def test_editable_pptx_uses_normalized_level_and_refuses_dense_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(storage, "RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setattr(storage, "PROJECTS_DIR", tmp_path / "runtime" / "projects")
+    project_id = "zero_beginner_pptx"
+    storage.ensure_project(project_id)
+    storage.write_model(
+        project_id,
+        "lesson_profile.json",
+        LessonProfile(learner_level="零基础（Pre-A1）", target_students="成年初学者"),
+    )
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+    storage.write_model(
+        project_id,
+        "lesson_blueprint.json",
+        LessonBlueprint(
+            lesson_title="你好",
+            slides=[
+                LessonSlide(
+                    id=1,
+                    slide_type="SummarySlide",
+                    layout_variant="summary",
+                    title="Exit task",
+                    content_blocks=[
+                        ContentBlock(
+                            id="dense",
+                            block_type="summary",
+                            text="This instruction is much too long to fit inside a single summary card without wrapping across the card boundary.",
+                        )
+                    ],
+                )
+            ],
+        ),
+    )
+    with pytest.raises(PermissionError, match="PPTX structure gate"):
+        export_editable_pptx(project_id)
+    plan = storage.read_json(project_id, "blueprints/pptx_deck_plan.json")
+    assert plan["learner_level"] == "zero_beginner"
+
+
+def test_render_gate_persists_zero_beginner_comprehensibility_blockers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(storage, "RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setattr(storage, "PROJECTS_DIR", tmp_path / "runtime" / "projects")
+    project_id = "zero_beginner_render_gate"
+    project_root = storage.ensure_project(project_id)
+    profile = LessonProfile(
+        learner_level="零基础（Pre-A1）",
+        target_students="成年初学者",
+        scaffolding_language="English",
+    )
+    blueprint = LessonBlueprint(
+        lesson_title="你好",
+        slides=[
+            LessonSlide(
+                id=1,
+                slide_type="PracticeSlide",
+                layout_variant="prompt",
+                title="Practice",
+                content_blocks=[
+                    ContentBlock(id="instruction", block_type="instruction", text="请跟老师读。")
+                ],
+            )
+        ],
+    )
+    storage.write_model(project_id, "source_material.json", _first_lesson_source())
+    storage.write_model(project_id, "lesson_profile.json", profile)
+    storage.write_json(
+        project_id,
+        "analysis/learner_model.json",
+        build_learner_model(profile).model_dump(mode="json", by_alias=True),
+    )
+    storage.write_json(project_id, "analysis/language_items.json", [])
+
+    report = render_and_check(
+        project_id,
+        project_root,
+        profile,
+        blueprint,
+        AssetManifest(),
+        render_mode="classroom",
+    )
+
+    assert report.state == "blocked"
+    assert any("拼音教学覆盖" in item for item in report.blocking)
+    persisted = storage.read_model(project_id, "quality_report.json", QualityReport)
+    assert persisted is not None
+    assert persisted.state == "blocked"
+    assert persisted.blocking == report.blocking

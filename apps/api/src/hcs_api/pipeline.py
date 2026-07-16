@@ -13,8 +13,8 @@ from .learner_comprehension import (
 )
 from .media import generate_configured_media
 from .models import (
-    AssetManifest, ClassroomQualityReport, LessonBlueprint, LessonProfile,
-    ProjectState, ProviderSettings, QualityReport, SourceMaterial, TeachingCandidates,
+    AssetManifest, ClassroomQualityReport, LanguageItem, LearnerModel, LessonBlueprint,
+    LessonProfile, ProjectState, ProviderSettings, QualityReport, SourceMaterial, TeachingCandidates,
 )
 from .providers import ProviderError, generate_blueprint_with_llm
 from .quality import check_classroom_quality, check_quality
@@ -248,6 +248,13 @@ def render_and_check(
     learner_model=None,
     render_mode: str = "debug",
 ) -> QualityReport:
+    source = read_model(project_id, "source_material.json", SourceMaterial)
+    if learner_model is None:
+        learner_data = read_json(project_id, "analysis/learner_model.json")
+        learner_model = LearnerModel.model_validate(learner_data) if learner_data else None
+    if language_items is None:
+        language_items = [LanguageItem.model_validate(item) for item in (read_json(project_id, "analysis/language_items.json") or [])]
+    downstream_reports: list = []
     preliminary = QualityReport(suggestions=["Rendering in progress; final quality gate runs after HTML output."])
     from .models import PresentationBindingPlan as _PBP
     binding_data = read_json(project_id, "presentation/activity_bindings.json")
@@ -265,8 +272,9 @@ def render_and_check(
     if learner_model is not None and language_items is not None:
         seq_plan = plan_comprehensible_input(language_items, learner_model)
         write_json(project_id, "analysis/input_sequence_plan.json", seq_plan.model_dump(mode="json"))
-        comp_report = check_comprehensibility(blueprint, language_items, learner_model)
+        comp_report = check_comprehensibility(blueprint, language_items, learner_model, source)
         write_json(project_id, "quality/comprehensibility_report.json", comp_report.model_dump(mode="json"))
+        downstream_reports.append(comp_report)
 
     # Classroom quality gate
     classroom_report = check_classroom_quality(blueprint, candidates)
@@ -301,6 +309,17 @@ def render_and_check(
         if review_report.state == "blocked":
             rev_plan = build_revision_plan(review_report, blueprint)
             write_json(project_id, "blueprints/revision_plan.json", rev_plan.model_dump(mode="json"))
+
+    for diagnostic in downstream_reports:
+        for message in getattr(diagnostic, "blocking", []):
+            if message not in report.blocking:
+                report.blocking.append(message)
+        for message in getattr(diagnostic, "warnings", []):
+            if message not in report.warnings:
+                report.warnings.append(message)
+    report.state = "blocked" if report.blocking else "warning" if report.warnings else "pass"
+    write_model(project_id, "quality_report.json", report)
+    write_text(project_id, "quality/quality_summary.md", "\n".join(["# Quality Summary", "", f"State: {report.state}", *report.blocking, *report.warnings, *report.passed]))
 
     return report
 
@@ -363,7 +382,7 @@ def run_full_pipeline(
     from .state_evidence_kernel import build_full_kernel as _build_kernel
     state_plan, evidence_plan, activity_plan, alignment = _build_kernel(
         profile, candidates, language_items,
-        str(difficulty.estimated_level) if hasattr(difficulty, "estimated_level") else "zero_beginner",
+        learner_model.level,
         profile.scaffolding_language or "English",
     )
     write_json(project_id, "learning/learning_state_plan.json", state_plan.model_dump(mode="json", by_alias=True))
@@ -447,7 +466,7 @@ def run_full_pipeline(
         from .presentation_adapter_assessment import run_presentation_adapter_assessment
 
         run_presentation_adapter_assessment(project_id)
-    learner_level = str(difficulty.estimated_level) if hasattr(difficulty, "estimated_level") else "zero_beginner"
+    learner_level = learner_model.level
     binding_plan = write_presentation_bindings(project_id, blueprint, evidence_plan, activity_plan, state_plan, learner_level)
     readiness = write_presentation_readiness(
         project_id, blueprint, evidence_plan, activity_plan, binding_plan, alignment,
@@ -500,7 +519,7 @@ def run_full_pipeline(
         from .storage import read_json as _rj
         rev_data = _rj(project_id, "blueprints/revision_plan.json")
         rev_plan = _RP(**rev_data) if rev_data else None
-        zb = "zero_beginner" if profile.learner_level and "zero" in profile.learner_level.lower() else "beginner"
+        zb = learner_model.level
         revised_bp, rev_apply_report = apply_revision_plan(blueprint, rev_plan, learner_model, None, language_items)
         normalize_component_ids(revised_bp)
         write_json(project_id, "blueprints/revised_blueprint.json", revised_bp.model_dump(mode="json"))

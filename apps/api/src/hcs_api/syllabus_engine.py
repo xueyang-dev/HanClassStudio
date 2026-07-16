@@ -83,6 +83,19 @@ def build_source_lesson_profile(source: SourceMaterial) -> SourceLessonProfile:
 
 def build_difficulty_profile(source: SourceMaterial, profile: LessonProfile, source_lesson: SourceLessonProfile) -> DifficultyProfile:
     """Infer difficulty level from source content."""
+    from .learner_comprehension import resolve_profile_learner_level
+
+    confirmed_level = resolve_profile_learner_level(profile)
+    if confirmed_level == "zero_beginner":
+        return DifficultyProfile(
+            estimated_level="zero_beginner",
+            standard_scheme="HSK",
+            standard_level="Pre-HSK / HSK1",
+            evidence=["confirmed learner profile: zero_beginner"],
+            confidence=1.0,
+            source_scope_notes="Teacher-confirmed zero-beginner level overrides textbook explanation density.",
+        )
+
     all_text = _source_text(source).lower()
     evidence: list[str] = []
     confidence = 0.5

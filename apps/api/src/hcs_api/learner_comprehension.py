@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
+from .content_contract import check_scaffold_language
 from .models import (
     ComprehensibilityReport,
     InputSequenceItem,
@@ -14,6 +16,7 @@ from .models import (
     LearnerModel,
     LessonBlueprint,
     LessonProfile,
+    SourceMaterial,
     TeachingCandidates,
 )
 
@@ -72,23 +75,45 @@ META_WORDS = {"我会说", "我会读", "我会写", "请用中文说", "请用�
 KNOWN_FUNCTIONAL = {"我", "的", "了", "是", "在", "有", "不", "和", "也", "都", "就", "很", "会", "能", "要"}
 
 
+def resolve_profile_learner_level(profile: LessonProfile) -> LearnerLevel:
+    """Normalize teacher-facing level labels into the backend learner contract."""
+    value = (profile.learner_level or "").strip().lower()
+    if any(marker in value for marker in ("zero", "零基础", "pre-a1", "pre-hsk")) or value in {"0", "zb"}:
+        return "zero_beginner"
+    if any(marker in value for marker in ("beginner", "初级", "hsk 1", "hsk1", "a1")):
+        return "beginner"
+    if any(marker in value for marker in ("elementary", "初中级", "hsk 2", "hsk2", "a2")):
+        return "elementary"
+    if any(marker in value for marker in ("intermediate", "中级", "hsk 3", "hsk3", "b1")):
+        return "intermediate"
+    return "zero_beginner"
+
+
+def _age_group(profile: LessonProfile) -> str:
+    value = (profile.target_students or "").lower()
+    if any(marker in value for marker in ("成年", "成人", "adult")):
+        return "adult"
+    if any(marker in value for marker in ("老年", "senior", "older adult")):
+        return "older_adult"
+    if any(marker in value for marker in ("幼儿", "preschool")):
+        return "preschool"
+    if any(marker in value for marker in ("少年", "teen", "adolescent")):
+        return "adolescent"
+    if any(marker in value for marker in ("儿童", "child")):
+        return "child"
+    return "unspecified"
+
+
 def build_learner_model(profile: LessonProfile) -> LearnerModel:
     """Build a LearnerModel from the lesson profile and level defaults."""
-    level: LearnerLevel = "zero_beginner"
-    level_str = profile.learner_level.lower()
-    if "beginner" in level_str:
-        level = "zero_beginner" if "zero" in level_str or "0" in level_str else "beginner"
-    elif "elementary" in level_str:
-        level = "elementary"
-    elif "intermediate" in level_str:
-        level = "intermediate"
+    level = resolve_profile_learner_level(profile)
 
     return LearnerModel(
         target_language="Chinese",
         scaffold_language=profile.scaffolding_language,
         level=level,
-        age_group="11-13",
-        known_words=list(KNOWN_FUNCTIONAL),
+        age_group=_age_group(profile),
+        known_words=[] if level == "zero_beginner" else list(KNOWN_FUNCTIONAL),
         new_word_limit_per_slide=2 if level in ("zero_beginner", "beginner") else 4,
         new_word_limit_per_lesson=10 if level in ("zero_beginner", "beginner") else 20,
         max_sentence_length=8 if level == "zero_beginner" else 12,
@@ -253,6 +278,7 @@ def check_comprehensibility(
     blueprint: LessonBlueprint,
     language_items: list[LanguageItem],
     learner: LearnerModel,
+    source: SourceMaterial | None = None,
 ) -> ComprehensibilityReport:
     """Check final blueprint for comprehensibility issues."""
     report = ComprehensibilityReport()
@@ -279,7 +305,32 @@ def check_comprehensibility(
         if len(slide_new_words) > learner.new_word_limit_per_slide:
             msg = f"{label} 新词数 {len(slide_new_words)} 超过限制 {learner.new_word_limit_per_slide}"
             report.new_word_violations.append(msg)
-            report.warnings.append(msg)
+            (report.blocking if learner.level == "zero_beginner" else report.warnings).append(msg)
+
+        if learner.level == "zero_beginner" and learner.classroom_instruction_policy == "scaffold_first":
+            instruction_types = {
+                "instruction", "directions", "prompt", "teacher_instruction", "coach_note",
+                "rubric", "success_criteria", "reflection", "performance_task", "explanation",
+            }
+            for block in slide.content_blocks:
+                if block.block_type not in instruction_types or not block.text.strip():
+                    continue
+                allowed, _ = check_scaffold_language(block.text, learner.scaffold_language)
+                if not allowed:
+                    msg = f"{label} 零基础学习者指示词/解释未使用中介语 {learner.scaffold_language}"
+                    report.target_scaffold_mixing.append(msg)
+                    report.blocking.append(msg)
+
+            for component in slide.components:
+                for key in ("hint", "instruction", "directions", "prompt", "feedback_correct", "feedback_wrong"):
+                    value = component.data.get(key)
+                    if not isinstance(value, str) or not value.strip():
+                        continue
+                    allowed, _ = check_scaffold_language(value, learner.scaffold_language)
+                    if not allowed:
+                        msg = f"{label} 互动组件 {key} 未使用中介语 {learner.scaffold_language}"
+                        report.target_scaffold_mixing.append(msg)
+                        report.blocking.append(msg)
 
         # Check for scaffold meaning
         for component in slide.components:
@@ -318,7 +369,36 @@ def check_comprehensibility(
                         if word in item_by_form and not item_by_form[word].usage_context:
                             msg = f"{label} 词汇 '{word}' 缺少使用场景"
                             report.missing_usage_context.append(msg)
-                            report.warnings.append(msg)
+                            (report.blocking if learner.level == "zero_beginner" else report.warnings).append(msg)
+
+    if learner.level == "zero_beginner" and len(introduced) > learner.new_word_limit_per_lesson:
+        msg = f"全课新词数 {len(introduced)} 超过限制 {learner.new_word_limit_per_lesson}"
+        report.new_word_violations.append(msg)
+        report.blocking.append(msg)
+
+    if learner.level == "zero_beginner" and source is not None:
+        source_text = "\n".join(
+            text
+            for page in source.pages
+            for text in [page.title, *(block.text for block in page.text_blocks)]
+        )
+        blueprint_text = json.dumps(blueprint.model_dump(mode="json"), ensure_ascii=False)
+        required_concepts = {
+            "声母": ("声母",),
+            "韵母": ("韵母",),
+            "声调": ("声调",),
+            "声调位置": ("声调位置", "标调", "tone-mark placement", "tone position"),
+            "轻声": ("轻声", "neutral tone"),
+            "变调": ("变调", "tone change", "tone sandhi"),
+        }
+        missing = [
+            concept
+            for concept, accepted_labels in required_concepts.items()
+            if concept in source_text and not any(label in blueprint_text.lower() for label in accepted_labels)
+        ]
+        if missing:
+            msg = f"零基础课件缺少教材拼音教学覆盖：{', '.join(missing)}"
+            report.blocking.append(msg)
 
     # Meta labels in classroom content
     meta_labels = ["生词卡", "词卡", "互动组件", "组件"]

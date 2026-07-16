@@ -96,9 +96,9 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     # Build PPTX deck plan with kernel + presentation binding artifacts
     from .pptx_deck import build_pptx_deck_plan, build_pptx_structure_report
     from .storage import read_model as _rm, write_json as _wj, read_json as _rj
-    from .models import LearnerModel as _LM
+    from .learner_comprehension import resolve_profile_learner_level
     profile = _rm(project_id, "lesson_profile.json", LessonProfile)
-    level = getattr(profile, "learner_level", "zero_beginner") if profile else "zero_beginner"
+    level = resolve_profile_learner_level(profile) if profile else "zero_beginner"
     # Read kernel artifacts (use read_json for dicts, then construct models)
     ep_data = _rj(project_id, "learning/evidence_plan.json")
     ap_data = _rj(project_id, "learning/activity_plan.json")
@@ -118,6 +118,8 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     _wj(project_id, "blueprints/pptx_deck_plan.json", deck_plan.model_dump(mode="json"))
     struct_report = build_pptx_structure_report(deck_plan)
     _wj(project_id, "quality/pptx_structure_report.json", struct_report)
+    if struct_report.get("state") == "blocked" and not force:
+        raise PermissionError("PPTX structure gate is blocked; shorten or split dense slide content before export")
 
     prs = _new_master_presentation()
     is_classroom = export_mode == "classroom"

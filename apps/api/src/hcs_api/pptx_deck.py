@@ -188,7 +188,7 @@ def _map_slide_to_deck(
 
     elif st == "SummarySlide":
         deck.traditional_layout = "summary_cards"
-        summaries = [b.text for b in slide.content_blocks[:3] if b.text]
+        summaries = [b.text for b in slide.content_blocks if b.text]
         deck.main_focus = "课堂小结"
         deck.target_text = "\n".join(summaries)
         deck.teacher_notes = ["Review key points.", "Encourage students to share what they learned."]
@@ -224,8 +224,24 @@ def build_pptx_structure_report(plan: PptxDeckPlan) -> dict:
         # Check main_focus exists
         if not slide.main_focus:
             report["tiny_main_content"].append(f"S{slide.slide_id}: no main_focus")
+        if slide.traditional_layout == "summary_cards":
+            for item in slide.target_text.splitlines():
+                if len(item.strip()) > 32:
+                    report["blocked"].append(
+                        f"S{slide.slide_id}: summary card text exceeds the 32-character layout budget"
+                    )
+                    break
+        if slide.traditional_layout == "objectives_cards":
+            for item in slide.target_text.splitlines():
+                if len(item.strip()) > 60:
+                    report["blocked"].append(
+                        f"S{slide.slide_id}: objective card text exceeds the 60-character layout budget"
+                    )
+                    break
+    if report["blocked"]:
+        report["state"] = "blocked"
     if report["warnings"]:
-        report["state"] = "warning"
+        report["state"] = "blocked" if report["blocked"] else "warning"
     if not report["warnings"] and not report["blocked"]:
         report["passed"].append("All slides pass PPTX structure check")
     return report

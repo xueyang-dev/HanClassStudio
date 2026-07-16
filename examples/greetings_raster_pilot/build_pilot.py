@@ -206,34 +206,40 @@ def _blueprint() -> LessonBlueprint:
             LessonSlide(id=1, slide_type="CoverSlide", layout_variant="hero", title="老师好！", content_blocks=[
                 ContentBlock(id="cover", text="老师好", scaffolding_text="lǎoshī hǎo · Hello, teacher"),
             ], media_requirements=_scene("teacher_greeting", "One school-age student politely greets one teacher at a bright classroom doorway")),
-            LessonSlide(id=2, slide_type="VocabularySlide", layout_variant="cards", title="五个问候语", components=[SlideComponent(
-                id="greeting_cards", component_type="VocabularyFlipCard", data={"items": vocabulary},
+            LessonSlide(id=2, slide_type="VocabularySlide", layout_variant="cards", title="问候同伴与老师", components=[SlideComponent(
+                id="greeting_cards_1", component_type="VocabularyFlipCard", data={"items": vocabulary[:2]},
             )], media_requirements=MediaRequirements(
                 image_key="greeting_symbols", image_prompt="simple semantic greeting sequence", media_kind="svg_illustration",
                 illustration_level="icon", text_policy="no_text", scene_type="diagram",
             )),
-            LessonSlide(id=3, slide_type="DialogueSlide", layout_variant="contrast", title="你好 / 您好", content_blocks=[
+            LessonSlide(id=3, slide_type="VocabularySlide", layout_variant="cards", title="时间与身份", components=[SlideComponent(
+                id="greeting_cards_2", component_type="VocabularyFlipCard", data={"items": vocabulary[2:4]},
+            )]),
+            LessonSlide(id=4, slide_type="VocabularySlide", layout_variant="cards", title="告别", components=[SlideComponent(
+                id="greeting_cards_3", component_type="VocabularyFlipCard", data={"items": vocabulary[4:]},
+            )]),
+            LessonSlide(id=5, slide_type="DialogueSlide", layout_variant="contrast", title="你好 / 您好", content_blocks=[
                 ContentBlock(id="nihao", text="你好！", scaffolding_text="nǐ hǎo · Hello!"),
                 ContentBlock(id="ninhao", text="您好！", scaffolding_text="nín hǎo · Polite hello!"),
             ], media_requirements=_scene("polite_contrast", "Two clear greeting moments side by side: a learner greets a peer, and a learner politely greets an older teacher")),
-            LessonSlide(id=4, slide_type="VocabularySlide", layout_variant="hero", title="早上好", content_blocks=[
+            LessonSlide(id=6, slide_type="VocabularySlide", layout_variant="hero", title="早上好", content_blocks=[
                 ContentBlock(id="morning", text="早上好！", scaffolding_text="zǎoshang hǎo · Good morning!"),
             ], media_requirements=_scene("morning_greeting", "Two learners greet each other in the morning outside a school, with gentle early sunlight")),
-            LessonSlide(id=5, slide_type="PracticeSlide", layout_variant="listen_choose", title="听一听，选一选", content_blocks=[
+            LessonSlide(id=7, slide_type="PracticeSlide", layout_variant="listen_choose", title="听一听，选一选", content_blocks=[
                 ContentBlock(id="listen_instruction", text="听一听，选出你听到的问候语。", scaffolding_text="Listen and choose the greeting you hear."),
             ], components=[SlideComponent(id="listen_greeting", component_type="ListenAndChoose", data={
                 "audio_key": "audio_ninhao", "audio_text": "您好", "choices": ["你好", "您好", "再见"], "answer": "您好",
             })]),
-            LessonSlide(id=6, slide_type="PracticeSlide", layout_variant="matching", title="连一连", content_blocks=[
+            LessonSlide(id=8, slide_type="PracticeSlide", layout_variant="matching", title="连一连", content_blocks=[
                 ContentBlock(id="match_instruction", text="把中文问候语和英文意思连起来。", scaffolding_text="Match each Chinese greeting with its English meaning."),
             ], components=[SlideComponent(id="match_greetings", component_type="MatchGame", data={"pairs": [
                 {"left": "你好", "right": "hello"}, {"left": "您好", "right": "hello (polite)"},
                 {"left": "早上好", "right": "good morning"}, {"left": "再见", "right": "goodbye"},
             ]})]),
-            LessonSlide(id=7, slide_type="DialogueSlide", layout_variant="hero", title="再见！", content_blocks=[
+            LessonSlide(id=9, slide_type="DialogueSlide", layout_variant="hero", title="再见！", content_blocks=[
                 ContentBlock(id="goodbye", text="再见！", scaffolding_text="zàijiàn · Goodbye!"),
             ], media_requirements=_scene("goodbye_scene", "A teacher and two learners wave goodbye naturally as class ends, with friendly expressions")),
-            LessonSlide(id=8, slide_type="SummarySlide", layout_variant="cards", title="今天会说", content_blocks=[
+            LessonSlide(id=10, slide_type="SummarySlide", layout_variant="cards", title="今天会说", content_blocks=[
                 ContentBlock(id="summary", text="你好 · 您好 · 老师好 · 早上好 · 再见", scaffolding_text="Choose the greeting that fits the person and time."),
             ]),
         ],

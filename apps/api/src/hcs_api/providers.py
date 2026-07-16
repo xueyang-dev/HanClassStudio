@@ -417,6 +417,20 @@ def _chat_completion(settings: LLMProviderSettings, messages: list[dict[str, str
 
 
 def _blueprint_prompt(source: SourceMaterial, profile: LessonProfile) -> str:
+    from .learner_comprehension import resolve_profile_learner_level
+
+    learner_level = resolve_profile_learner_level(profile)
+    zero_beginner_rules = ""
+    if learner_level == "zero_beginner":
+        zero_beginner_rules = f"""
+- Preserve the source order and textbook scope; do not replace textbook teaching points with invented life scenarios.
+- Explicitly teach the source phonetics sequence, including 声母, 韵母, 声调, tone-mark placement, neutral tone, and the source tone-change examples.
+- Keep Chinese target items paired with accurate pinyin and concise {profile.scaffolding_language} meanings.
+- Write learner-facing instructions and explanations in {profile.scaffolding_language}; do not require zero-beginner learners to decode Chinese directions.
+- Introduce no more than 2 new lexical items on one slide and no more than 10 across the lesson.
+- Every visual must teach a source item or support a source exercise. Avoid decorative stock imagery and do not put text inside generated images.
+- Prefer simple pronunciation diagrams and source-aligned scene illustrations; use one clear visual role per slide.
+""".rstrip()
     return f"""
 Create a complete LessonBlueprint JSON object for HanClassStudio.
 
@@ -457,12 +471,13 @@ Lesson profile:
 {json.dumps(profile.model_dump(mode="json"), ensure_ascii=False)}
 
 Generation rules:
-- Keep the lesson appropriate for {profile.learner_level} learners.
+- Keep the lesson appropriate for the normalized backend level {learner_level} ({profile.learner_level}).
 - Use Chinese for core classroom language.
 - Use concise {profile.scaffolding_language} scaffolding_text and hints.
-- Make 6 to 10 slides unless faithful mode requires fewer.
+- Make 8 to 14 slides for a faithful zero-beginner lesson; otherwise use 6 to 10 unless the source requires more.
 - Include image prompts for visual slides and audio keys/text for vocabulary or listening items.
 - For scene/context illustrations that should be offline-safe vector art, set "media_kind": "svg_illustration" (and optionally "svg_style": "flat"|"mascot"|"diagram"|"scene"); use "raster" only when a photographic image is essential.
+{zero_beginner_rules}
 - Return JSON only.
 
 Source material excerpt:
