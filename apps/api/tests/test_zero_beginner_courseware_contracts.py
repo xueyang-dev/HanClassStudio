@@ -20,10 +20,12 @@ from hcs_api.models import (
     TextBlock,
 )
 from hcs_api.pipeline import render_and_check
+from hcs_api.pinyin_annotation import pinyin_for_text, pinyin_segments
 from hcs_api.pptx_deck import build_pptx_deck_plan, build_pptx_structure_report
 from hcs_api.pptx_exporter import _rasterize_svg, export_editable_pptx
 from hcs_api.providers import _blueprint_prompt
 from hcs_api.syllabus_engine import build_difficulty_profile, build_source_lesson_profile
+from hcs_api.renderer import _render_slide, _target_html
 
 
 def _first_lesson_source() -> SourceMaterial:
@@ -337,3 +339,38 @@ def test_render_gate_persists_zero_beginner_comprehensibility_blockers(
     assert persisted is not None
     assert persisted.state == "blocked"
     assert persisted.blocking == report.blocking
+
+
+def test_zero_beginner_target_text_gets_tone_mark_pinyin_annotation() -> None:
+    assert pinyin_for_text("你好！") == "nǐ hǎo"
+    assert pinyin_segments("A：你好！") == [("A：", ""), ("你好", "nǐ hǎo"), ("！", "")]
+    assert _target_html("A：你好！", True) == "A：<ruby>你好<rt>nǐ hǎo</rt></ruby>！"
+    assert _target_html("谢谢！", True, {"谢谢": "xièxie"}) == "<ruby>谢谢<rt>xièxie</rt></ruby>！"
+    assert _target_html("A：你好！", False) == "A：你好！"
+
+
+def test_zero_beginner_cover_merges_duplicate_target_into_annotated_title() -> None:
+    slide = LessonSlide(
+        id=1,
+        slide_type="CoverSlide",
+        layout_variant="cover",
+        title="你好！",
+        content_blocks=[ContentBlock(id="cover", block_type="target", text="你好！", scaffolding_text="nǐ hǎo · Hello!")],
+    )
+    html = _render_slide(slide, {}, {}, annotate_pinyin=True, pronunciations={"你好": "nǐ hǎo"})
+    assert html.count("<ruby>你好<rt>nǐ hǎo</rt></ruby>") == 1
+    assert "Hello!" in html
+    assert "nǐ hǎo · Hello!" not in html
+
+
+def test_classroom_component_slide_uses_single_column_without_media() -> None:
+    slide = LessonSlide(
+        id=1,
+        slide_type="PracticeSlide",
+        layout_variant="matching",
+        title="Exit check · Complete the textbook exchange",
+        components=[SlideComponent(id="match", component_type="MatchGame", data={"pairs": []})],
+    )
+    html = _render_slide(slide, {}, {}, render_mode="classroom", annotate_pinyin=True)
+    assert 'class="slide PracticeSlide has-components"' in html
+    assert 'class="slide-content no-media"' in html

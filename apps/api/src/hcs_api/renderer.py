@@ -6,6 +6,8 @@ from html import escape
 from pathlib import Path
 
 from .models import AssetManifest, LessonBlueprint, LessonProfile, PresentationBindingPlan, QualityReport
+from .learner_comprehension import resolve_profile_learner_level
+from .pinyin_annotation import pinyin_segments
 from .presentation_theme import presentation_theme_for_project, project_has_presentation_theme
 from .typography import resolve_typography
 
@@ -24,7 +26,16 @@ def render_lesson(
     typography = resolve_typography(profile.target_language, profile.explanation_language, profile.transliteration_system, profile.interface_language)
     image_by_id = {asset.id: f"../{asset.path}" for asset in manifest.images}
     audio_by_id = {asset.id: f"../{asset.path}" for asset in manifest.audio}
-    slides_html = "\n".join(_render_slide(slide, image_by_id, audio_by_id, render_mode) for slide in blueprint.slides)
+    annotate_pinyin = resolve_profile_learner_level(profile) == "zero_beginner"
+    pronunciations = {
+        str(item.get("word", "")): str(item.get("pinyin", ""))
+        for item in blueprint.key_vocabulary
+        if item.get("word") and item.get("pinyin")
+    }
+    slides_html = "\n".join(
+        _render_slide(slide, image_by_id, audio_by_id, render_mode, annotate_pinyin, pronunciations)
+        for slide in blueprint.slides
+    )
     is_classroom = render_mode == "classroom"
     filename = output_filename or ("lesson_classroom.html" if is_classroom else "lesson.html")
     body_class = ' class="v2-internal"' if filename == "lesson_v2_internal.html" else ""
@@ -194,11 +205,29 @@ def _clean_arabic_from_zh(text: str) -> str:
     return cleaned
 
 
-def _render_slide(slide, image_by_id: dict[str, str], audio_by_id: dict[str, str], render_mode: str = "debug") -> str:
+def _render_slide(
+    slide,
+    image_by_id: dict[str, str],
+    audio_by_id: dict[str, str],
+    render_mode: str = "debug",
+    annotate_pinyin: bool = False,
+    pronunciations: dict[str, str] | None = None,
+) -> str:
     image_path = image_by_id.get(slide.media_requirements.image_key or "")
     audio_path = audio_by_id.get(slide.media_requirements.audio_key or "")
-    blocks = "".join(_render_block(block, render_mode) for block in slide.content_blocks)
-    components = "".join(_render_component(component, audio_by_id, render_mode) for component in slide.components)
+    content_blocks = slide.content_blocks
+    if slide.slide_type == "CoverSlide" and content_blocks and content_blocks[0].text.strip() == slide.title.strip():
+        scaffold = content_blocks[0].scaffolding_text.split("·", 1)[-1].strip()
+        blocks = f'<p class="scaffold">{escape(scaffold)}</p>' if scaffold else ""
+    else:
+        blocks = "".join(
+            _render_block(block, render_mode, annotate_pinyin, pronunciations)
+            for block in content_blocks
+        )
+    components = "".join(
+        _render_component(component, audio_by_id, render_mode, annotate_pinyin, pronunciations)
+        for component in slide.components
+    )
 
     is_classroom = render_mode == "classroom"
     if is_classroom:
@@ -214,13 +243,17 @@ def _render_slide(slide, image_by_id: dict[str, str], audio_by_id: dict[str, str
     media_zone = f'<div class="media-zone">{image}</div>'
     if is_classroom and not image_path:
         media_zone = ""
+    article_classes = f"slide {escape(slide.slide_type)}"
+    if slide.components:
+        article_classes += " has-components"
+    content_classes = "slide-content" if media_zone else "slide-content no-media"
 
     return f"""
-<article class="slide {escape(slide.slide_type)}" data-slide="{slide.id - 1}" data-layout="{escape(slide.layout_variant)}">
-  <div class="slide-content">
+<article class="{article_classes}" data-slide="{slide.id - 1}" data-layout="{escape(slide.layout_variant)}">
+  <div class="{content_classes}">
     <div class="text-zone">
       {kicker}
-      <h1>{escape(slide.title)}</h1>
+      <h1>{_target_html(slide.title, annotate_pinyin, pronunciations)}</h1>
       {blocks}
       {audio}
     </div>
@@ -230,15 +263,26 @@ def _render_slide(slide, image_by_id: dict[str, str], audio_by_id: dict[str, str
 </article>"""
 
 
-def _render_block(block, render_mode: str = "debug") -> str:
+def _render_block(
+    block,
+    render_mode: str = "debug",
+    annotate_pinyin: bool = False,
+    pronunciations: dict[str, str] | None = None,
+) -> str:
     scaffold_text = block.scaffolding_text
     if render_mode == "classroom" and PROVIDER_REQUIRED.search(scaffold_text):
         scaffold_text = ""
     scaffold = f'<p class="scaffold">{escape(scaffold_text)}</p>' if scaffold_text else ""
-    return f'<div class="content-block {escape(block.block_type)}"><p class="zh">{escape(block.text)}</p>{scaffold}</div>'
+    return f'<div class="content-block {escape(block.block_type)}"><p class="zh">{_target_html(block.text, annotate_pinyin, pronunciations)}</p>{scaffold}</div>'
 
 
-def _render_component(component, audio_by_id: dict[str, str], render_mode: str = "debug") -> str:
+def _render_component(
+    component,
+    audio_by_id: dict[str, str],
+    render_mode: str = "debug",
+    annotate_pinyin: bool = False,
+    pronunciations: dict[str, str] | None = None,
+) -> str:
     data = component.data
     title = escape(component.title)
     is_classroom = render_mode == "classroom"
@@ -272,7 +316,7 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
                 context_html = f'<p class="scaffold">{escape(context)}</p>'
             cards.append(
                 f"""<div class="flip-card" role="button" tabindex="0" aria-label="翻转生词卡 {escape(item.get('word', ''))}">
-  <span class="card-face front"><strong>{escape(item.get('word', ''))}</strong><em>{escape(item.get('pinyin', ''))}</em></span>
+  <span class="card-face front"><strong>{_target_html(item.get('word', ''), annotate_pinyin, {str(item.get('word', '')): str(item.get('pinyin', ''))})}</strong>{'' if annotate_pinyin else f'<em>{escape(item.get("pinyin", ""))}</em>'}</span>
   <span class="card-face back"><span class="zh">{escape(example)}</span><span class="scaffold">{escape(meaning)}</span>{context_html}</span>
 </div>"""
             )
@@ -306,8 +350,8 @@ def _render_component(component, audio_by_id: dict[str, str], render_mode: str =
 </section>"""
     if component.component_type == "MatchGame":
         pairs = [pair for pair in _list(data.get("pairs")) if isinstance(pair, dict)]
-        left = "".join(f'<button type="button" data-value="{escape(pair.get("left", ""))}">{escape(pair.get("left", ""))}</button>' for pair in pairs)
-        right = "".join(f'<button type="button" data-value="{escape(pair.get("left", ""))}">{escape(pair.get("right", ""))}</button>' for pair in reversed(pairs))
+        left = "".join(f'<button type="button" data-value="{escape(pair.get("left", ""))}">{_target_html(pair.get("left", ""), annotate_pinyin, pronunciations)}</button>' for pair in pairs)
+        right = "".join(f'<button type="button" data-value="{escape(pair.get("left", ""))}">{_target_html(pair.get("right", ""), annotate_pinyin, pronunciations)}</button>' for pair in reversed(pairs))
         body = f'<div class="match-columns"><div>{left}</div><div>{right}</div></div>' if pairs else _component_empty("暂无配对数据")
         return f"""<section class="component component-container match-game"{trace_attrs}>
   <h2>{title}</h2>
@@ -344,6 +388,15 @@ def _shadow_trace_attrs(data: dict) -> str:
         "data-shadow-evidence": ",".join(str(value) for value in trace.get("evidence_ids", [])),
     }
     return "".join(f' {name}="{escape(str(value))}"' for name, value in attrs.items() if value)
+
+
+def _target_html(text: str, annotate_pinyin: bool, pronunciations: dict[str, str] | None = None) -> str:
+    if not annotate_pinyin:
+        return escape(text)
+    return "".join(
+        f'<ruby>{escape(value)}<rt>{escape(pinyin)}</rt></ruby>' if pinyin else escape(value)
+        for value, pinyin in pinyin_segments(text, pronunciations)
+    )
 
 
 def _audio_button(path: str, label: str, allow_unavailable: bool = True) -> str:
@@ -435,17 +488,24 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .slide { display: none; position: absolute; inset: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: var(--card-radius); box-shadow: var(--shadow); padding: clamp(28px, 4vw, 56px); }
 .slide.active { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 18px; }
 .slide-content { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr); gap: 32px; align-items: center; min-height: 0; }
+.slide-content.no-media { grid-template-columns: minmax(0, 1fr); }
 .text-zone { min-width: 0; }
 .slide-kicker { margin: 0 0 10px; color: var(--coral); font-weight: 800; font-size: 14px; }
 h1 { margin: 0 0 18px; font-size: clamp(34px, 5vw, 62px); line-height: 1.08; letter-spacing: 0; }
 h2 { margin: 0 0 12px; font-size: 22px; }
 .content-block { margin: 12px 0; font-size: clamp(20px, 2.1vw, 30px); line-height: 1.45; }
 .content-block p { margin: 0; }
+ruby { ruby-align: center; }
+rt { color: var(--teal); font-family: var(--font-pinyin); font-size: .45em; font-weight: 600; }
 .media-zone { min-width: 0; }
 .slide-image, .media-placeholder { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; border: 1px solid var(--line); background: var(--mint); }
 .slide-image { object-fit: cover; }
 .media-placeholder { display: grid; place-items: center; padding: 20px; color: var(--teal); font-weight: 800; text-align: center; }
 .component-zone { min-height: 0; }
+.slide.has-components.active { grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+.slide.has-components h1 { font-size: clamp(28px, 3.2vw, 44px); margin-bottom: 8px; }
+.slide.has-components .content-block { margin: 4px 0; font-size: clamp(16px, 1.5vw, 21px); }
+.slide.has-components .component-zone { overflow: auto; }
 .component { border-top: 1px solid var(--line); padding-top: 16px; }
 .component-empty { margin: 0; border: 1px dashed var(--line); border-radius: 8px; padding: 12px; color: var(--muted); background: #f8fbf8; }
 .vocab-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }

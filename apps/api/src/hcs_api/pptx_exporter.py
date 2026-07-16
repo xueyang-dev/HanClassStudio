@@ -14,6 +14,7 @@ from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 
 from .models import AssetManifest, LessonBlueprint, LessonProfile, QualityReport
+from .pinyin_annotation import pinyin_for_text
 from .pptx_design import PROFILE, RECIPES, profile_for_theme
 from .presentation_theme import presentation_theme_for_project
 from .storage import ensure_project, read_json, read_model, write_json
@@ -125,12 +126,17 @@ def export_editable_pptx(project_id: str, force: bool = False, export_mode: str 
     is_classroom = export_mode == "classroom"
     blank = min(prs.slide_layouts, key=lambda layout: len(layout.placeholders))
     source_slides = {slide.id: slide for slide in blueprint.slides}
+    pronunciations = {
+        str(item.get("word", "")): str(item.get("pinyin", ""))
+        for item in blueprint.key_vocabulary
+        if item.get("word") and item.get("pinyin")
+    }
     for page_number, deck_slide in enumerate(deck_plan.slides, start=1):
         pptx_slide = prs.slides.add_slide(blank)
         source_slide = source_slides.get(deck_slide.slide_id)
         _render_master_slide(
             pptx_slide, root, source_slide, deck_slide, manifest,
-            page_number, len(deck_plan.slides), is_classroom,
+            page_number, len(deck_plan.slides), is_classroom, pronunciations,
         )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -403,7 +409,17 @@ def _rgb(value: str) -> RGBColor:
     return RGBColor.from_string(value)
 
 
-def _render_master_slide(slide, root: Path, source, deck, manifest: AssetManifest, page: int, total: int, is_classroom: bool) -> None:
+def _render_master_slide(
+    slide,
+    root: Path,
+    source,
+    deck,
+    manifest: AssetManifest,
+    page: int,
+    total: int,
+    is_classroom: bool,
+    pronunciations: dict[str, str],
+) -> None:
     """Semantic archetype → master-derived recipe → editable PPTX objects."""
     layout = deck.traditional_layout if deck.traditional_layout in RECIPES else "generic_content"
     _master_background(slide, page, total)
@@ -422,7 +438,7 @@ def _render_master_slide(slide, root: Path, source, deck, manifest: AssetManifes
     elif layout == "dialogue_bubbles":
         _master_dialogue(slide, source, deck)
     elif layout == "match_pairs":
-        _master_match(slide, source, deck)
+        _master_match(slide, source, deck, pronunciations)
     elif layout == "summary_cards":
         _master_summary(slide, source, deck)
     elif layout == "single_item_focus" and _vocabulary_items(source):
@@ -489,7 +505,7 @@ def _master_vocabulary(slide, source, deck) -> None:
             x, y = 0.85 + index * 6.08, 1.55
             _master_card(slide, x, y, 5.58, 4.35, "FFFFFF")
             _add_text(slide, item.get("word", ""), x + 0.3, y + 0.48, 4.98, 0.82, 42, bold=True, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
-            _add_text(slide, item.get("pinyin", ""), x + 0.3, y + 1.55, 4.98, 0.42, 22, color=_rgb(PROFILE.primary), center=True)
+            _add_text(slide, item.get("pinyin") or pinyin_for_text(item.get("word", "")), x + 0.3, y + 1.55, 4.98, 0.42, 22, color=_rgb(PROFILE.primary), center=True)
             _add_text(slide, item.get("meaning", ""), x + 0.35, y + 2.24, 4.88, 0.5, 18, color=_rgb(PROFILE.ink), center=True)
             usage_context = str(item.get("usage_context", "")).strip()
             if usage_context:
@@ -501,7 +517,7 @@ def _master_vocabulary(slide, source, deck) -> None:
         x, y = 0.85 + col * 4.08, 1.55 + row * 2.38
         _master_card(slide, x, y, 3.65, 1.95, "FFFFFF")
         _add_text(slide, item.get("word", ""), x + 0.2, y + 0.24, 3.25, 0.62, 34, bold=True, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
-        _add_text(slide, item.get("pinyin", ""), x + 0.2, y + 0.95, 3.25, 0.34, 18, color=_rgb(PROFILE.primary), center=True)
+        _add_text(slide, item.get("pinyin") or pinyin_for_text(item.get("word", "")), x + 0.2, y + 0.95, 3.25, 0.34, 18, color=_rgb(PROFILE.primary), center=True)
         _add_text(slide, item.get("meaning", ""), x + 0.2, y + 1.38, 3.25, 0.3, 14, color=_rgb(PROFILE.muted), center=True)
 
 
@@ -511,6 +527,7 @@ def _master_scene(slide, root: Path, source, deck, manifest: AssetManifest) -> N
     if source.content_blocks:
         block = source.content_blocks[0]
         pinyin, meaning = _split_scaffold(block.scaffolding_text)
+        pinyin = pinyin or pinyin_for_text(block.text)
         _add_text(slide, block.text, 0.85, 2.0, 5.05, 0.9, 44, bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font)
         _add_text(slide, pinyin, 0.87, 3.12, 4.9, 0.45, PROFILE.pinyin_size, color=_rgb(PROFILE.primary))
         _add_text(slide, meaning, 0.87, 3.75, 4.9, 0.55, PROFILE.meaning_size, color=_rgb(PROFILE.muted))
@@ -684,7 +701,7 @@ def _master_listen(slide, source, deck) -> None:
         _add_text(slide, choice, x + 0.62, 3.48, card_width - 0.82, 0.62, 32, bold=True, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
 
 
-def _master_match(slide, source, deck) -> None:
+def _master_match(slide, source, deck, pronunciations: dict[str, str]) -> None:
     instruction = _first_scaffold(source)
     if not instruction and source.content_blocks:
         instruction = source.content_blocks[0].text
@@ -700,8 +717,12 @@ def _master_match(slide, source, deck) -> None:
         y = 1.72 + index * 1.0
         _master_card(slide, 1.0, y, 4.65, 0.7, "FFFFFF")
         _master_card(slide, 7.65, y, 4.65, 0.7, PROFILE.background_alt)
-        _add_text(slide, str(pair.get("left", "")), 1.25, y + 0.12, 4.15, 0.38, 23, bold=True, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
-        _add_text(slide, right_values[index], 7.9, y + 0.13, 4.15, 0.36, 20, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
+        left_value = str(pair.get("left", ""))
+        right_value = right_values[index]
+        _add_text(slide, left_value, 1.25, y + 0.05, 4.15, 0.32, 21, bold=True, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
+        _add_text(slide, pinyin_for_text(left_value, pronunciations), 1.25, y + 0.42, 4.15, 0.18, 10, color=_rgb(PROFILE.primary), center=True)
+        _add_text(slide, right_value, 7.9, y + 0.05, 4.15, 0.32, 20, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
+        _add_text(slide, pinyin_for_text(right_value, pronunciations), 7.9, y + 0.42, 4.15, 0.18, 10, color=_rgb(PROFILE.primary), center=True)
         _add_text(slide, str(index + 1), 5.95, y + 0.15, 0.35, 0.3, 13, bold=True, color=_rgb(PROFILE.primary), center=True)
         _add_text(slide, chr(65 + index), 7.0, y + 0.15, 0.35, 0.3, 13, bold=True, color=_rgb(PROFILE.accent), center=True)
 
