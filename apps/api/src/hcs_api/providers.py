@@ -542,7 +542,8 @@ def _ensure_zero_beginner_semantic_scenes(
             f"lesson items: {'; '.join(concepts)}. The image has one teaching role: make clear "
             "when the learner uses these utterances through action, relationship, facial "
             "expression, and context. Show age-appropriate people in a culturally respectful "
-            "classroom or everyday setting. Clean editorial illustration, warm natural palette, "
+            "classroom or everyday setting. Clean editorial illustration whose color palette "
+            "follows the project presentation theme supplied by the media pipeline, "
             "16:9 composition, uncluttered background, strong readable gestures, no written words, "
             "no letters, no captions, no speech bubbles, no logos, and no decorative stock imagery."
         )

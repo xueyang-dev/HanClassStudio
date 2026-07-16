@@ -174,6 +174,8 @@ def test_zero_beginner_blueprint_normalization_requires_semantic_scene_visuals()
         assert slide.media_requirements.image_prompt
         assert "adult" in slide.media_requirements.image_prompt.lower()
         assert "no written words" in slide.media_requirements.image_prompt.lower()
+        assert "warm natural palette" not in slide.media_requirements.image_prompt.lower()
+        assert "project presentation theme" in slide.media_requirements.image_prompt.lower()
     assert "谢谢" in vocabulary.media_requirements.image_prompt
     assert "A：谢谢！" in dialogue.media_requirements.image_prompt
     assert phonetics.media_requirements.image_key is None

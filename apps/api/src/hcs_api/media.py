@@ -151,10 +151,19 @@ def generate_configured_media(
     strict_provider: bool = False,
 ) -> AssetManifest:
     previous = previous_assets(project_root)
-    # Existing courseware remains visually stable until a presentation theme is
-    # explicitly requested or already selected for the project.  New theme-aware
-    # workflows opt in through presentation/theme_selection.json.
-    theme_requested = (project_root / THEME_SELECTION_PATH).is_file() or (project_root / THEME_DECISION_PATH).is_file()
+    raster_keys = {
+        slide.media_requirements.image_key
+        for slide in blueprint.slides
+        if slide.media_requirements.image_key and slide.media_requirements.media_kind != "svg_illustration"
+    }
+    # Raster art and presentation chrome must resolve the same project theme
+    # before provider prompts are created; otherwise the exporter defaults to
+    # blue while an unthemed provider is free to choose an unrelated palette.
+    theme_requested = (
+        bool(raster_keys)
+        or (project_root / THEME_SELECTION_PATH).is_file()
+        or (project_root / THEME_DECISION_PATH).is_file()
+    )
     decision = None
     theme = None
     if theme_requested:
@@ -172,11 +181,6 @@ def generate_configured_media(
     offline_safe = media_cfg.get("svg_offline_safe", True)
     lesson_ctx = (spec_lock or {}).get("lesson", {})
 
-    raster_keys = {
-        s.media_requirements.image_key
-        for s in blueprint.slides
-        if s.media_requirements.image_key and s.media_requirements.media_kind != "svg_illustration"
-    }
     if settings.image.provider == "codex_image":
         _replace_images_with_codex_bridge(
             project_root, manifest, settings, allowed_keys=raster_keys,
@@ -523,6 +527,7 @@ def _theme_aware_prompt(prompt: str, theme: PresentationTheme | None) -> str:
     return " ".join([
         prompt.strip(),
         f"Presentation theme {theme.theme_id}@{theme.version}: {theme.visual_mood}.",
+        "Color authority: the presentation theme below overrides any conflicting palette or color-temperature wording earlier in the brief; make its first palette descriptors and anchors dominant across the environment, wardrobe accents, and props while keeping skin tones natural.",
         f"Palette guidance: {', '.join(treatment.palette_descriptors)}; anchors {', '.join(treatment.palette_anchors)}.",
         f"Use {treatment.saturation} saturation, {treatment.contrast} contrast, {treatment.background_complexity} background complexity, and {treatment.framing} framing.",
         "Do not embed words, letters, captions, logos, or watermarks.",

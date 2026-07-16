@@ -27,6 +27,7 @@ from hcs_api.models import (
 )
 from hcs_api.raster_provider import EXPERIMENTAL_PROVIDER, RasterProviderError, generate_experimental_raster_image
 from hcs_api.raster_provider_benchmark import BENCHMARK_CONCEPTS, create_raster_provider_ab_gallery
+from hcs_api.presentation_theme import DEFAULT_THEME_ID
 
 
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00"
@@ -150,7 +151,13 @@ def test_temporary_url_is_downloaded_locally_and_manifest_has_no_remote_url(tmp_
     assert asset.content_hash == sha256(PNG).hexdigest()
     assert asset.generation and asset.generation.provider_request_id == "header_456"
     assert asset.generation.model == "low-cost-test-model"
-    assert asset.generation.prompt == "sleeping in bed"
+    assert asset.generation.theme_id == DEFAULT_THEME_ID
+    assert asset.presentation_theme_id == DEFAULT_THEME_ID
+    assert manifest.presentation_theme_id == DEFAULT_THEME_ID
+    assert (tmp_path / "presentation" / "presentation_theme.json").is_file()
+    assert "Color authority:" in asset.generation.prompt
+    assert "pale blue classroom surfaces" in asset.generation.prompt
+    assert "#5B9BD5" in asset.generation.prompt
 
 
 def test_octet_stream_download_is_verified_by_image_signature(tmp_path: Path, monkeypatch) -> None:
