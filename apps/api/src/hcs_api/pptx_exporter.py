@@ -436,13 +436,13 @@ def _render_master_slide(
     elif layout == "listen_choose":
         _master_listen(slide, source, deck)
     elif layout == "dialogue_bubbles":
-        _master_dialogue(slide, source, deck)
+        _master_dialogue(slide, root, source, deck, manifest)
     elif layout == "match_pairs":
         _master_match(slide, source, deck, pronunciations)
     elif layout == "summary_cards":
         _master_summary(slide, source, deck)
     elif layout == "single_item_focus" and _vocabulary_items(source):
-        _master_vocabulary(slide, source, deck)
+        _master_vocabulary(slide, root, source, deck, manifest)
     elif source.media_requirements.image_key:
         _master_scene(slide, root, source, deck, manifest)
     else:
@@ -484,7 +484,7 @@ def _master_cover(slide, root: Path, source, deck, manifest: AssetManifest) -> N
         _add_text(slide, pinyin, 0.82, 3.03, 5.7, 0.48, PROFILE.pinyin_size, color=_rgb(PROFILE.primary), font_name=PROFILE.latin_font)
         _add_text(slide, meaning, 0.82, 3.58, 5.7, 0.5, PROFILE.meaning_size, color=_rgb(PROFILE.muted), font_name=PROFILE.latin_font)
     _add_text(slide, source.title, 0.82, 5.9, 5.8, 0.4, 16, bold=True, color=_rgb(PROFILE.accent), font_name=PROFILE.heading_font)
-    _master_picture(slide, _image_path(root, source.media_requirements.image_key, manifest), 7.15, 0.75, 5.45, 5.95)
+    _master_picture(slide, _image_path(root, source.media_requirements.image_key, manifest), 6.9, 1.55, 5.9, 3.32)
 
 
 def _master_objectives(slide, source, deck) -> None:
@@ -497,9 +497,22 @@ def _master_objectives(slide, source, deck) -> None:
         _add_text(slide, text, 2.05, y + 0.13, 9.55, 0.5, 20, color=_rgb(PROFILE.ink), font_name=PROFILE.heading_font)
 
 
-def _master_vocabulary(slide, source, deck) -> None:
+def _master_vocabulary(slide, root: Path, source, deck, manifest: AssetManifest) -> None:
     _master_header(slide, source.title, "Look, read, and say")
     items = _vocabulary_items(source)[:6]
+    image = _image_path(root, source.media_requirements.image_key, manifest)
+    if image and items:
+        _master_picture(slide, image, 6.82, 2.05, 5.62, 3.16)
+        for index, item in enumerate(items[:2]):
+            y = 1.55 + index * 2.33
+            _master_card(slide, 0.85, y, 5.48, 2.03, "FFFFFF" if index == 0 else PROFILE.background_alt)
+            _add_text(slide, item.get("word", ""), 1.1, y + 0.18, 2.2, 0.65, 34, bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font)
+            _add_text(slide, item.get("pinyin") or pinyin_for_text(item.get("word", "")), 3.2, y + 0.28, 2.8, 0.36, 19, color=_rgb(PROFILE.primary))
+            _add_text(slide, item.get("meaning", ""), 1.1, y + 0.94, 4.9, 0.34, 16, color=_rgb(PROFILE.ink))
+            usage_context = str(item.get("usage_context", "")).strip()
+            if usage_context:
+                _add_text(slide, usage_context, 1.1, y + 1.38, 4.9, 0.4, 12, color=_rgb(PROFILE.muted))
+        return
     if len(items) == 2:
         for index, item in enumerate(items):
             x, y = 0.85 + index * 6.08, 1.55
@@ -666,10 +679,21 @@ def _master_contrast(slide, root: Path, source, deck, manifest: AssetManifest) -
         _add_text(slide, meaning, x + 0.3, 4.2, card_width - 0.6, 0.72, 16, color=_rgb(PROFILE.muted), center=True)
 
 
-def _master_dialogue(slide, source, deck) -> None:
+def _master_dialogue(slide, root: Path, source, deck, manifest: AssetManifest) -> None:
     """Keep each textbook line, pinyin, and scaffold meaning in one readable turn card."""
     _master_header(slide, source.title, "Read the source dialogue, then perform it with a partner.")
     blocks = source.content_blocks[:4]
+    image = _image_path(root, source.media_requirements.image_key, manifest)
+    if image and blocks:
+        _master_picture(slide, image, 7.15, 2.1, 5.3, 2.98)
+        for index, block in enumerate(blocks):
+            y = 1.42 + index * 1.22
+            _master_card(slide, 0.85, y, 5.82, 1.05, "FFFFFF" if index % 2 == 0 else PROFILE.background_alt)
+            pinyin, meaning = _split_scaffold(block.scaffolding_text)
+            _add_text(slide, block.text, 1.08, y + 0.12, 2.25, 0.38, 20, bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font)
+            _add_text(slide, pinyin, 3.15, y + 0.16, 3.22, 0.27, 13, color=_rgb(PROFILE.primary))
+            _add_text(slide, meaning, 1.08, y + 0.59, 5.3, 0.25, 11, color=_rgb(PROFILE.muted))
+        return
     for index, block in enumerate(blocks):
         row, col = divmod(index, 2)
         x, y = 0.85 + col * 6.08, 1.55 + row * 2.4

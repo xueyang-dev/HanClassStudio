@@ -86,6 +86,41 @@ def test_master_export_is_editable_legible_and_within_slide(tmp_path: Path, monk
     assert report["master_profile"]["source"] == MASTER_SOURCE
 
 
+def test_vocabulary_and_dialogue_master_layouts_bind_semantic_scene_images(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(storage, "RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setattr(storage, "PROJECTS_DIR", tmp_path / "runtime" / "projects")
+    project_id = "semantic_scene_binding"
+    root = storage.ensure_project(project_id)
+    image_path = root / "assets" / "images" / "scene.png"
+    image_path.write_bytes(_png())
+    media = MediaRequirements(image_key="scene", image_prompt="source-aligned scene", media_kind="raster")
+    blueprint = LessonBlueprint(lesson_title="你好", slides=[
+        LessonSlide(id=1, slide_type="VocabularySlide", layout_variant="cards", title="Thanking", components=[
+            SlideComponent(id="vocab", component_type="VocabularyFlipCard", data={"items": [
+                {"word": "谢谢", "pinyin": "xièxie", "meaning": "thank you"},
+                {"word": "不客气", "pinyin": "bú kèqi", "meaning": "you are welcome"},
+            ]}),
+        ], media_requirements=media),
+        LessonSlide(id=2, slide_type="DialogueSlide", layout_variant="dialogue", title="Textbook dialogue", content_blocks=[
+            ContentBlock(id="a", text="A：谢谢！", scaffolding_text="xièxie · Thank you!"),
+            ContentBlock(id="b", text="B：不客气！", scaffolding_text="bú kèqi · You're welcome!"),
+        ], media_requirements=media),
+    ])
+    storage.write_model(project_id, "lesson_blueprint.json", blueprint)
+    storage.write_model(project_id, "lesson_profile.json", LessonProfile(learner_level="zero_beginner"))
+    storage.write_model(project_id, "asset_manifest.json", AssetManifest(images=[
+        AssetFile(id="scene", kind="image", path="assets/images/scene.png", mime_type="image/png")
+    ]))
+    storage.write_model(project_id, "quality_report.json", QualityReport(state="pass"))
+
+    presentation = Presentation(export_editable_pptx(project_id))
+
+    for slide in presentation.slides:
+        pictures = [shape for shape in slide.shapes if shape.shape_type == 13]
+        assert pictures
+        assert abs((pictures[0].width / pictures[0].height) - (16 / 9)) < 0.02
+
+
 def test_contact_sheet_is_diagnostic_only(tmp_path: Path) -> None:
     images = []
     for index in range(2):

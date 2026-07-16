@@ -324,7 +324,7 @@ def generate_blueprint_with_llm(
         blueprint = LessonBlueprint.model_validate(data)
         if not blueprint.slides:
             raise ProviderError("Codex ChatGPT Bridge returned an empty lesson blueprint")
-        return _normalize_blueprint(blueprint, profile)
+        return normalize_blueprint(blueprint, profile)
 
     content = _chat_completion(settings, messages)
     data = _extract_json(content)
@@ -333,7 +333,7 @@ def generate_blueprint_with_llm(
     blueprint = LessonBlueprint.model_validate(data)
     if not blueprint.slides:
         raise ProviderError("LLM returned an empty lesson blueprint")
-    return _normalize_blueprint(blueprint, profile)
+    return normalize_blueprint(blueprint, profile)
 
 
 def generate_openai_image(settings: ImageProviderSettings, prompt: str) -> bytes | None:
@@ -430,6 +430,7 @@ def _blueprint_prompt(source: SourceMaterial, profile: LessonProfile) -> str:
 - Introduce no more than 2 new lexical items on one slide and no more than 10 across the lesson.
 - Every visual must teach a source item or support a source exercise. Avoid decorative stock imagery and do not put text inside generated images.
 - Prefer simple pronunciation diagrams and source-aligned scene illustrations; use one clear visual role per slide.
+- Every VocabularySlide and DialogueSlide must include a unique raster image_key and image_prompt for a source-aligned semantic scene. The scene must demonstrate when the exact target item is used, show age-appropriate learners, and contain no written words. Phonetics diagrams and mechanical practice slides do not need raster scenes.
 """.rstrip()
     return f"""
 Create a complete LessonBlueprint JSON object for HanClassStudio.
@@ -498,7 +499,9 @@ def _source_excerpt(source: SourceMaterial, limit: int = 7000) -> str:
     return text[:limit]
 
 
-def _normalize_blueprint(blueprint: LessonBlueprint, profile: LessonProfile) -> LessonBlueprint:
+def normalize_blueprint(blueprint: LessonBlueprint, profile: LessonProfile) -> LessonBlueprint:
+    from .learner_comprehension import resolve_profile_learner_level
+
     blueprint.lesson_title = blueprint.lesson_title.strip() or profile.lesson_title
     for index, slide in enumerate(blueprint.slides, start=1):
         slide.id = index
@@ -507,7 +510,79 @@ def _normalize_blueprint(blueprint: LessonBlueprint, profile: LessonProfile) -> 
             slide.media_requirements.image_key = None
         if slide.media_requirements.audio_key and not slide.media_requirements.audio_text:
             slide.media_requirements.audio_key = None
+    if resolve_profile_learner_level(profile) == "zero_beginner":
+        _ensure_zero_beginner_semantic_scenes(blueprint, profile)
     return blueprint
+
+
+def _ensure_zero_beginner_semantic_scenes(
+    blueprint: LessonBlueprint,
+    profile: LessonProfile,
+) -> None:
+    """Give semantic teaching slides provider-ready visual requirements.
+
+    This belongs to Blueprint normalization rather than rendering: the teaching
+    plan decides what the visual explains, the media plan requests it, and both
+    HTML and PPTX renderers only bind the resulting asset.
+    """
+    audience = _visual_audience(profile.target_students)
+    for slide in blueprint.slides:
+        if slide.slide_type not in {"VocabularySlide", "DialogueSlide"}:
+            continue
+        media = slide.media_requirements
+        if media.image_key and media.image_prompt:
+            continue
+        concepts = _semantic_scene_concepts(slide)
+        if not concepts:
+            continue
+        media.image_key = f"slide_{slide.id}_semantic_scene"
+        media.image_prompt = (
+            f"Create one source-aligned educational scene for {audience} absolute-beginner "
+            f"Chinese learners. Demonstrate the concrete social situation for these exact "
+            f"lesson items: {'; '.join(concepts)}. The image has one teaching role: make clear "
+            "when the learner uses these utterances through action, relationship, facial "
+            "expression, and context. Show age-appropriate people in a culturally respectful "
+            "classroom or everyday setting. Clean editorial illustration, warm natural palette, "
+            "16:9 composition, uncluttered background, strong readable gestures, no written words, "
+            "no letters, no captions, no speech bubbles, no logos, and no decorative stock imagery."
+        )
+        media.media_kind = "raster"
+        media.svg_style = None
+        media.illustration_level = "scene"
+        media.text_policy = "no_text"
+        media.scene_type = "source_aligned_semantic_scene"
+
+
+def _visual_audience(target_students: str) -> str:
+    normalized = target_students.lower()
+    if "成年" in target_students or "adult" in normalized:
+        return "adult"
+    if "少年" in target_students or "teen" in normalized:
+        return "teenage"
+    if "儿童" in target_students or "child" in normalized:
+        return "school-age child"
+    if "幼儿" in target_students or "preschool" in normalized:
+        return "preschool"
+    if "老年" in target_students or "senior" in normalized:
+        return "older adult"
+    return "age-appropriate"
+
+
+def _semantic_scene_concepts(slide: Any) -> list[str]:
+    concepts: list[str] = []
+    if slide.slide_type == "VocabularySlide":
+        for component in slide.components:
+            if component.component_type != "VocabularyFlipCard":
+                continue
+            for item in component.data.get("items", []):
+                word = str(item.get("word", "")).strip()
+                meaning = str(item.get("meaning", "")).strip()
+                usage = str(item.get("usage_context", "")).strip()
+                if word:
+                    concepts.append(" — ".join(value for value in (word, meaning, usage) if value))
+    else:
+        concepts.extend(block.text.strip() for block in slide.content_blocks if block.text.strip())
+    return concepts[:4]
 
 
 def _extract_json(content: str) -> Any:

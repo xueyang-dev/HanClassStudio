@@ -16,7 +16,7 @@ from .models import (
     AssetManifest, ClassroomQualityReport, LanguageItem, LearnerModel, LessonBlueprint,
     LessonProfile, ProjectState, ProviderSettings, QualityReport, SourceMaterial, TeachingCandidates,
 )
-from .providers import ProviderError, generate_blueprint_with_llm
+from .providers import ProviderError, generate_blueprint_with_llm, normalize_blueprint
 from .quality import check_classroom_quality, check_quality
 from .renderer import render_lesson
 from .storage import get_project_state, read_json, read_model, read_provider_settings, write_json, write_model, write_text, zip_output
@@ -91,7 +91,7 @@ def generate_lesson_blueprint(
         blueprint = generate_blueprint_with_llm(source, profile, settings.llm, project_id)
         if blueprint is None:
             raise ProviderError("Selected LLM provider is not configured for execution")
-    return blueprint, candidates
+    return normalize_blueprint(blueprint, profile), candidates
 
 
 def generate_project_media(

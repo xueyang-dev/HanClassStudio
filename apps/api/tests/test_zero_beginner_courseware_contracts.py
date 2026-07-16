@@ -13,6 +13,7 @@ from hcs_api.models import (
     LessonProfile,
     LessonSlide,
     LanguageItem,
+    MediaRequirements,
     QualityReport,
     SlideComponent,
     SourceMaterial,
@@ -23,7 +24,8 @@ from hcs_api.pipeline import render_and_check
 from hcs_api.pinyin_annotation import pinyin_for_text, pinyin_segments
 from hcs_api.pptx_deck import build_pptx_deck_plan, build_pptx_structure_report
 from hcs_api.pptx_exporter import _rasterize_svg, export_editable_pptx
-from hcs_api.providers import _blueprint_prompt
+from hcs_api.providers import _blueprint_prompt, normalize_blueprint
+from hcs_api.strategist import build_media_plan
 from hcs_api.syllabus_engine import build_difficulty_profile, build_source_lesson_profile
 from hcs_api.renderer import _render_slide, _target_html
 
@@ -86,6 +88,104 @@ def test_codex_prompt_requires_source_first_phonetics_and_scaffold_language() ->
     assert "声母, 韵母, 声调" in prompt
     assert "learner-facing instructions and explanations" in prompt
     assert "decorative stock imagery" in prompt
+    assert "Every VocabularySlide and DialogueSlide" in prompt
+
+
+def test_zero_beginner_blueprint_normalization_requires_semantic_scene_visuals() -> None:
+    blueprint = LessonBlueprint(
+        lesson_title="你好",
+        slides=[
+            LessonSlide(
+                id=8,
+                slide_type="VocabularySlide",
+                layout_variant="cards",
+                title="Thanking",
+                components=[
+                    SlideComponent(
+                        id="vocab",
+                        component_type="VocabularyFlipCard",
+                        data={
+                            "items": [
+                                {
+                                    "word": "谢谢",
+                                    "pinyin": "xièxie",
+                                    "meaning": "thank you",
+                                    "usage_context": "Use after someone helps you.",
+                                },
+                                {
+                                    "word": "不客气",
+                                    "pinyin": "bú kèqi",
+                                    "meaning": "you are welcome",
+                                },
+                            ]
+                        },
+                    )
+                ],
+            ),
+            LessonSlide(
+                id=9,
+                slide_type="DialogueSlide",
+                layout_variant="dialogue",
+                title="Textbook dialogue",
+                content_blocks=[
+                    ContentBlock(id="a", block_type="dialogue", text="A：谢谢！", scaffolding_text="Thank you!"),
+                    ContentBlock(id="b", block_type="dialogue", text="B：不客气！", scaffolding_text="You're welcome!"),
+                ],
+            ),
+            LessonSlide(
+                id=10,
+                slide_type="PhoneticsSlide",
+                layout_variant="diagram",
+                title="声调 · Tones",
+            ),
+            LessonSlide(
+                id=11,
+                slide_type="PracticeSlide",
+                layout_variant="matching",
+                title="Practice",
+            ),
+            LessonSlide(
+                id=12,
+                slide_type="VocabularySlide",
+                layout_variant="cards",
+                title="Teacher-selected scene",
+                media_requirements=MediaRequirements(
+                    image_key="teacher_scene",
+                    image_prompt="Teacher-approved source-aligned scene",
+                    media_kind="raster",
+                ),
+            ),
+        ],
+    )
+
+    normalized = normalize_blueprint(
+        blueprint,
+        LessonProfile(
+            learner_level="零基础（Pre-A1）",
+            target_students="成年初学者",
+            scaffolding_language="English",
+        ),
+    )
+
+    vocabulary, dialogue, phonetics, practice, teacher_selected = normalized.slides
+    for slide in (vocabulary, dialogue):
+        assert slide.media_requirements.media_kind == "raster"
+        assert slide.media_requirements.image_key
+        assert slide.media_requirements.image_prompt
+        assert "adult" in slide.media_requirements.image_prompt.lower()
+        assert "no written words" in slide.media_requirements.image_prompt.lower()
+    assert "谢谢" in vocabulary.media_requirements.image_prompt
+    assert "A：谢谢！" in dialogue.media_requirements.image_prompt
+    assert phonetics.media_requirements.image_key is None
+    assert practice.media_requirements.image_key is None
+    assert teacher_selected.media_requirements.image_key == "teacher_scene"
+
+    media_plan = build_media_plan(normalized)
+    assert {item["id"] for item in media_plan["images"]} == {
+        vocabulary.media_requirements.image_key,
+        dialogue.media_requirements.image_key,
+        "teacher_scene",
+    }
 
 
 def test_zero_beginner_gate_blocks_missing_phonetics_chinese_instructions_and_vocab_overload() -> None:
