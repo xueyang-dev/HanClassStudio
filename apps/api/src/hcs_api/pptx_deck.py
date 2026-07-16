@@ -89,6 +89,8 @@ def _map_slide_to_deck(
 
     # Default: generic content
     deck = PptxDeckSlide(slide_id=slide.id, slide_purpose=st, traditional_layout="generic_content")
+    deck.main_focus = title
+    deck.target_text = "\n".join(block.text for block in slide.content_blocks if block.text)
     deck.image_key = slide.media_requirements.image_key or ""
     deck.audio_key = slide.media_requirements.audio_key or ""
     deck.teacher_notes.append(f"Slide type: {st}")

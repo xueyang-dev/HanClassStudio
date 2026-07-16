@@ -413,10 +413,14 @@ def _render_master_slide(slide, root: Path, source, deck, manifest: AssetManifes
         _master_cover(slide, root, source, deck, manifest)
     elif layout == "objectives_cards":
         _master_objectives(slide, source, deck)
+    elif source.slide_type == "PhoneticsSlide":
+        _master_phonetics(slide, root, source, manifest)
     elif layout == "two_card_contrast":
         _master_contrast(slide, root, source, deck, manifest)
     elif layout == "listen_choose":
         _master_listen(slide, source, deck)
+    elif layout == "dialogue_bubbles":
+        _master_dialogue(slide, source, deck)
     elif layout == "match_pairs":
         _master_match(slide, source, deck)
     elif layout == "summary_cards":
@@ -480,6 +484,17 @@ def _master_objectives(slide, source, deck) -> None:
 def _master_vocabulary(slide, source, deck) -> None:
     _master_header(slide, source.title, "Look, read, and say")
     items = _vocabulary_items(source)[:6]
+    if len(items) == 2:
+        for index, item in enumerate(items):
+            x, y = 0.85 + index * 6.08, 1.55
+            _master_card(slide, x, y, 5.58, 4.35, "FFFFFF")
+            _add_text(slide, item.get("word", ""), x + 0.3, y + 0.48, 4.98, 0.82, 42, bold=True, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
+            _add_text(slide, item.get("pinyin", ""), x + 0.3, y + 1.55, 4.98, 0.42, 22, color=_rgb(PROFILE.primary), center=True)
+            _add_text(slide, item.get("meaning", ""), x + 0.35, y + 2.24, 4.88, 0.5, 18, color=_rgb(PROFILE.ink), center=True)
+            usage_context = str(item.get("usage_context", "")).strip()
+            if usage_context:
+                _add_text(slide, usage_context, x + 0.52, y + 3.15, 4.54, 0.65, 14, color=_rgb(PROFILE.muted), center=True)
+        return
     cols = 3
     for index, item in enumerate(items):
         row, col = divmod(index, cols)
@@ -499,6 +514,116 @@ def _master_scene(slide, root: Path, source, deck, manifest: AssetManifest) -> N
         _add_text(slide, block.text, 0.85, 2.0, 5.05, 0.9, 44, bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font)
         _add_text(slide, pinyin, 0.87, 3.12, 4.9, 0.45, PROFILE.pinyin_size, color=_rgb(PROFILE.primary))
         _add_text(slide, meaning, 0.87, 3.75, 4.9, 0.55, PROFILE.meaning_size, color=_rgb(PROFILE.muted))
+
+
+def _master_phonetics(slide, root: Path, source, manifest: AssetManifest) -> None:
+    """Render source-first phonetics without text/image collisions."""
+    _master_header(slide, source.title, "Read the examples; use the visual to explain the sound pattern.")
+    if "声母" in source.title and "韵母" in source.title:
+        block = source.content_blocks[0] if source.content_blocks else None
+        _phonetics_copy(slide, block)
+        _draw_syllable_structure(slide)
+        return
+    if "声调位置" in source.title:
+        block = source.content_blocks[0] if source.content_blocks else None
+        _phonetics_copy(slide, block)
+        _draw_tone_mark_examples(slide)
+        return
+    if "声调" in source.title and "变调" not in source.title:
+        block = source.content_blocks[0] if source.content_blocks else None
+        _phonetics_copy(slide, block)
+        _draw_tone_contours(slide)
+        return
+
+    image = _image_path(root, source.media_requirements.image_key, manifest)
+    if image:
+        block = source.content_blocks[0] if source.content_blocks else None
+        target = block.text if block else ""
+        scaffold = block.scaffolding_text if block else ""
+        line_count = max(1, len(target.splitlines()))
+        target_size = 38 if line_count == 1 else 31
+        _add_text(
+            slide, target, 0.88, 1.72, 5.15, 2.05, target_size,
+            bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font,
+        )
+        _add_text(
+            slide, scaffold, 0.9, 4.08, 5.05, 1.25, 17,
+            color=_rgb(PROFILE.primary), font_name=PROFILE.latin_font,
+        )
+        _master_picture(slide, image, 6.55, 1.45, 5.7, 4.85)
+        return
+
+    for index, block in enumerate(source.content_blocks[:4]):
+        row, col = divmod(index, 2)
+        x, y = 0.85 + col * 6.08, 1.52 + row * 2.45
+        _master_card(slide, x, y, 5.58, 2.03, "FFFFFF" if index % 2 == 0 else PROFILE.background_alt)
+        _add_text(
+            slide, block.text, x + 0.25, y + 0.25, 5.08, 0.62, 23,
+            bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font,
+        )
+        _add_text(
+            slide, block.scaffolding_text, x + 0.25, y + 0.98, 5.08, 0.78, 14,
+            color=_rgb(PROFILE.muted), font_name=PROFILE.latin_font,
+        )
+
+
+def _phonetics_copy(slide, block) -> None:
+    target = block.text if block else ""
+    scaffold = block.scaffolding_text if block else ""
+    line_count = max(1, len(target.splitlines()))
+    _add_text(
+        slide, target, 0.88, 1.72, 5.15, 2.05, 38 if line_count == 1 else 31,
+        bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font,
+    )
+    _add_text(
+        slide, scaffold, 0.9, 4.08, 5.05, 1.25, 17,
+        color=_rgb(PROFILE.primary), font_name=PROFILE.latin_font,
+    )
+
+
+def _draw_syllable_structure(slide) -> None:
+    _master_card(slide, 6.55, 1.55, 5.7, 4.72, "FFFFFF")
+    _add_text(slide, "声母", 7.25, 2.45, 1.55, 0.58, 29, bold=True, color=_rgb(PROFILE.ink), center=True)
+    _add_text(slide, "+", 8.9, 2.5, 0.55, 0.48, 28, bold=True, color=_rgb(PROFILE.accent), center=True)
+    _add_text(slide, "韵母", 9.55, 2.45, 1.55, 0.58, 29, bold=True, color=_rgb(PROFILE.ink), center=True)
+    _add_text(slide, "initial", 7.25, 3.15, 1.55, 0.32, 14, color=_rgb(PROFILE.primary), center=True)
+    _add_text(slide, "final", 9.55, 3.15, 1.55, 0.32, 14, color=_rgb(PROFILE.primary), center=True)
+    _add_text(slide, "↓", 8.98, 3.72, 0.5, 0.45, 25, bold=True, color=_rgb(PROFILE.accent), center=True)
+    _add_text(slide, "一个音节", 7.7, 4.35, 3.0, 0.62, 27, bold=True, color=_rgb(PROFILE.primary), center=True)
+    _add_text(slide, "one syllable", 7.7, 5.03, 3.0, 0.35, 14, color=_rgb(PROFILE.muted), center=True)
+
+
+def _draw_tone_contours(slide) -> None:
+    _master_card(slide, 6.55, 1.55, 5.7, 4.72, "FFFFFF")
+    starts = [7.05, 8.35, 9.65, 10.95]
+    segments = [
+        [(0.0, 0.45, 0.95, 0.45)],
+        [(0.0, 1.95, 0.95, 0.35)],
+        [(0.0, 0.85, 0.48, 1.85), (0.48, 1.85, 0.95, 0.7)],
+        [(0.0, 0.35, 0.95, 2.05)],
+    ]
+    for index, x in enumerate(starts):
+        for x1, y1, x2, y2 in segments[index]:
+            line = slide.shapes.add_connector(1, Inches(x + x1), Inches(2.2 + y1), Inches(x + x2), Inches(2.2 + y2))
+            line.line.color.rgb = _rgb(PROFILE.primary)
+            line.line.width = Pt(4)
+    for index, (x, label) in enumerate(zip(starts, ("1st", "2nd", "3rd", "4th"))):
+        _add_text(slide, label, x, 4.72, 0.95, 0.34, 15, bold=True, color=_rgb(PROFILE.ink), center=True)
+    _add_text(slide, "level       rising       dipping       falling", 6.95, 5.25, 4.95, 0.35, 14, color=_rgb(PROFILE.muted), center=True)
+
+
+def _draw_tone_mark_examples(slide) -> None:
+    _master_card(slide, 6.55, 1.55, 5.7, 4.72, "FFFFFF")
+    examples = [
+        ("mā", "one vowel → mark it"),
+        ("hǎo · zuò", "mark the main vowel"),
+        ("liú · guǐ", "iu / ui → mark the second"),
+    ]
+    for index, (example, rule) in enumerate(examples):
+        y = 1.92 + index * 1.34
+        _master_card(slide, 6.92, y, 4.95, 1.02, PROFILE.background_alt if index % 2 else "FFFFFF")
+        _add_text(slide, example, 7.15, y + 0.14, 1.75, 0.48, 25, bold=True, color=_rgb(PROFILE.ink), center=True)
+        _add_text(slide, rule, 9.02, y + 0.2, 2.55, 0.4, 14, color=_rgb(PROFILE.muted), center=True)
 
 
 def _master_contrast(slide, root: Path, source, deck, manifest: AssetManifest) -> None:
@@ -524,6 +649,23 @@ def _master_contrast(slide, root: Path, source, deck, manifest: AssetManifest) -
         _add_text(slide, meaning, x + 0.3, 4.2, card_width - 0.6, 0.72, 16, color=_rgb(PROFILE.muted), center=True)
 
 
+def _master_dialogue(slide, source, deck) -> None:
+    """Keep each textbook line, pinyin, and scaffold meaning in one readable turn card."""
+    _master_header(slide, source.title, "Read the source dialogue, then perform it with a partner.")
+    blocks = source.content_blocks[:4]
+    for index, block in enumerate(blocks):
+        row, col = divmod(index, 2)
+        x, y = 0.85 + col * 6.08, 1.55 + row * 2.4
+        _master_card(slide, x, y, 5.58, 1.92, "FFFFFF" if index % 2 == 0 else PROFILE.background_alt)
+        pinyin, meaning = _split_scaffold(block.scaffolding_text)
+        _add_text(
+            slide, block.text, x + 0.28, y + 0.22, 5.02, 0.52, 25,
+            bold=True, color=_rgb(PROFILE.ink), font_name=PROFILE.chinese_font,
+        )
+        _add_text(slide, pinyin, x + 0.28, y + 0.86, 5.02, 0.32, 16, color=_rgb(PROFILE.primary))
+        _add_text(slide, meaning, x + 0.28, y + 1.3, 5.02, 0.3, 14, color=_rgb(PROFILE.muted))
+
+
 def _master_listen(slide, source, deck) -> None:
     instruction = _first_scaffold(source) or "Listen and choose the greeting you hear."
     _master_header(slide, source.title or "听一听，选一选", instruction)
@@ -543,17 +685,25 @@ def _master_listen(slide, source, deck) -> None:
 
 
 def _master_match(slide, source, deck) -> None:
-    _master_header(slide, source.title or "连一连", _first_scaffold(source) or "Match each greeting with its meaning.")
+    instruction = _first_scaffold(source)
+    if not instruction and source.content_blocks:
+        instruction = source.content_blocks[0].text
+    _master_header(slide, source.title or "连一连", instruction or "Match each textbook line with its response.")
     component = next((c for c in source.components if c.component_type == "MatchGame"), None)
     pairs = component.data.get("pairs", []) if component else []
+    right_values = [str(pair.get("right", "")) for pair in pairs[:5]]
+    if len(right_values) > 1:
+        right_values = right_values[1:] + right_values[:1]
+    _add_text(slide, "Textbook line", 1.0, 1.35, 4.65, 0.3, 13, bold=True, color=_rgb(PROFILE.muted), center=True)
+    _add_text(slide, "Response", 7.65, 1.35, 4.65, 0.3, 13, bold=True, color=_rgb(PROFILE.muted), center=True)
     for index, pair in enumerate(pairs[:5]):
-        y = 1.52 + index * 1.0
+        y = 1.72 + index * 1.0
         _master_card(slide, 1.0, y, 4.65, 0.7, "FFFFFF")
         _master_card(slide, 7.65, y, 4.65, 0.7, PROFILE.background_alt)
         _add_text(slide, str(pair.get("left", "")), 1.25, y + 0.12, 4.15, 0.38, 23, bold=True, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
-        _add_text(slide, str(pair.get("right", "")), 7.9, y + 0.13, 4.15, 0.36, 18, color=_rgb(PROFILE.ink), center=True)
-        line = slide.shapes.add_connector(1, Inches(5.78), Inches(y + 0.35), Inches(7.5), Inches(y + 0.35))
-        line.line.color.rgb = _rgb(PROFILE.line); line.line.width = Pt(1.5)
+        _add_text(slide, right_values[index], 7.9, y + 0.13, 4.15, 0.36, 20, color=_rgb(PROFILE.ink), center=True, font_name=PROFILE.chinese_font)
+        _add_text(slide, str(index + 1), 5.95, y + 0.15, 0.35, 0.3, 13, bold=True, color=_rgb(PROFILE.primary), center=True)
+        _add_text(slide, chr(65 + index), 7.0, y + 0.15, 0.35, 0.3, 13, bold=True, color=_rgb(PROFILE.accent), center=True)
 
 
 def _master_summary(slide, source, deck) -> None:
@@ -583,7 +733,10 @@ def _master_card(slide, x: float, y: float, w: float, h: float, color: str) -> N
 def _master_picture(slide, path: Path | None, x: float, y: float, w: float, h: float) -> None:
     _master_card(slide, x - 0.06, y - 0.06, w + 0.12, h + 0.12, "FFFFFF")
     if path and path.suffix.lower() == ".svg":
+        svg_path = path
         path = _rasterize_svg(path)
+        if path is None:
+            raise RuntimeError(f"PPTX export could not rasterize SVG asset: {svg_path.name}")
     if not path or path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
         return
     with Image.open(path) as image:
@@ -748,18 +901,22 @@ def _content_text(slide_model) -> str:
 
 
 def _rasterize_svg(svg_path: Path) -> Path | None:
-    """Best-effort rasterize an SVG to PNG for PPTX embedding.
+    """Rasterize SVG through the existing PyMuPDF dependency for PPTX embedding."""
+    try:
+        import fitz
 
-    python-pptx cannot embed SVG directly; if cairosvg is available we rasterize,
-    otherwise we return None and the caller falls back to a placeholder box.
-    """
-    try:
-        import cairosvg  # type: ignore
-    except Exception:
-        return None
-    out = svg_path.with_suffix(".png")
-    try:
-        cairosvg.svg2png(url=str(svg_path), write_to=str(out), output_width=1200, output_height=675)
+        document = fitz.open(stream=svg_path.read_bytes(), filetype="svg")
+        page = document[0]
+        rect = page.rect
+        if rect.width <= 0 or rect.height <= 0:
+            return None
+        pixmap = page.get_pixmap(
+            matrix=fitz.Matrix(1200 / rect.width, 675 / rect.height),
+            alpha=False,
+        )
+        out = svg_path.with_suffix(".png")
+        pixmap.save(out)
+        document.close()
         return out
     except Exception:
         return None

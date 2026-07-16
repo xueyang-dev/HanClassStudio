@@ -366,7 +366,9 @@ def check_comprehensibility(
                 if component.component_type == "VocabularyFlipCard":
                     for item in component.data.get("items", []):
                         word = str(item.get("word", ""))
-                        if word in item_by_form and not item_by_form[word].usage_context:
+                        final_usage_context = str(item.get("usage_context", "")).strip()
+                        analyzed_usage_context = item_by_form[word].usage_context if word in item_by_form else ""
+                        if word in item_by_form and not (final_usage_context or analyzed_usage_context):
                             msg = f"{label} 词汇 '{word}' 缺少使用场景"
                             report.missing_usage_context.append(msg)
                             (report.blocking if learner.level == "zero_beginner" else report.warnings).append(msg)

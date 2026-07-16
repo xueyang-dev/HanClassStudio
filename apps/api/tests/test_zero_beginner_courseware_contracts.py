@@ -12,6 +12,7 @@ from hcs_api.models import (
     LessonBlueprint,
     LessonProfile,
     LessonSlide,
+    LanguageItem,
     QualityReport,
     SlideComponent,
     SourceMaterial,
@@ -20,7 +21,7 @@ from hcs_api.models import (
 )
 from hcs_api.pipeline import render_and_check
 from hcs_api.pptx_deck import build_pptx_deck_plan, build_pptx_structure_report
-from hcs_api.pptx_exporter import export_editable_pptx
+from hcs_api.pptx_exporter import _rasterize_svg, export_editable_pptx
 from hcs_api.providers import _blueprint_prompt
 from hcs_api.syllabus_engine import build_difficulty_profile, build_source_lesson_profile
 
@@ -157,6 +158,42 @@ def test_zero_beginner_gate_blocks_lesson_vocab_budget() -> None:
     assert any("全课新词数" in item for item in report.blocking)
 
 
+def test_final_blueprint_usage_context_satisfies_zero_beginner_gate() -> None:
+    blueprint = LessonBlueprint(
+        lesson_title="你好",
+        slides=[
+            LessonSlide(
+                id=1,
+                slide_type="VocabularySlide",
+                layout_variant="cards",
+                title="Thanking",
+                components=[
+                    SlideComponent(
+                        id="vocab",
+                        component_type="VocabularyFlipCard",
+                        data={
+                            "items": [
+                                {
+                                    "word": "谢谢",
+                                    "pinyin": "xièxie",
+                                    "meaning": "thank you",
+                                    "usage_context": "Use after someone helps you.",
+                                }
+                            ]
+                        },
+                    )
+                ],
+            )
+        ],
+    )
+    report = check_comprehensibility(
+        blueprint,
+        [LanguageItem(id="thanks", target_form="谢谢", usage_context="")],
+        build_learner_model(LessonProfile(learner_level="零基础", scaffolding_language="English")),
+    )
+    assert not report.missing_usage_context
+
+
 def test_pptx_structure_blocks_dense_summary_cards() -> None:
     blueprint = LessonBlueprint(
         lesson_title="你好",
@@ -179,6 +216,34 @@ def test_pptx_structure_blocks_dense_summary_cards() -> None:
     report = build_pptx_structure_report(build_pptx_deck_plan(blueprint, learner_level="zero_beginner"))
     assert report["state"] == "blocked"
     assert any("summary card" in item for item in report["blocked"])
+
+
+def test_phonetics_slide_has_exportable_content_and_svg_rasterization(tmp_path: Path) -> None:
+    slide = LessonSlide(
+        id=1,
+        slide_type="PhoneticsSlide",
+        layout_variant="diagram",
+        title="声调 · Tones",
+        content_blocks=[
+            ContentBlock(id="tones", block_type="phonetic_example", text="mā má mǎ mà", scaffolding_text="four tones")
+        ],
+    )
+    deck_slide = build_pptx_deck_plan(
+        LessonBlueprint(lesson_title="你好", slides=[slide]), learner_level="zero_beginner"
+    ).slides[0]
+    assert deck_slide.main_focus == "声调 · Tones"
+    assert deck_slide.target_text == "mā má mǎ mà"
+
+    svg = tmp_path / "tones.svg"
+    svg.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180">'
+        '<rect width="320" height="180" fill="#f5f5f5"/>'
+        '<path d="M20 140 L300 40" stroke="#087e8b" stroke-width="8"/>'
+        '</svg>',
+        encoding="utf-8",
+    )
+    png = _rasterize_svg(svg)
+    assert png is not None and png.exists()
 
 
 def test_editable_pptx_uses_normalized_level_and_refuses_dense_layout(
