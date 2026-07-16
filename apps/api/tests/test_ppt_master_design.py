@@ -119,6 +119,8 @@ def test_vocabulary_and_dialogue_master_layouts_bind_semantic_scene_images(tmp_p
         pictures = [shape for shape in slide.shapes if shape.shape_type == 13]
         assert pictures
         assert abs((pictures[0].width / pictures[0].height) - (16 / 9)) < 0.02
+        assert pictures[0]._element.spPr.prstGeom.get("prst") == "roundRect"
+        assert "<a:ln" in pictures[0]._element.xml
 
 
 def test_contact_sheet_is_diagnostic_only(tmp_path: Path) -> None:

@@ -297,12 +297,12 @@ def _add_content_blocks(slide, slide_model) -> None:
 def _add_media_card(slide, root: Path, slide_model, manifest: AssetManifest, x: float, y: float, w: float, h: float, is_classroom: bool = False) -> None:
     path = _image_path(root, slide_model.media_requirements.image_key, manifest)
     if path and path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-        slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+        _add_rounded_picture(slide, path, x, y, w, h)
         return
     if path and path.suffix.lower() == ".svg":
         png = _rasterize_svg(path)
         if png is not None and png.exists():
-            slide.shapes.add_picture(str(png), Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+            _add_rounded_picture(slide, png, x, y, w, h)
             return
     if is_classroom:
         # Classroom: hide prompt text, use minimal placeholder or nothing
@@ -776,14 +776,18 @@ def _master_card(slide, x: float, y: float, w: float, h: float, color: str) -> N
 
 
 def _master_picture(slide, path: Path | None, x: float, y: float, w: float, h: float) -> None:
-    _master_card(slide, x - 0.06, y - 0.06, w + 0.12, h + 0.12, "FFFFFF")
     if path and path.suffix.lower() == ".svg":
         svg_path = path
         path = _rasterize_svg(path)
         if path is None:
             raise RuntimeError(f"PPTX export could not rasterize SVG asset: {svg_path.name}")
     if not path or path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+        _master_card(slide, x, y, w, h, "FFFFFF")
         return
+    _add_rounded_picture(slide, path, x, y, w, h)
+
+
+def _add_rounded_picture(slide, path: Path, x: float, y: float, w: float, h: float):
     with Image.open(path) as image:
         image_ratio = image.width / image.height
     box_ratio = w / h
@@ -794,6 +798,17 @@ def _master_picture(slide, path: Path | None, x: float, y: float, w: float, h: f
     elif image_ratio < box_ratio:
         crop = (1 - image_ratio / box_ratio) / 2
         picture.crop_top = crop; picture.crop_bottom = crop
+    picture._element.spPr.prstGeom.set("prst", "roundRect")
+    line = OxmlElement("a:ln")
+    line.set("w", str(Pt(1.2).emu))
+    solid_fill = OxmlElement("a:solidFill")
+    color = OxmlElement("a:srgbClr")
+    color.set("val", PROFILE.line)
+    solid_fill.append(color)
+    line.append(solid_fill)
+    line.append(OxmlElement("a:round"))
+    picture._element.spPr.append(line)
+    return picture
 
 
 def _vocabulary_items(source) -> list[dict]:
