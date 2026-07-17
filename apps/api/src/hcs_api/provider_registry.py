@@ -18,6 +18,8 @@ import shutil
 import sys
 import tempfile
 import threading
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -55,6 +57,14 @@ _TRUSTED_SOURCE_REPOSITORIES: dict[str, set[str]] = {
     "github.com": {"xueyang-dev/HanClassStudio"},
     "huggingface.co": set(),
 }
+
+_DEFAULT_REGISTRY_URL = (
+    "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/"
+    "main/providers/registry.v1.json"
+)
+_REGISTRY_SCHEMA = "hanclassstudio.provider_registry.v1"
+_REGISTRY_CACHE_FILE = "provider_registry_cache.json"
+_MAX_REGISTRY_BYTES = 1_000_000
 
 
 class ProviderRegistryError(RuntimeError):
@@ -279,8 +289,35 @@ class RegistryProviderStatus(BaseModel):
     install_actions: list[InstallAction] = Field(default_factory=list)
 
 
+class ProviderRegistryIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+    schema_: Literal["hanclassstudio.provider_registry.v1"] = Field(
+        default=_REGISTRY_SCHEMA,
+        alias="schema",
+    )
+    providers: list[ProviderRegistryEntry]
+
+
+class ProviderRegistryCache(ProviderRegistryIndex):
+    source_url: str
+    refreshed_at: str
+
+
+class RegistrySourceStatus(BaseModel):
+    kind: Literal["bundled", "remote"] = "bundled"
+    source_url: str | None = None
+    last_refreshed_at: str | None = None
+
+
 class RegistryCatalogResponse(BaseModel):
     providers: list[RegistryProviderStatus]
+    source: RegistrySourceStatus = Field(default_factory=RegistrySourceStatus)
+
+
+class RegistryRefreshResponse(BaseModel):
+    catalog: RegistryCatalogResponse
+    changed_provider_ids: list[str] = Field(default_factory=list)
 
 
 class InstallPrepareResponse(BaseModel):
@@ -371,7 +408,7 @@ def _fixture(
     )
 
 
-def registry_entries() -> list[ProviderRegistryEntry]:
+def _bundled_registry_entries() -> list[ProviderRegistryEntry]:
     """Return the repository-controlled mock registry fixture.
 
     ponytail: two fixtures cover the no-secret and secret-required paths without
@@ -399,8 +436,24 @@ def registry_entries() -> list[ProviderRegistryEntry]:
     ]
 
 
+def registry_entries() -> list[ProviderRegistryEntry]:
+    """Read the last validated Registry cache without performing network I/O."""
+    cached = _read_mapping(_REGISTRY_CACHE_FILE)
+    if not cached:
+        return _bundled_registry_entries()
+    try:
+        return ProviderRegistryCache.model_validate(cached).providers
+    except ValueError as exc:
+        raise ProviderRegistryError(
+            "provider_persistence_corrupt",
+            "Provider Registry cache could not be validated safely",
+        ) from exc
+
+
 def validate_registry(entries: list[ProviderRegistryEntry] | None = None) -> list[ProviderRegistryEntry]:
-    entries = entries or registry_entries()
+    entries = registry_entries() if entries is None else entries
+    if not entries:
+        raise ProviderRegistryError("provider_registry_empty", "Provider Registry cannot be empty")
     ids = [entry.provider_id for entry in entries]
     if len(ids) != len(set(ids)):
         raise ProviderRegistryError("registry_duplicate_provider", "Provider IDs must be unique")
@@ -477,6 +530,102 @@ def _update_mapping(name: str, update: Any) -> dict[str, Any]:
             raise ProviderRegistryError("provider_persistence_invalid_update", "Provider persistence update was invalid")
         _write_mapping(name, next_value)
         return next_value
+
+
+def _registry_feed_url() -> str:
+    return os.environ.get("HCS_PROVIDER_REGISTRY_URL", _DEFAULT_REGISTRY_URL).strip()
+
+
+def _validate_registry_feed_url(value: str) -> str:
+    parsed = urlparse(value)
+    parts = [part for part in parsed.path.split("/") if part]
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "raw.githubusercontent.com"
+        or parsed.username
+        or parsed.password
+        or parsed.port
+        or parsed.query
+        or parsed.fragment
+        or len(parts) < 4
+        or parts[:2] != ["xueyang-dev", "HanClassStudio"]
+        or parts[-2:] != ["providers", "registry.v1.json"]
+    ):
+        raise ProviderRegistryError(
+            "provider_registry_source_untrusted",
+            "Provider Registry refresh source is not an approved HanClassStudio HTTPS feed",
+        )
+    return value
+
+
+def _download_registry_index(source_url: str) -> tuple[dict[str, Any], str]:
+    approved_url = _validate_registry_feed_url(source_url)
+
+    class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+            raise ProviderRegistryError(
+                "provider_registry_source_untrusted",
+                "Provider Registry refresh refused an unexpected redirect",
+            )
+
+    request = urllib.request.Request(
+        approved_url,
+        headers={"Accept": "application/json", "User-Agent": "HanClassStudio-ProviderRegistry/1"},
+        method="GET",
+    )
+    try:
+        with urllib.request.build_opener(_RejectRedirects()).open(request, timeout=8) as response:
+            final_url = _validate_registry_feed_url(response.geturl())
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > _MAX_REGISTRY_BYTES:
+                raise ProviderRegistryError(
+                    "provider_registry_too_large",
+                    "Provider Registry response exceeded the size limit",
+                )
+            body = response.read(_MAX_REGISTRY_BYTES + 1)
+    except ProviderRegistryError:
+        raise
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise ProviderRegistryError(
+            "provider_registry_fetch_failed",
+            "The official Provider Registry could not be reached",
+        ) from exc
+    if len(body) > _MAX_REGISTRY_BYTES:
+        raise ProviderRegistryError(
+            "provider_registry_too_large",
+            "Provider Registry response exceeded the size limit",
+        )
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProviderRegistryError(
+            "provider_registry_invalid",
+            "Provider Registry response was not valid JSON",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ProviderRegistryError(
+            "provider_registry_invalid",
+            "Provider Registry response had an invalid shape",
+        )
+    return payload, final_url
+
+
+def registry_source_status() -> RegistrySourceStatus:
+    cached = _read_mapping(_REGISTRY_CACHE_FILE)
+    if not cached:
+        return RegistrySourceStatus()
+    try:
+        parsed = ProviderRegistryCache.model_validate(cached)
+    except ValueError as exc:
+        raise ProviderRegistryError(
+            "provider_persistence_corrupt",
+            "Provider Registry cache could not be validated safely",
+        ) from exc
+    return RegistrySourceStatus(
+        kind="remote",
+        source_url=parsed.source_url,
+        last_refreshed_at=parsed.refreshed_at,
+    )
 
 
 def _append_jsonl(name: str, payload: BaseModel) -> None:
@@ -684,7 +833,46 @@ def registry_status() -> RegistryCatalogResponse:
         report = _environment(entry)
         record = _load_record(entry)
         statuses.append(RegistryProviderStatus(entry=entry, installation=record, environment=report, install_actions=_actions(record, report)))
-    return RegistryCatalogResponse(providers=statuses)
+    return RegistryCatalogResponse(providers=statuses, source=registry_source_status())
+
+
+def refresh_registry() -> RegistryRefreshResponse:
+    """Fetch and atomically activate the official Registry only on explicit request."""
+    payload, final_url = _download_registry_index(_registry_feed_url())
+    try:
+        index = ProviderRegistryIndex.model_validate(payload)
+    except ValueError as exc:
+        raise ProviderRegistryError(
+            "provider_registry_invalid",
+            "Provider Registry response failed schema validation",
+        ) from exc
+    entries = validate_registry(index.providers)
+    previous = {
+        entry.provider_id: _digest(entry.model_dump(mode="json", by_alias=True))
+        for entry in registry_entries()
+    }
+    current = {
+        entry.provider_id: _digest(entry.model_dump(mode="json", by_alias=True))
+        for entry in entries
+    }
+    changed = sorted(
+        provider_id
+        for provider_id in set(previous) | set(current)
+        if previous.get(provider_id) != current.get(provider_id)
+    )
+    cache = ProviderRegistryCache(
+        providers=entries,
+        source_url=final_url,
+        refreshed_at=_iso(),
+    )
+    _update_mapping(
+        _REGISTRY_CACHE_FILE,
+        lambda _current: cache.model_dump(mode="json", by_alias=True),
+    )
+    return RegistryRefreshResponse(
+        catalog=registry_status(),
+        changed_provider_ids=changed,
+    )
 
 
 def _entry(provider_id: str) -> ProviderRegistryEntry:

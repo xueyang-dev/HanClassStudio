@@ -2042,6 +2042,61 @@ dialog.confirm-dialog {
   gap: 14px;
 }
 
+.provider-registry-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.provider-registry-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+
+.provider-registry-refresh .spin {
+  animation: spin 0.7s linear infinite;
+}
+
+.provider-registry-source-status,
+.provider-official-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.provider-registry-source-status a,
+.provider-official-links a,
+.provider-registry-meta a {
+  color: var(--primary);
+  overflow-wrap: anywhere;
+  text-underline-offset: 2px;
+}
+
+.provider-registry-rights {
+  margin: 0;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--line-strong);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.provider-official-links {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
 .provider-registry-header h3,
 .provider-registry-header p,
 .provider-registry-card-heading h4,
@@ -2736,6 +2791,20 @@ dialog.confirm-dialog {
 
   .provider-registry-meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .provider-registry-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .provider-registry-header-actions {
+    justify-content: space-between;
+  }
+
+  .provider-registry-refresh {
+    max-width: 100%;
+    white-space: normal;
   }
 
   .capability-tabs {

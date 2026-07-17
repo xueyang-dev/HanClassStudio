@@ -61,6 +61,7 @@ from .provider_registry import (
     ProviderInstallLog,
     ProviderRegistryError,
     RegistryCatalogResponse,
+    RegistryRefreshResponse,
     InstallPrepareResponse,
     InstallResult,
     audit_events,
@@ -68,6 +69,7 @@ from .provider_registry import (
     configure_install,
     install_logs,
     prepare_install,
+    refresh_registry,
     registry_status,
     retry_install,
     rollback_install,
@@ -856,6 +858,8 @@ def _provider_registry_http_error(error: ProviderRegistryError, *, provider_id: 
         status = 404
     elif error.code.startswith("provider_persistence_") or error.code == "provider_registry_unavailable":
         status = 503
+    elif error.code == "provider_registry_fetch_failed":
+        status = 502
     elif error.code.endswith("in_progress") or "transition" in error.code or error.code in {
         "provider_plan_invalid", "provider_plan_expired", "provider_confirmation_invalid", "provider_plan_stale",
         "provider_plan_consumed", "provider_not_ready", "provider_retry_unavailable", "provider_configuration_unavailable", "provider_rollback_unavailable",
@@ -886,6 +890,15 @@ def get_provider_registry() -> RegistryCatalogResponse:
     """Return trusted registry metadata and backend-owned installation facts."""
     try:
         return registry_status()
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error) from error
+
+
+@app.post("/api/providers/registry/refresh", response_model=RegistryRefreshResponse)
+def refresh_provider_registry() -> RegistryRefreshResponse:
+    """Fetch the official Registry after an explicit user refresh action."""
+    try:
+        return refresh_registry()
     except ProviderRegistryError as error:
         raise _provider_registry_http_error(error) from error
 

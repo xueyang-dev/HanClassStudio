@@ -30,6 +30,10 @@ export interface ProviderDefinition {
   available: boolean;
   experimental: boolean;
   unavailable_reason?: string | null;
+  official_url?: string | null;
+  api_signup_url?: string | null;
+  license_name?: string | null;
+  terms_url?: string | null;
   supported_operations: string[];
   install_state?: ProviderInstallState | null;
   installed_version?: string | null;
@@ -120,6 +124,16 @@ export interface ProviderRegistryStatus {
 
 export interface ProviderRegistryCatalog {
   providers: ProviderRegistryStatus[];
+  source: {
+    kind: "bundled" | "remote";
+    source_url?: string | null;
+    last_refreshed_at?: string | null;
+  };
+}
+
+export interface ProviderRegistryRefreshResponse {
+  catalog: ProviderRegistryCatalog;
+  changed_provider_ids: string[];
 }
 
 export interface ProviderInstallStep {

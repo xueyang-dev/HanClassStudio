@@ -620,6 +620,10 @@ class ProviderCapabilityDescriptor(BaseModel):
     available: bool = False
     experimental: bool = False
     unavailable_reason: str | None = None
+    official_url: str | None = None
+    api_signup_url: str | None = None
+    license_name: str | None = None
+    terms_url: str | None = None
     configuration_schema: list[dict[str, Any]] = Field(default_factory=list)
     supported_operations: list[str] = Field(default_factory=list)
     # Installation facts are optional for legacy built-in providers.  Registry

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,6 +35,13 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
         assert entry.manifest_digest == registry._digest(entry.manifest.model_dump(mode="json", by_alias=True))
         assert entry.executor == "mock"
         assert entry.mock_only is True
+
+    index = registry.ProviderRegistryIndex.model_validate_json(
+        (Path(__file__).parents[3] / "providers" / "registry.v1.json").read_text(encoding="utf-8")
+    )
+    assert [entry.model_dump(mode="json") for entry in index.providers] == [
+        entry.model_dump(mode="json") for entry in entries
+    ]
 
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry(
@@ -87,6 +95,94 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
     payload["manifest"]["unexpected_step_metadata"] = True
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
+
+
+def test_registry_refresh_is_explicit_validated_and_persisted(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    calls: list[str] = []
+    entries = registry._bundled_registry_entries()
+    upgraded = entries[0].model_copy(deep=True)
+    upgraded.version = "0.2.0"
+    upgraded.source_ref = "v0.2.0"
+    upgraded.manifest.version = upgraded.version
+    upgraded.manifest.source_ref = upgraded.source_ref
+    upgraded.manifest_digest = registry._digest(upgraded.manifest.model_dump(mode="json", by_alias=True))
+    upgraded.checksum_sha256 = registry._artifact_checksum(
+        upgraded.provider_id,
+        upgraded.version,
+        upgraded.source_ref,
+    )
+    payload = registry.ProviderRegistryIndex(
+        providers=[upgraded, entries[1]],
+    ).model_dump(mode="json", by_alias=True)
+
+    def fetch(source_url: str) -> tuple[dict, str]:
+        calls.append(source_url)
+        return payload, source_url
+
+    monkeypatch.setattr(registry, "_download_registry_index", fetch)
+
+    initial = client.get("/api/providers/registry")
+    assert initial.status_code == 200
+    assert initial.json()["source"]["kind"] == "bundled"
+    assert calls == []
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert len(calls) == 1
+    body = refreshed.json()
+    assert body["changed_provider_ids"] == ["hcs_mock_ocr"]
+    assert body["catalog"]["source"]["kind"] == "remote"
+    assert next(
+        item for item in body["catalog"]["providers"]
+        if item["entry"]["provider_id"] == "hcs_mock_ocr"
+    )["entry"]["version"] == "0.2.0"
+
+    cache_path = storage.CONFIG_DIR / "provider_registry_cache.json"
+    assert cache_path.exists()
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert len(calls) == 1
+    assert after.json()["source"]["last_refreshed_at"]
+
+
+def test_invalid_registry_refresh_keeps_previous_catalog(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    original = client.get("/api/providers/registry").json()
+
+    def fetch(_source_url: str) -> tuple[dict, str]:
+        payload = registry._bundled_registry_entries()[0].model_dump(mode="json", by_alias=True)
+        payload["source_url"] = "https://github.com/evil/provider/tree/v1.0.0"
+        return {
+            "schema": "hanclassstudio.provider_registry.v1",
+            "providers": [payload],
+        }, registry._DEFAULT_REGISTRY_URL
+
+    monkeypatch.setattr(registry, "_download_registry_index", fetch)
+    response = client.post("/api/providers/registry/refresh")
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "provider_registry_invalid"
+    assert not (storage.CONFIG_DIR / "provider_registry_cache.json").exists()
+    current = client.get("/api/providers/registry").json()
+    assert [item["entry"]["provider_id"] for item in current["providers"]] == [
+        item["entry"]["provider_id"] for item in original["providers"]
+    ]
+    assert [item["entry"]["version"] for item in current["providers"]] == [
+        item["entry"]["version"] for item in original["providers"]
+    ]
+
+
+def test_registry_refresh_source_is_restricted_to_official_https_feed() -> None:
+    assert registry._validate_registry_feed_url(registry._DEFAULT_REGISTRY_URL) == registry._DEFAULT_REGISTRY_URL
+    for source in (
+        "http://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
+        "https://evil.example/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/evil/HanClassStudio/main/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json?redirect=1",
+    ):
+        with pytest.raises(registry.ProviderRegistryError) as error:
+            registry._validate_registry_feed_url(source)
+        assert error.value.code == "provider_registry_source_untrusted"
 
 
 def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monkeypatch) -> None:

@@ -111,6 +111,7 @@ deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "sa
 deepEqual(providerStatus({ providerId: "openai_compatible", values: {} }, "llm", providerCatalog.map((item) => ({ ...item, configured: true, available: false }))), { configured: true, available: false });
 
 const registry: ProviderRegistryCatalog = {
+  source: { kind: "bundled", source_url: null, last_refreshed_at: null },
   providers: [
     {
       entry: {

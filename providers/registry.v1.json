@@ -1,0 +1,112 @@
+{
+  "schema": "hanclassstudio.provider_registry.v1",
+  "providers": [
+    {
+      "provider_id": "hcs_mock_ocr",
+      "capability": "ocr",
+      "display_name": "HanClassStudio OCR Sandbox",
+      "description": "Deterministic first-party OCR sandbox for lifecycle testing",
+      "source_url": "https://github.com/xueyang-dev/HanClassStudio/tree/v0.1.0/providers",
+      "repository": "xueyang-dev/HanClassStudio",
+      "publisher": "HanClassStudio first-party",
+      "license": "MIT",
+      "trust_level": "first_party",
+      "version": "0.1.0",
+      "source_ref": "v0.1.0",
+      "checksum_sha256": "61955933db942869bd28837e0ca01e02892022a6dd3e894cd1b1aabba8ba2e9f",
+      "manifest_version": "1",
+      "manifest_digest": "78d8ea4c660aa37ff20354d23a69a3ea44ab19c13c3c19edcbd522aaeef15fb5",
+      "manifest": {
+        "schema": "hanclassstudio.provider_manifest.v1",
+        "provider_id": "hcs_mock_ocr",
+        "version": "0.1.0",
+        "source_ref": "v0.1.0",
+        "steps": [
+          "create_isolated_environment",
+          "download_and_verify_artifact",
+          "checkout_exact_ref",
+          "install_controlled_dependencies",
+          "verify_model_files",
+          "run_configuration_check",
+          "run_health_check",
+          "activate_version",
+          "cleanup_temp_environment"
+        ]
+      },
+      "configuration_schema": [],
+      "requirements": {
+        "platforms": ["linux", "macos", "windows"],
+        "architectures": ["x86_64", "arm64"],
+        "python": ">=3.11,<3.12",
+        "min_memory_mb": 128,
+        "min_disk_mb": 32,
+        "requires_gpu": false,
+        "runtime": "isolated mock environment",
+        "model_files": [],
+        "api_key_required": false
+      },
+      "supported_operations": ["source_intake", "ocr"],
+      "executor": "mock",
+      "mock_only": true,
+      "experimental": true
+    },
+    {
+      "provider_id": "hcs_mock_llm",
+      "capability": "llm",
+      "display_name": "HanClassStudio LLM Sandbox",
+      "description": "Deterministic first-party LLM sandbox; no external network calls",
+      "source_url": "https://github.com/xueyang-dev/HanClassStudio/tree/v0.1.0/providers",
+      "repository": "xueyang-dev/HanClassStudio",
+      "publisher": "HanClassStudio first-party",
+      "license": "MIT",
+      "trust_level": "first_party",
+      "version": "0.1.0",
+      "source_ref": "v0.1.0",
+      "checksum_sha256": "a02f410e9de8774e4ae1cca13d0c1077b99d59ec187cffff98c36e418d27c3da",
+      "manifest_version": "1",
+      "manifest_digest": "16576bc355b2298920b9060a3c0504cc6bdf3dd4ebd85a0acc4234537b9f3f29",
+      "manifest": {
+        "schema": "hanclassstudio.provider_manifest.v1",
+        "provider_id": "hcs_mock_llm",
+        "version": "0.1.0",
+        "source_ref": "v0.1.0",
+        "steps": [
+          "create_isolated_environment",
+          "download_and_verify_artifact",
+          "checkout_exact_ref",
+          "install_controlled_dependencies",
+          "verify_model_files",
+          "run_configuration_check",
+          "run_health_check",
+          "activate_version",
+          "cleanup_temp_environment"
+        ]
+      },
+      "configuration_schema": [
+        {
+          "key": "api_key",
+          "label": "API key",
+          "type": "password",
+          "required": true,
+          "secret": true,
+          "placeholder": null
+        }
+      ],
+      "requirements": {
+        "platforms": ["linux", "macos", "windows"],
+        "architectures": ["x86_64", "arm64"],
+        "python": ">=3.11,<3.12",
+        "min_memory_mb": 128,
+        "min_disk_mb": 32,
+        "requires_gpu": false,
+        "runtime": "isolated mock environment",
+        "model_files": [],
+        "api_key_required": true
+      },
+      "supported_operations": ["blueprint"],
+      "executor": "mock",
+      "mock_only": true,
+      "experimental": true
+    }
+  ]
+}

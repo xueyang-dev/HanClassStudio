@@ -20,6 +20,18 @@ GitHub. A self-declared `verified_maintainer` value cannot expand that trust
 boundary; adding another repository requires an intentional registry change and
 review.
 
+Registry discovery is deliberately user-triggered. Normal application startup,
+`GET /api/providers/registry`, capability polling, and project loading read only
+the bundled index or the last validated local cache; none of them contact an
+external catalog. Clicking **Check catalog updates** calls
+`POST /api/providers/registry/refresh`, which downloads the first-party
+`providers/registry.v1.json` index over HTTPS, enforces a one-megabyte limit,
+validates the complete schema and trust rules, and atomically replaces the cache.
+If the request or validation fails, the last valid catalog remains active. The
+feed is a curated HanClassStudio trust boundary, not a GitHub/Hugging Face
+popularity search, and it cannot authorize a repository outside the explicit
+trust store.
+
 The `GET /api/providers/registry` response separates registry availability from
 installation facts:
 
@@ -36,6 +48,11 @@ Registry-backed descriptors keep `install_state`, `configuration_status`,
 `install_actions`, blockers, and failure details aligned with the registry; a
 provider is `available` only after the backend lifecycle reaches `available`.
 The WebUI uses this contract for both model settings and first-use onboarding.
+Capability descriptors also provide backend-owned `official_url`,
+`api_signup_url`, `license_name`, and `terms_url` metadata. Cloud providers link
+to their official API application pages; local providers and Registry entries
+link to the validated official project source. The client never builds these
+URLs from provider names.
 
 When the selected local capability has no available provider, onboarding shows
 only the matching registry entries. Preparing and confirming an installation
@@ -91,10 +108,18 @@ API exposes only presence flags. Logs, audit messages, and structured error
 messages redact API keys, bearer/authorization values, token/password/secret
 fields, and URL query credentials, including JSON-shaped messages.
 
+Provider names, code, models, and trademarks remain the property of their
+respective owners. HanClassStudio presents verified source links and controlled
+installation plans; it does not grant rights to third-party software. Users and
+deployers must comply with each provider's license and service terms. This is
+shown in the Registry UI instead of making an unverifiable blanket
+non-infringement claim.
+
 ## Current scope
 
 `hcs_mock_ocr` and `hcs_mock_llm` are deterministic first-party fixtures used by
-API and Playwright tests. Real provider discovery, downloads, dependency
+API and Playwright tests. The explicit refresh mechanism can update this curated
+catalog, but the current entries remain mock-only. Real provider downloads, dependency
 installation, GPU validation, and model acquisition require a future executor
 implementation and a separate security review. Until then the UI labels these
 entries as sandbox-only and the backend never reports an external provider as

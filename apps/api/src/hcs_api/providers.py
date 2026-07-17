@@ -35,11 +35,16 @@ def _field(key: str, label: str, field_type: str = "text", *, required: bool = F
 
 def _provider_definitions() -> list[dict[str, Any]]:
     """Canonical provider list. UI clients must render this list, not copy it."""
+    hcs_repository = "https://github.com/xueyang-dev/HanClassStudio"
+    openai_docs = "https://platform.openai.com/docs/"
+    openai_signup = "https://platform.openai.com/"
+    openai_terms = "https://openai.com/policies/terms-of-use/"
     return [
         {
             "capability": "llm", "provider_id": "deterministic", "display_name": "Deterministic offline",
             "category": "local", "description": "Offline-safe deterministic Blueprint generator",
             "fields": [], "operations": ["blueprint"],
+            "official_url": hcs_repository, "license_name": "MIT",
         },
         {
             "capability": "llm", "provider_id": "openai_compatible", "display_name": "OpenAI-compatible",
@@ -48,6 +53,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("api_key", "API key", "password", required=True),
                        _field("model", "Model", required=True)],
             "operations": ["blueprint", "illustration"],
+            "official_url": openai_docs, "api_signup_url": openai_signup, "terms_url": openai_terms,
         },
         {
             "capability": "llm", "provider_id": "ollama", "display_name": "Ollama",
@@ -55,6 +61,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("base_url", "Base URL", "url", placeholder="http://127.0.0.1:11434"),
                        _field("model", "Model", required=True)],
             "operations": ["blueprint", "illustration"],
+            "official_url": "https://github.com/ollama/ollama", "license_name": "MIT",
         },
         {
             "capability": "llm", "provider_id": "lm_studio", "display_name": "LM Studio",
@@ -62,6 +69,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("base_url", "Base URL", "url", placeholder="http://127.0.0.1:1234/v1"),
                        _field("model", "Model", required=True)],
             "operations": ["blueprint", "illustration"],
+            "official_url": "https://lmstudio.ai/", "terms_url": "https://lmstudio.ai/terms",
         },
         {
             "capability": "llm", "provider_id": "custom", "display_name": "Custom endpoint",
@@ -77,11 +85,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "Bridge token", "password", required=True),
                        _field("model", "Model label", placeholder="codex-chatgpt")],
             "operations": ["blueprint", "illustration"],
+            "official_url": hcs_repository, "license_name": "MIT",
         },
         {
             "capability": "image", "provider_id": "placeholder", "display_name": "Deterministic SVG",
             "category": "local", "description": "Offline-safe deterministic illustration fallback",
             "fields": [], "operations": ["placeholder"],
+            "official_url": hcs_repository, "license_name": "MIT",
         },
         {
             "capability": "image", "provider_id": "openai_images", "display_name": "OpenAI Images",
@@ -90,6 +100,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
             "operations": ["image"],
+            "official_url": openai_docs, "api_signup_url": openai_signup, "terms_url": openai_terms,
         },
         {
             "capability": "image", "provider_id": "experimental_openai_images", "display_name": "OpenAI Images (experimental)",
@@ -98,6 +109,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
             "operations": ["image"], "experimental": True,
+            "official_url": openai_docs, "api_signup_url": openai_signup, "terms_url": openai_terms,
         },
         {
             "capability": "image", "provider_id": "codex_image", "display_name": "Codex Image Bridge",
@@ -105,11 +117,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "Bridge token", "password", required=True),
                        _field("model", "Model label", placeholder="codex-image")],
             "operations": ["image"],
+            "official_url": hcs_repository, "license_name": "MIT",
         },
         {
             "capability": "tts", "provider_id": "placeholder", "display_name": "Deterministic tone",
             "category": "local", "description": "Offline-safe placeholder audio",
             "fields": [], "operations": ["placeholder"],
+            "official_url": hcs_repository, "license_name": "MIT",
         },
         {
             "capability": "tts", "provider_id": "openai_tts", "display_name": "OpenAI TTS",
@@ -119,18 +133,21 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("model", "Model", required=True, options=[{"value": "tts-1", "label": "TTS-1"}, {"value": "tts-1-hd", "label": "TTS-1 HD"}]),
                        _field("voice", "Voice", required=True, options=[{"value": v, "label": v.title()} for v in ("alloy", "echo", "fable", "onyx", "nova", "shimmer")])],
             "operations": ["tts"],
+            "official_url": openai_docs, "api_signup_url": openai_signup, "terms_url": openai_terms,
         },
         {
             "capability": "ocr", "provider_id": "paddle_ocr", "display_name": "PaddleOCR",
             "category": "local", "description": "Local PaddleOCR engine",
             "fields": [_field("use_gpu", "Use GPU", "select", options=[{"value": "false", "label": "CPU"}, {"value": "true", "label": "GPU"}])],
             "operations": ["source_intake", "ocr"],
+            "official_url": "https://github.com/PaddlePaddle/PaddleOCR", "license_name": "Apache-2.0",
         },
         {
             "capability": "ocr", "provider_id": "tesseract", "display_name": "Tesseract",
             "category": "local", "description": "Local Tesseract fallback engine",
             "fields": [_field("langs", "Languages", placeholder="chi_sim+eng")],
             "operations": ["source_intake", "ocr"],
+            "official_url": "https://github.com/tesseract-ocr/tesseract", "license_name": "Apache-2.0",
         },
         {
             "capability": "video", "provider_id": "runway", "display_name": "Runway",
@@ -138,6 +155,8 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "API key", "password", required=True)],
             "operations": [], "implemented": False, "configurable": False,
             "unavailable_reason": "Video generation is not implemented in the production media pipeline.",
+            "official_url": "https://dev.runwayml.com/", "api_signup_url": "https://dev.runwayml.com/settings/api-keys",
+            "terms_url": "https://runwayml.com/terms-of-use/",
         },
     ]
 
@@ -217,6 +236,8 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             category=item["category"], description=item["description"], implemented=implemented,
             configurable=item.get("configurable", implemented), configured=configured, available=available,
             experimental=item.get("experimental", False), unavailable_reason=reason,
+            official_url=item.get("official_url"), api_signup_url=item.get("api_signup_url"),
+            license_name=item.get("license_name"), terms_url=item.get("terms_url"),
             configuration_schema=item["fields"], supported_operations=item["operations"],
         ))
 
@@ -275,6 +296,8 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             available=available,
             experimental=entry.experimental,
             unavailable_reason=unavailable_reason,
+            official_url=entry.source_url,
+            license_name=entry.license,
             configuration_schema=[field.model_dump(mode="json") for field in entry.configuration_schema],
             supported_operations=entry.supported_operations,
             install_state=installation.install_state,

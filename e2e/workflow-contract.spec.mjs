@@ -189,6 +189,58 @@ test("trusted provider registry requires explicit confirmation and keeps dialog 
   await expect(trigger).toBeFocused();
 });
 
+test("provider catalog refresh is explicit and official source links come from the backend", async ({ page }) => {
+  let refreshPosts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/providers/registry/refresh")) refreshPosts += 1;
+  });
+
+  await page.goto("/");
+  await expect.poll(() => refreshPosts).toBe(0);
+  const onboarding = page.locator("dialog.onboarding-dialog[open]");
+  if (await onboarding.count()) await onboarding.getByRole("button", { name: "跳过", exact: true }).click();
+  const trigger = page.getByRole("button", { name: "模型设置", exact: true });
+  await trigger.click();
+  const settings = page.locator("dialog.settings-dialog[open]");
+  const registry = settings.locator(".provider-registry");
+  await expect(registry.getByRole("link", { name: "xueyang-dev/HanClassStudio" }).first())
+    .toHaveAttribute("href", /github\.com\/xueyang-dev\/HanClassStudio/);
+  await expect(registry).toContainText("权利归各自权利人所有");
+
+  const catalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/registry")).json();
+  await page.route("**/api/providers/registry/refresh", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ catalog, changed_provider_ids: [] }) });
+  });
+  await registry.getByRole("button", { name: "检查目录更新", exact: true }).click();
+  await expect.poll(() => refreshPosts).toBe(1);
+  await expect(registry.getByText("目录已更新，发现 0 项变化", { exact: true })).toBeVisible();
+
+  await page.unroute("**/api/providers/registry/refresh");
+  await page.route("**/api/providers/registry/refresh", async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: { code: "provider_registry_fetch_failed", message: "The official Provider Registry could not be reached", blockers: [] } }),
+    });
+  });
+  await registry.getByRole("button", { name: "检查目录更新", exact: true }).click();
+  await expect.poll(() => refreshPosts).toBe(2);
+  await expect(registry.getByRole("alert")).toContainText("已保留上次可信目录");
+
+  const savedSettings = await (await page.request.get("http://127.0.0.1:8012/api/settings/providers")).json();
+  await page.route("**/api/settings/providers", async (route) => {
+    if (route.request().method() === "PUT") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(savedSettings) });
+      return;
+    }
+    await route.continue();
+  });
+  await settings.getByRole("button", { name: "LLM 语言模型", exact: true }).click();
+  await settings.getByRole("button", { name: "在线 API", exact: true }).click();
+  await expect(settings.getByRole("link", { name: "申请 API / 获取密钥", exact: true }))
+    .toHaveAttribute("href", "https://platform.openai.com/");
+});
+
 test("first-use provider selection installs a capability-scoped local provider", async ({ page }) => {
   let blockCapabilities = new Set(["ocr"]);
   await page.addInitScript(() => {

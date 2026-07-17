@@ -46,6 +46,7 @@ import {
   fetchProviderInstallLogs,
   fetchProviderRegistry,
   fetchProviderSettings,
+  refreshProviderRegistry,
   forceExportProject,
   generateAgentPackage,
   generateBlueprint,
@@ -96,6 +97,7 @@ import type {
   ProviderInstallLog,
   ProviderInstallPrepareResponse,
   ProviderRegistryCatalog,
+  ProviderRegistryRefreshResponse,
   ProviderRegistryStatus,
   ProjectState,
   ProjectSummary,
@@ -489,7 +491,7 @@ export function App() {
       });
   }, []);
 
-  function refreshProviderSources() {
+  function reloadProviderContracts() {
     const sequence = ++providerRefreshSequenceRef.current;
     void Promise.allSettled([fetchProviderRegistry(), fetchProviderCapabilities()]).then(([registryResult, catalogResult]) => {
       if (sequence !== providerRefreshSequenceRef.current) return;
@@ -498,8 +500,20 @@ export function App() {
     });
   }
 
+  async function discoverProviderSources(): Promise<ProviderRegistryRefreshResponse> {
+    // Invalidate any local GET already in flight. The POST below is the only
+    // action that may contact the official Registry feed.
+    providerRefreshSequenceRef.current += 1;
+    const result = await refreshProviderRegistry();
+    const catalog = await fetchProviderCapabilities();
+    providerRefreshSequenceRef.current += 1;
+    setProviderRegistry(result.catalog);
+    setProviderCatalog(catalog);
+    return result;
+  }
+
   useEffect(() => {
-    refreshProviderSources();
+    reloadProviderContracts();
     return () => {
       providerRefreshSequenceRef.current += 1;
     };
@@ -510,8 +524,8 @@ export function App() {
   // connect/disconnect state changes without a manual browser reload.
   useEffect(() => {
     if (!codexBridgeSelected) return;
-    refreshProviderSources();
-    const timer = window.setInterval(refreshProviderSources, 15_000);
+    reloadProviderContracts();
+    const timer = window.setInterval(reloadProviderContracts, 15_000);
     return () => window.clearInterval(timer);
   }, [codexBridgeSelected]);
 
@@ -1320,7 +1334,8 @@ export function App() {
           config={providerConfig}
           catalog={providerCatalog}
           registry={providerRegistry}
-          onRegistryRefresh={refreshProviderSources}
+          onRegistryRefresh={reloadProviderContracts}
+          onRegistryDiscover={discoverProviderSources}
           synced={settingsSynced}
           error={providerSaveError}
           onChange={(next) => {
@@ -1356,7 +1371,8 @@ export function App() {
             setProviderConfig(next);
             writeStoredProviderConfig(next);
           }}
-          onRegistryRefresh={refreshProviderSources}
+          onRegistryRefresh={reloadProviderContracts}
+          onRegistryDiscover={discoverProviderSources}
           onThemeChange={handleThemeChange}
           onClose={() => {
             writeOnboardingSeen();
@@ -1588,6 +1604,7 @@ function CapabilityConfigPanel({
   onChange,
   registry,
   onRegistryRefresh,
+  onRegistryDiscover,
   showRegistryEntry = false,
 }: {
   capability: ProviderCapability;
@@ -1596,6 +1613,7 @@ function CapabilityConfigPanel({
   onChange: (next: ProviderConfig) => void;
   registry?: ProviderRegistryCatalog | null;
   onRegistryRefresh?: () => void;
+  onRegistryDiscover?: () => Promise<ProviderRegistryRefreshResponse>;
   showRegistryEntry?: boolean;
 }) {
   const { t } = useI18n();
@@ -1612,7 +1630,7 @@ function CapabilityConfigPanel({
     ? selectableProviders
     : [...selectableProviders, ...providers.filter((provider) => provider.id === selectedId)];
   const registryProviders = getCapabilityRegistryProviders(capability, registry ?? null);
-  const showOnboardingRegistry = showRegistryEntry && mode === "local" && availableProviders.length === 0 && registryProviders.length > 0;
+  const showOnboardingRegistry = showRegistryEntry && mode === "local" && availableProviders.length === 0;
   const providerSelectRef = useRef<HTMLSelectElement>(null);
   const hadAvailableProviderRef = useRef(availableProviders.length > 0);
   const previousCapabilityRef = useRef(capability);
@@ -1732,6 +1750,7 @@ function CapabilityConfigPanel({
             capability={capability}
             compact
             onRefresh={onRegistryRefresh ?? (() => undefined)}
+            onDiscover={onRegistryDiscover ?? (() => Promise.reject(new Error(t("provider.registry.refreshUnavailable"))))}
           />
         </section>
       )}
@@ -1749,7 +1768,24 @@ function CapabilityConfigPanel({
       )}
 
       {selectedProvider && selectedProvider.category === mode && (
-        <div className="provider-fields">
+        <>
+          {(selectedProvider.official_url || selectedProvider.api_signup_url || selectedProvider.license_name || selectedProvider.terms_url) && (
+            <div className="provider-official-links" aria-label={t("provider.sourceLinks")}>
+              {selectedProvider.official_url && (
+                <a href={selectedProvider.official_url} target="_blank" rel="noreferrer">
+                  {t(selectedProvider.category === "local" ? "provider.officialProject" : "provider.officialWebsite")}
+                </a>
+              )}
+              {selectedProvider.api_signup_url && (
+                <a href={selectedProvider.api_signup_url} target="_blank" rel="noreferrer">{t("provider.applyApi")}</a>
+              )}
+              {selectedProvider.terms_url && (
+                <a href={selectedProvider.terms_url} target="_blank" rel="noreferrer">{t("provider.terms")}</a>
+              )}
+              {selectedProvider.license_name && <span>{t("provider.licenseName", { license: selectedProvider.license_name })}</span>}
+            </div>
+          )}
+          <div className="provider-fields">
           {selectedProvider.fields.map((field) => (
             <label className="field" key={field.key}>
               <span>
@@ -1777,7 +1813,8 @@ function CapabilityConfigPanel({
               )}
             </label>
           ))}
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -1845,25 +1882,42 @@ function ProviderRegistryPanel({
   capability,
   compact = false,
   onRefresh,
+  onDiscover,
 }: {
   registry: ProviderRegistryCatalog | null;
   capability?: ProviderCapability;
   compact?: boolean;
   onRefresh: () => void;
+  onDiscover: () => Promise<ProviderRegistryRefreshResponse>;
 }) {
   const { t } = useI18n();
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState("");
+  const [refreshNotice, setRefreshNotice] = useState("");
   const [prepared, setPrepared] = useState<ProviderInstallPrepareResponse | null>(null);
   const [configValues, setConfigValues] = useState<Record<string, Record<string, string>>>({});
   const [logs, setLogs] = useState<Record<string, ProviderInstallLog[]>>({});
   const pendingTriggerRef = useRef<HTMLElement | null>(null);
 
-  if (!registry) return null;
   const statuses = capability
-    ? registry.providers.filter((status) => status.entry.capability === capability)
-    : registry.providers;
+    ? (registry?.providers ?? []).filter((status) => status.entry.capability === capability)
+    : (registry?.providers ?? []);
   const titleId = capability ? `providerRegistryTitle-${capability}` : "providerRegistryTitle";
+
+  async function discover() {
+    setDiscovering(true);
+    setError("");
+    setRefreshNotice("");
+    try {
+      const result = await onDiscover();
+      setRefreshNotice(t("provider.registry.refreshed", { n: result.changed_provider_ids.length }));
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setDiscovering(false);
+    }
+  }
 
   async function prepare(status: ProviderRegistryStatus, retry = false, trigger?: HTMLElement) {
     pendingTriggerRef.current = trigger ?? null;
@@ -1946,9 +2000,25 @@ function ProviderRegistryPanel({
           <h3 id={titleId}>{capability ? t("provider.registry.onboarding.title", { capability: t(CAPABILITY_META[capability].labelKey) }) : t("provider.registry.title")}</h3>
           <p>{capability ? t("provider.registry.onboarding.subtitle") : t("provider.registry.subtitle")}</p>
         </div>
-        <ShieldCheck size={20} aria-hidden="true" />
+        <div className="provider-registry-header-actions">
+          <ShieldCheck size={20} aria-hidden="true" />
+          <button type="button" className="secondary provider-registry-refresh" disabled={discovering} onClick={() => void discover()}>
+            <RefreshCw size={15} className={discovering ? "spin" : ""} aria-hidden="true" />
+            {discovering ? t("provider.registry.refreshing") : t("provider.registry.refresh")}
+          </button>
+        </div>
       </header>
+      <div className="provider-registry-source-status">
+        <span>
+          {registry?.source.kind === "remote" && registry.source.last_refreshed_at
+            ? t("provider.registry.lastRefreshed", { time: new Date(registry.source.last_refreshed_at).toLocaleString() })
+            : t("provider.registry.bundledSource")}
+        </span>
+        {registry?.source.source_url && <a href={registry.source.source_url} target="_blank" rel="noreferrer">{t("provider.registry.catalogSource")}</a>}
+      </div>
+      <p className="provider-registry-rights">{t("provider.registry.rightsNotice")}</p>
       {error && <div className="notice error" role="alert">{error}</div>}
+      {refreshNotice && <div className="notice success" role="status">{refreshNotice}</div>}
       <div className="provider-registry-list">
         {statuses.map((status) => {
           const entry = status.entry;
@@ -1971,7 +2041,7 @@ function ProviderRegistryPanel({
                 </span>
               </div>
               <dl className="provider-registry-meta">
-                <div><dt>{t("provider.registry.source")}</dt><dd>{entry.repository}</dd></div>
+                <div><dt>{t("provider.registry.source")}</dt><dd><a href={entry.source_url} target="_blank" rel="noreferrer">{entry.repository}</a></dd></div>
                 <div><dt>{t("provider.registry.publisher")}</dt><dd>{entry.publisher}</dd></div>
                 <div><dt>{t("provider.registry.license")}</dt><dd>{entry.license}</dd></div>
                 <div><dt>{t("provider.registry.available")}</dt><dd>{installation.available_version ?? entry.version}</dd></div>
@@ -2033,6 +2103,7 @@ function ModelSettingsModal({
   catalog,
   registry,
   onRegistryRefresh,
+  onRegistryDiscover,
   onChange,
   onClose,
   synced,
@@ -2042,6 +2113,7 @@ function ModelSettingsModal({
   catalog: ProviderDefinition[];
   registry: ProviderRegistryCatalog | null;
   onRegistryRefresh: () => void;
+  onRegistryDiscover: () => Promise<ProviderRegistryRefreshResponse>;
   onChange: (next: ProviderConfig) => void;
   onClose: () => void;
   synced?: boolean;
@@ -2106,7 +2178,7 @@ function ModelSettingsModal({
           </div>
         </div>
 
-        <ProviderRegistryPanel registry={registry} onRefresh={onRegistryRefresh} />
+        <ProviderRegistryPanel registry={registry} onRefresh={onRegistryRefresh} onDiscover={onRegistryDiscover} />
 
         <p className={`settings-saved-note ${synced ? "ok" : ""}`}>
           {synced ? t("settings.savedToServer") : t("settings.autoSaveNote")}
@@ -2167,6 +2239,7 @@ function OnboardingWizard({
   theme,
   onChange,
   onRegistryRefresh,
+  onRegistryDiscover,
   onThemeChange,
   onClose,
 }: {
@@ -2176,6 +2249,7 @@ function OnboardingWizard({
   theme: ThemeMode;
   onChange: (next: ProviderConfig) => void;
   onRegistryRefresh: () => void;
+  onRegistryDiscover: () => Promise<ProviderRegistryRefreshResponse>;
   onThemeChange: (theme: ThemeMode) => void;
   onClose: () => void;
 }) {
@@ -2299,6 +2373,7 @@ function OnboardingWizard({
                     onChange={onChange}
                     registry={registry}
                     onRegistryRefresh={onRegistryRefresh}
+                    onRegistryDiscover={onRegistryDiscover}
                     showRegistryEntry
                   />
                 </div>
@@ -3036,6 +3111,9 @@ function arrayLength(value: unknown): number {
 }
 
 const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
+  [/official Provider Registry could not be reached/i, "provider.registry.refreshFetchError"],
+  [/Provider Registry response (?:failed schema validation|was not valid JSON|had an invalid shape|exceeded the size limit)/i, "provider.registry.refreshInvalidError"],
+  [/Provider Registry refresh source is not an approved/i, "provider.registry.refreshSourceError"],
   [/blueprint artifact is missing/i, "status.blocker.blueprintMissing"],
   [/generate a lesson blueprint first|blueprint.*missing/i, "status.blocker.blueprintMissing"],
   [/render artifact is missing/i, "status.blocker.renderMissing"],

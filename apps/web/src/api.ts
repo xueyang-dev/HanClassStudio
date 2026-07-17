@@ -18,6 +18,7 @@ import type {
   ProviderConfig,
   ProviderDefinition,
   ProviderRegistryCatalog,
+  ProviderRegistryRefreshResponse,
   ProjectSummary,
   StateFirstTeacherSummary
 } from "./types";
@@ -255,6 +256,10 @@ export async function fetchProviderCapabilities(): Promise<ProviderDefinition[]>
     available: boolean;
     experimental: boolean;
     unavailable_reason?: string | null;
+    official_url?: string | null;
+    api_signup_url?: string | null;
+    license_name?: string | null;
+    terms_url?: string | null;
     configuration_schema: Array<{
       key: string;
       label: string;
@@ -288,6 +293,10 @@ export async function fetchProviderCapabilities(): Promise<ProviderDefinition[]>
     available: descriptor.available,
     experimental: descriptor.experimental,
     unavailable_reason: descriptor.unavailable_reason,
+    official_url: descriptor.official_url,
+    api_signup_url: descriptor.api_signup_url,
+    license_name: descriptor.license_name,
+    terms_url: descriptor.terms_url,
     supported_operations: descriptor.supported_operations,
     install_state: descriptor.install_state,
     installed_version: descriptor.installed_version,
@@ -304,6 +313,11 @@ export async function fetchProviderCapabilities(): Promise<ProviderDefinition[]>
 /** Fetch the trusted registry and backend-owned installation lifecycle facts. */
 export async function fetchProviderRegistry(): Promise<ProviderRegistryCatalog> {
   return request<ProviderRegistryCatalog>("/api/providers/registry");
+}
+
+/** Fetch and validate the official registry index. This is the only network-discovery action. */
+export async function refreshProviderRegistry(): Promise<ProviderRegistryRefreshResponse> {
+  return request<ProviderRegistryRefreshResponse>("/api/providers/registry/refresh", { method: "POST" });
 }
 
 export async function prepareProviderInstall(providerId: string): Promise<ProviderInstallPrepareResponse> {
