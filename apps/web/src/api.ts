@@ -256,10 +256,17 @@ export async function fetchProviderCapabilities(): Promise<ProviderDefinition[]>
     available: boolean;
     experimental: boolean;
     unavailable_reason?: string | null;
-    official_url?: string | null;
+    official_homepage_url?: string | null;
     api_signup_url?: string | null;
-    license_name?: string | null;
+    api_docs_url?: string | null;
+    repository_url?: string | null;
+    model_card_url?: string | null;
+    code_license_name?: string | null;
+    code_license_url?: string | null;
+    model_license_name?: string | null;
+    model_license_url?: string | null;
     terms_url?: string | null;
+    privacy_url?: string | null;
     configuration_schema: Array<{
       key: string;
       label: string;
@@ -293,10 +300,17 @@ export async function fetchProviderCapabilities(): Promise<ProviderDefinition[]>
     available: descriptor.available,
     experimental: descriptor.experimental,
     unavailable_reason: descriptor.unavailable_reason,
-    official_url: descriptor.official_url,
+    official_homepage_url: descriptor.official_homepage_url,
     api_signup_url: descriptor.api_signup_url,
-    license_name: descriptor.license_name,
+    api_docs_url: descriptor.api_docs_url,
+    repository_url: descriptor.repository_url,
+    model_card_url: descriptor.model_card_url,
+    code_license_name: descriptor.code_license_name,
+    code_license_url: descriptor.code_license_url,
+    model_license_name: descriptor.model_license_name,
+    model_license_url: descriptor.model_license_url,
     terms_url: descriptor.terms_url,
+    privacy_url: descriptor.privacy_url,
     supported_operations: descriptor.supported_operations,
     install_state: descriptor.install_state,
     installed_version: descriptor.installed_version,

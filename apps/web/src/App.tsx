@@ -107,7 +107,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -1634,6 +1634,15 @@ function CapabilityConfigPanel({
   const providerSelectRef = useRef<HTMLSelectElement>(null);
   const hadAvailableProviderRef = useRef(availableProviders.length > 0);
   const previousCapabilityRef = useRef(capability);
+  const officialHomepageUrl = safeExternalProviderUrl(selectedProvider?.official_homepage_url);
+  const apiSignupUrl = safeExternalProviderUrl(selectedProvider?.api_signup_url);
+  const apiDocsUrl = safeExternalProviderUrl(selectedProvider?.api_docs_url);
+  const repositoryUrl = safeExternalProviderUrl(selectedProvider?.repository_url);
+  const modelCardUrl = safeExternalProviderUrl(selectedProvider?.model_card_url);
+  const codeLicenseUrl = safeExternalProviderUrl(selectedProvider?.code_license_url);
+  const modelLicenseUrl = safeExternalProviderUrl(selectedProvider?.model_license_url);
+  const termsUrl = safeExternalProviderUrl(selectedProvider?.terms_url);
+  const privacyUrl = safeExternalProviderUrl(selectedProvider?.privacy_url);
 
   useEffect(() => {
     if (previousCapabilityRef.current === capability) return;
@@ -1755,7 +1764,10 @@ function CapabilityConfigPanel({
         </section>
       )}
 
-      {availableProviders.length > 0 && showRegistryEntry && registryProviders.some((status) => status.installation.install_state === "available") && (
+      {availableProviders.length > 0 && showRegistryEntry && registryProviders.some((status) => (
+        status.installation.install_state === "available"
+          && availableProviders.some((provider) => provider.id === status.entry.provider_id)
+      )) && (
         <div className="notice success" role="status">
           {t("provider.registry.onboarding.availableNotice")}
         </div>
@@ -1769,20 +1781,18 @@ function CapabilityConfigPanel({
 
       {selectedProvider && selectedProvider.category === mode && (
         <>
-          {(selectedProvider.official_url || selectedProvider.api_signup_url || selectedProvider.license_name || selectedProvider.terms_url) && (
+          {(officialHomepageUrl || apiSignupUrl || apiDocsUrl || repositoryUrl || modelCardUrl || codeLicenseUrl || modelLicenseUrl || termsUrl || privacyUrl) && (
             <div className="provider-official-links" aria-label={t("provider.sourceLinks")}>
-              {selectedProvider.official_url && (
-                <a href={selectedProvider.official_url} target="_blank" rel="noreferrer">
-                  {t(selectedProvider.category === "local" ? "provider.officialProject" : "provider.officialWebsite")}
-                </a>
-              )}
-              {selectedProvider.api_signup_url && (
-                <a href={selectedProvider.api_signup_url} target="_blank" rel="noreferrer">{t("provider.applyApi")}</a>
-              )}
-              {selectedProvider.terms_url && (
-                <a href={selectedProvider.terms_url} target="_blank" rel="noreferrer">{t("provider.terms")}</a>
-              )}
-              {selectedProvider.license_name && <span>{t("provider.licenseName", { license: selectedProvider.license_name })}</span>}
+              {officialHomepageUrl && <a href={officialHomepageUrl} target="_blank" rel="noopener noreferrer">{t("provider.officialWebsite")}</a>}
+              {repositoryUrl && <a href={repositoryUrl} target="_blank" rel="noopener noreferrer">{t("provider.officialProject")}</a>}
+              {apiSignupUrl && <a href={apiSignupUrl} target="_blank" rel="noopener noreferrer">{t("provider.applyApi")}</a>}
+              {apiDocsUrl && <a href={apiDocsUrl} target="_blank" rel="noopener noreferrer">{t("provider.apiDocs")}</a>}
+              {modelCardUrl && <a href={modelCardUrl} target="_blank" rel="noopener noreferrer">{t("provider.modelCard")}</a>}
+              {codeLicenseUrl && <a href={codeLicenseUrl} target="_blank" rel="noopener noreferrer">{t("provider.codeLicense", { license: selectedProvider.code_license_name ?? "—" })}</a>}
+              {!codeLicenseUrl && selectedProvider.code_license_name && <span>{t("provider.codeLicense", { license: selectedProvider.code_license_name })}</span>}
+              {modelLicenseUrl && <a href={modelLicenseUrl} target="_blank" rel="noopener noreferrer">{t("provider.modelLicense", { license: selectedProvider.model_license_name ?? "—" })}</a>}
+              {termsUrl && <a href={termsUrl} target="_blank" rel="noopener noreferrer">{t("provider.terms")}</a>}
+              {privacyUrl && <a href={privacyUrl} target="_blank" rel="noopener noreferrer">{t("provider.privacy")}</a>}
             </div>
           )}
           <div className="provider-fields">
@@ -1826,16 +1836,19 @@ function registryBlockerLabel(code: string, t: (key: string) => string): string 
   if (code === "python_unsupported") return t("provider.registry.blocker.python");
   if (code === "memory_insufficient") return t("provider.registry.blocker.memory");
   if (code === "gpu_unavailable") return t("provider.registry.blocker.gpu");
+  if (code === "provider_license_review_required" || code === "provider_license_gated") return t("provider.registry.blocker.license");
   if (code === "configuration_required" || code === "provider_configuration_missing") return t("provider.registry.blocker.configuration");
   return t("provider.registry.blocker.generic");
 }
 
 function RegistryInstallConfirmDialog({
   prepared,
+  sandbox,
   onCancel,
   onConfirm,
 }: {
   prepared: ProviderInstallPrepareResponse;
+  sandbox: boolean;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -1856,8 +1869,8 @@ function RegistryInstallConfirmDialog({
   return (
     <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="registryInstallTitle" aria-describedby="registryInstallDescription" aria-modal="true">
       <section className="confirm-modal">
-        <h2 id="registryInstallTitle">{t("provider.registry.confirmTitle")}</h2>
-        <p id="registryInstallDescription">{t("provider.registry.confirmBody")}</p>
+        <h2 id="registryInstallTitle">{t(sandbox ? "provider.registry.sandboxConfirmTitle" : "provider.registry.confirmTitle")}</h2>
+        <p id="registryInstallDescription">{t(sandbox ? "provider.registry.sandboxConfirmBody" : "provider.registry.confirmBody")}</p>
         <dl className="provider-registry-plan">
           <div><dt>{t("provider.registry.version")}</dt><dd>{prepared.plan.version}</dd></div>
           <div><dt>{t("provider.registry.source")}</dt><dd>{prepared.plan.source_ref}</dd></div>
@@ -1869,7 +1882,9 @@ function RegistryInstallConfirmDialog({
         <div className="action-row">
           <button type="button" className="secondary" onClick={onCancel} disabled={busy}>{t("provider.registry.cancel")}</button>
           <button type="button" className="primary" onClick={() => void confirm()} disabled={busy}>
-            {busy ? t("provider.registry.installing") : t("provider.registry.confirm")}
+            {busy
+              ? t(sandbox ? "provider.registry.sandboxRunning" : "provider.registry.installing")
+              : t(sandbox ? "provider.registry.sandboxConfirm" : "provider.registry.confirm")}
           </button>
         </div>
       </section>
@@ -1904,6 +1919,7 @@ function ProviderRegistryPanel({
     ? (registry?.providers ?? []).filter((status) => status.entry.capability === capability)
     : (registry?.providers ?? []);
   const titleId = capability ? `providerRegistryTitle-${capability}` : "providerRegistryTitle";
+  const registrySourceUrl = safeExternalProviderUrl(registry?.source.source_url);
 
   async function discover() {
     setDiscovering(true);
@@ -2010,11 +2026,11 @@ function ProviderRegistryPanel({
       </header>
       <div className="provider-registry-source-status">
         <span>
-          {registry?.source.kind === "remote" && registry.source.last_refreshed_at
-            ? t("provider.registry.lastRefreshed", { time: new Date(registry.source.last_refreshed_at).toLocaleString() })
+          {registry?.source.kind === "remote" && registry.source.fetched_at
+            ? t("provider.registry.lastRefreshed", { time: new Date(registry.source.fetched_at).toLocaleString() })
             : t("provider.registry.bundledSource")}
         </span>
-        {registry?.source.source_url && <a href={registry.source.source_url} target="_blank" rel="noreferrer">{t("provider.registry.catalogSource")}</a>}
+        {registrySourceUrl && <a href={registrySourceUrl} target="_blank" rel="noopener noreferrer">{t("provider.registry.catalogSource")}</a>}
       </div>
       <p className="provider-registry-rights">{t("provider.registry.rightsNotice")}</p>
       {error && <div className="notice error" role="alert">{error}</div>}
@@ -2029,6 +2045,10 @@ function ProviderRegistryPanel({
           const modelFiles = Array.isArray(entry.requirements.model_files) && entry.requirements.model_files.length
             ? entry.requirements.model_files.join(", ")
             : "—";
+          const sourceUrl = safeExternalProviderUrl(entry.source_url);
+          const licenseUrl = safeExternalProviderUrl(entry.license_url);
+          const modelLicenseUrl = safeExternalProviderUrl(entry.model_license_url);
+          const visibleBlockers = [...status.environment.blockers, ...status.policy_blockers, ...installation.blockers];
           return (
             <article className="provider-registry-card" key={entry.provider_id}>
               <div className="provider-registry-card-heading">
@@ -2037,23 +2057,26 @@ function ProviderRegistryPanel({
                   <p>{entry.description}</p>
                 </div>
                 <span className={`provider-registry-state ${installation.install_state}`}>
-                  {t(`provider.registry.state.${installation.install_state}`)}
+                  {entry.mock_only && installation.install_state === "available"
+                    ? t("provider.registry.state.sandboxVerified")
+                    : t(`provider.registry.state.${installation.install_state}`)}
                 </span>
               </div>
               <dl className="provider-registry-meta">
-                <div><dt>{t("provider.registry.source")}</dt><dd><a href={entry.source_url} target="_blank" rel="noreferrer">{entry.repository}</a></dd></div>
+                <div><dt>{t("provider.registry.source")}</dt><dd>{sourceUrl ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer">{entry.repository}</a> : entry.repository}</dd></div>
                 <div><dt>{t("provider.registry.publisher")}</dt><dd>{entry.publisher}</dd></div>
-                <div><dt>{t("provider.registry.license")}</dt><dd>{entry.license}</dd></div>
+                <div><dt>{t("provider.registry.license")}</dt><dd>{licenseUrl ? <a href={licenseUrl} target="_blank" rel="noopener noreferrer">{entry.license}</a> : entry.license} · {t(`provider.registry.licenseStatus.${entry.license_status}`)}</dd></div>
+                {entry.model_license && <div><dt>{t("provider.modelLicenseLabel")}</dt><dd>{modelLicenseUrl ? <a href={modelLicenseUrl} target="_blank" rel="noopener noreferrer">{entry.model_license}</a> : entry.model_license}</dd></div>}
                 <div><dt>{t("provider.registry.available")}</dt><dd>{installation.available_version ?? entry.version}</dd></div>
-                <div><dt>{t("provider.registry.installed")}</dt><dd>{installation.installed_version ?? "—"}</dd></div>
+                <div><dt>{t(entry.mock_only ? "provider.registry.sandboxVersion" : "provider.registry.installed")}</dt><dd>{installation.installed_version ?? "—"}</dd></div>
               </dl>
               <p className="provider-registry-requirements">
                 <strong>{t("provider.registry.requirements")}:</strong> {String(entry.requirements.runtime ?? "isolated environment")} · {t("provider.registry.platform")}: {platforms} · {t("provider.registry.memory")}: {String(entry.requirements.min_memory_mb ?? 0)} MB · {t("provider.registry.disk")}: {String(entry.requirements.min_disk_mb ?? 0)} MB · {t("provider.registry.modelFiles")}: {modelFiles}{Boolean(entry.requirements.api_key_required) && <> · {t("provider.registry.credential")}</>}
               </p>
-              {entry.mock_only && <p className="provider-registry-mock-note">{t("provider.registry.mockOnly")}</p>}
-              {(status.environment.blockers.length > 0 || installation.blockers.length > 0) && (
+              {entry.mock_only && <p className="provider-registry-mock-note"><strong>{t("provider.registry.sandboxBadge")}</strong> · {t("provider.registry.mockOnly")}</p>}
+              {visibleBlockers.length > 0 && (
                 <ul className="provider-registry-blockers">
-                  {[...status.environment.blockers, ...installation.blockers].map((blocker, index) => (
+                  {visibleBlockers.map((blocker, index) => (
                     <li key={`${blocker.code}-${index}`}>{registryBlockerLabel(blocker.code, t)}{blocker.requirement ? ` (${blocker.requirement})` : ""}</li>
                   ))}
                 </ul>
@@ -2075,7 +2098,7 @@ function ProviderRegistryPanel({
                 </div>
               )}
               <div className="action-row provider-registry-actions">
-                {status.install_actions.includes("prepare_install") && <button type="button" className="primary" disabled={providerBusy} onClick={(event) => void prepare(status, false, event.currentTarget)}>{t("provider.registry.prepare")}</button>}
+                {status.install_actions.includes("prepare_install") && <button type="button" className="primary" disabled={providerBusy} onClick={(event) => void prepare(status, false, event.currentTarget)}>{t(entry.mock_only ? "provider.registry.sandboxPrepare" : "provider.registry.prepare")}</button>}
                 {status.install_actions.includes("retry_install") && <button type="button" className="secondary" disabled={providerBusy} onClick={(event) => void prepare(status, true, event.currentTarget)}>{t("provider.registry.retry")}</button>}
                 {status.install_actions.includes("configure") && <button type="button" className="primary" disabled={providerBusy} onClick={() => void configure(status)}>{t("provider.registry.configure")}</button>}
                 {status.install_actions.includes("rollback") && <button type="button" className="secondary" disabled={providerBusy} onClick={() => void rollback(status)}>{t("provider.registry.rollback")}</button>}
@@ -2093,7 +2116,7 @@ function ProviderRegistryPanel({
         })}
       </div>
       {statuses.length === 0 && <p className="muted-text">{t("provider.registry.onboarding.noProviders")}</p>}
-      {prepared && <RegistryInstallConfirmDialog prepared={prepared} onCancel={closePrepared} onConfirm={confirm} />}
+      {prepared && <RegistryInstallConfirmDialog prepared={prepared} sandbox={Boolean(statuses.find((status) => status.entry.provider_id === prepared.plan.provider_id)?.entry.mock_only)} onCancel={closePrepared} onConfirm={confirm} />}
     </section>
   );
 }
@@ -3113,6 +3136,8 @@ function arrayLength(value: unknown): number {
 const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
   [/official Provider Registry could not be reached/i, "provider.registry.refreshFetchError"],
   [/Provider Registry response (?:failed schema validation|was not valid JSON|had an invalid shape|exceeded the size limit)/i, "provider.registry.refreshInvalidError"],
+  [/Provider Registry (?:refresh was older|reused an active catalog version|cache could not be committed)/i, "provider.registry.refreshInvalidError"],
+  [/Provider Registry refresh is already in progress/i, "provider.registry.refreshInProgress"],
   [/Provider Registry refresh source is not an approved/i, "provider.registry.refreshSourceError"],
   [/blueprint artifact is missing/i, "status.blocker.blueprintMissing"],
   [/generate a lesson blueprint first|blueprint.*missing/i, "status.blocker.blueprintMissing"],

@@ -24,6 +24,20 @@ export interface ProviderStatus {
   available: boolean;
 }
 
+/** Defense in depth for backend-supplied Provider links. The backend owns the
+ * host allowlist; the WebUI still refuses active, local, credentialed, or
+ * non-HTTPS URLs before creating an anchor. */
+export function safeExternalProviderUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 export function getCapabilityProviders(
   capability: ProviderCapability,
   mode: "local" | "cloud",

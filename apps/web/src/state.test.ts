@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
 import type { ProjectState, ProviderRegistryCatalog } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -111,7 +111,14 @@ deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "sa
 deepEqual(providerStatus({ providerId: "openai_compatible", values: {} }, "llm", providerCatalog.map((item) => ({ ...item, configured: true, available: false }))), { configured: true, available: false });
 
 const registry: ProviderRegistryCatalog = {
-  source: { kind: "bundled", source_url: null, last_refreshed_at: null },
+  source: {
+    kind: "bundled",
+    source_url: null,
+    fetched_at: null,
+    catalog_version: 1,
+    source_revision: "registry-v1.0.0",
+    content_digest: "2".repeat(64),
+  },
   providers: [
     {
       entry: {
@@ -123,6 +130,8 @@ const registry: ProviderRegistryCatalog = {
         repository: "xueyang-dev/HanClassStudio",
         publisher: "HanClassStudio",
         license: "MIT",
+        license_status: "approved",
+        license_url: "https://github.com/xueyang-dev/HanClassStudio/blob/main/LICENSE",
         trust_level: "first_party",
         version: "0.1.0",
         source_ref: "v0.1.0",
@@ -154,6 +163,7 @@ const registry: ProviderRegistryCatalog = {
         updated_at: "",
       },
       environment: { platform: "macos", architecture: "arm64", python_version: "3.11", free_disk_mb: 1000, gpu_available: false, blockers: [], checked_at: "" },
+      policy_blockers: [],
       install_actions: ["prepare_install"],
     },
   ],
@@ -179,6 +189,11 @@ const codexBridgeCatalog = [{
 }];
 equal(getConfigurableCapabilityProviders("llm", "local", codexBridgeCatalog).map((item) => item.id).join(","), "codex_chatgpt");
 equal(getAvailableCapabilityProviders("llm", "local", codexBridgeCatalog).length, 0);
+equal(safeExternalProviderUrl("https://github.com/xueyang-dev/HanClassStudio"), "https://github.com/xueyang-dev/HanClassStudio");
+equal(safeExternalProviderUrl("javascript:alert(1)"), null);
+equal(safeExternalProviderUrl("data:text/html,unsafe"), null);
+equal(safeExternalProviderUrl("file:///tmp/secret"), null);
+equal(safeExternalProviderUrl("https://user:secret@example.com/path"), null);
 
 const notRunExport = exportActionsFromProject({
   ...project,

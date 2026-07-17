@@ -7,8 +7,10 @@ provider-supplied shell commands.
 
 ## Registry contract
 
-Each entry has a stable `provider_id`, capability, publisher, license, trust
-level, fixed version/ref, artifact SHA-256, manifest version/digest, structured
+The catalog carries a monotonic `catalog_version`, timezone-aware
+`generated_at`, fixed `source_revision`, and whole-catalog `content_digest`.
+Each entry has a stable `provider_id`, capability, publisher, distinct code and
+model-license metadata, trust level, fixed version/ref, artifact SHA-256, manifest version/digest, structured
 configuration schema, and environment requirements. Floating refs (`main`,
 `latest`, and similar values), untrusted hosts, repository/source mismatches,
 missing checksums, unknown manifest schemas, and invalid manifest digests are
@@ -25,12 +27,19 @@ Registry discovery is deliberately user-triggered. Normal application startup,
 the bundled index or the last validated local cache; none of them contact an
 external catalog. Clicking **Check catalog updates** calls
 `POST /api/providers/registry/refresh`, which downloads the first-party
-`providers/registry.v1.json` index over HTTPS, enforces a one-megabyte limit,
-validates the complete schema and trust rules, and atomically replaces the cache.
+`providers/registry.v1.json` index from a backend-controlled, commit-pinned URL
+over HTTPS. It rejects redirects and non-public DNS results, applies connection,
+read, and total timeouts, and enforces the one-megabyte limit while bytes are
+read rather than trusting `Content-Length`. Only a complete catalog with valid
+schema, bounds, unique IDs, source/ref consistency, license policy, manifests,
+and whole-catalog digest can replace the cache.
 If the request or validation fails, the last valid catalog remains active. The
 feed is a curated HanClassStudio trust boundary, not a GitHub/Hugging Face
 popularity search, and it cannot authorize a repository outside the explicit
-trust store.
+trust store. A process-local single-flight lock rejects overlapping refreshes;
+an older catalog version, or different content reusing the active version, is
+rejected. The cache is written to a same-directory temporary file, flushed and
+`fsync`ed, atomically replaced, and followed by a directory `fsync`.
 
 The `GET /api/providers/registry` response separates registry availability from
 installation facts:
@@ -46,20 +55,24 @@ installation facts:
 The same facts are projected into `GET /api/settings/providers/capabilities`.
 Registry-backed descriptors keep `install_state`, `configuration_status`,
 `install_actions`, blockers, and failure details aligned with the registry; a
-provider is `available` only after the backend lifecycle reaches `available`.
+production provider is `available` only when a real executor and the backend
+capability contract say so. A mock lifecycle may reach its internal
+`install_state=available`, but its capability descriptor remains
+`implemented=false`, `configurable=false`, and `available=false`.
 The WebUI uses this contract for both model settings and first-use onboarding.
-Capability descriptors also provide backend-owned `official_url`,
-`api_signup_url`, `license_name`, and `terms_url` metadata. Cloud providers link
-to their official API application pages; local providers and Registry entries
-link to the validated official project source. The client never builds these
-URLs from provider names.
+Capability descriptors distinguish official homepages, API application pages,
+API documentation, repositories, model cards, code licenses, model-weight
+licenses, service terms, and privacy policies. Cloud providers link to their
+official API pages; local providers and Registry entries link to validated
+official project sources. The client never builds these URLs from provider
+names and refuses non-HTTPS or credential-bearing links.
 
 When the selected local capability has no available provider, onboarding shows
 only the matching registry entries. Preparing and confirming an installation
 or completing configuration refreshes both endpoints in place, so the user
 returns to the same capability selector without a browser refresh. Installed
-but unconfigured entries remain out of the usable provider options until the
-backend reports them as available.
+but unconfigured entries remain out of usable provider options. The current
+mock fixtures never enter those options because no production executor exists.
 
 ## Lifecycle
 
@@ -108,6 +121,13 @@ API exposes only presence flags. Logs, audit messages, and structured error
 messages redact API keys, bearer/authorization values, token/password/secret
 fields, and URL query credentials, including JSON-shaped messages.
 
+`license_status` is an action gate, not merely display text. Unknown, custom,
+review-required, or gated licenses expose no install action. An approved entry
+must include a recognized code license and a validated license URL; entries
+with model files must separately identify an approved model-weight license.
+The license display does not grant installation authority or replace the user's
+obligation to comply with applicable terms.
+
 Provider names, code, models, and trademarks remain the property of their
 respective owners. HanClassStudio presents verified source links and controlled
 installation plans; it does not grant rights to third-party software. Users and
@@ -122,7 +142,14 @@ API and Playwright tests. The explicit refresh mechanism can update this curated
 catalog, but the current entries remain mock-only. Real provider downloads, dependency
 installation, GPU validation, and model acquisition require a future executor
 implementation and a separate security review. Until then the UI labels these
-entries as sandbox-only and the backend never reports an external provider as
-installed or available. Environment checks can report platform, architecture,
+entries as sandbox lifecycle exercises, the plan and logs state that no
+checkout, download, dependency installation, model acquisition, or production
+activation occurs, and the capability contract never reports them as
+executable. Environment checks can report platform, architecture,
 Python, disk, memory, and GPU blockers, but no real executor consumes those
 requirements yet.
+
+The catalog digest and pinned first-party transport protect against malformed,
+stale, and equivocated catalog responses. This version does not implement a
+detached signature or transparency log and therefore does not claim to defend
+against a complete compromise of the official source and repository account.

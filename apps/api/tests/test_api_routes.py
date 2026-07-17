@@ -164,14 +164,14 @@ def test_provider_capability_contract_marks_unimplemented_provider_unavailable(t
     assert deterministic["implemented"] is True
     assert deterministic["configured"] is True
     assert deterministic["available"] is True
-    assert deterministic["official_url"] == "https://github.com/xueyang-dev/HanClassStudio"
-    assert deterministic["license_name"] == "MIT"
+    assert deterministic["repository_url"] == "https://github.com/xueyang-dev/HanClassStudio"
+    assert deterministic["code_license_name"] == "MIT"
     openai = next(item for item in descriptors if item["provider_id"] == "openai_compatible")
-    assert openai["api_signup_url"] == "https://platform.openai.com/"
-    assert openai["official_url"].startswith("https://platform.openai.com/")
+    assert openai["api_signup_url"] == "https://platform.openai.com/api-keys"
+    assert openai["api_docs_url"].startswith("https://platform.openai.com/")
     paddle = next(item for item in descriptors if item["provider_id"] == "paddle_ocr")
-    assert paddle["official_url"] == "https://github.com/PaddlePaddle/PaddleOCR"
-    assert paddle["license_name"] == "Apache-2.0"
+    assert paddle["repository_url"] == "https://github.com/PaddlePaddle/PaddleOCR"
+    assert paddle["code_license_name"] == "Apache-2.0"
     runway = next(item for item in descriptors if item["provider_id"] == "runway")
     assert runway["implemented"] is False
     assert runway["configurable"] is False

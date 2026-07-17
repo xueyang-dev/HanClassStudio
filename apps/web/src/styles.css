@@ -2116,11 +2116,13 @@ dialog.confirm-dialog {
 .provider-registry-list {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .provider-registry-card {
   display: grid;
   gap: 12px;
+  min-width: 0;
   padding: 15px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -2796,6 +2798,22 @@ dialog.confirm-dialog {
   .provider-registry-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .provider-registry-card-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .provider-registry-state {
+    align-self: flex-start;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .provider-registry-actions button {
+    max-width: 100%;
+    white-space: normal;
   }
 
   .provider-registry-header-actions {
