@@ -79,3 +79,25 @@ The browser channel itself remains unavailable in this host environment, and
 the acceptance used an isolated temporary runtime rather than production data.
 No visual, keyboard, or state-management claim was made from static tests
 alone.
+
+## Visual theme v1
+
+**Status: Implemented — Draft PR #23**
+
+The focused visual-theme work is on `codex/visual-theme-v1` through feature
+commit `0e8766d8cef9ce083b0ee0860c5a1def4dd6a050`, stacked on
+`codex/zero-beginner-courseware-quality` so it remains separately reviewable.
+It adds a backend-owned five-theme registry, deterministic auto recommendation,
+project-persistent selection, presentation/image propagation, explicit media
+mismatch handling, and an accessible responsive selection dialog.
+
+- Validation: focused theme tests `37 passed`; full API suite `488 passed, 1
+  skipped`; frontend state contracts, TypeScript, production build, and 8
+  Playwright E2E tests passed.
+- Browser recheck: 1280×800 and 390×844 verified recommendation, manual
+  selection, persistence after reload, mismatch confirmation cancellation,
+  focus restoration, and no horizontal overflow. No console warnings or errors
+  were observed.
+- Limitation: v1 only propagates a video style request plan. It does not claim
+  to install or execute a real video provider, and it intentionally excludes a
+  theme editor, template marketplace, and arbitrary visual controls.
