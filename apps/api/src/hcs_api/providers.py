@@ -81,7 +81,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
         {
             "capability": "image", "provider_id": "placeholder", "display_name": "Deterministic SVG",
             "category": "local", "description": "Offline-safe deterministic illustration fallback",
-            "fields": [], "operations": ["placeholder"],
+            "fields": [], "operations": ["placeholder", "visual_theme"],
         },
         {
             "capability": "image", "provider_id": "openai_images", "display_name": "OpenAI Images",
@@ -89,7 +89,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "API key", "password", required=True),
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
-            "operations": ["image"],
+            "operations": ["image", "visual_theme"],
         },
         {
             "capability": "image", "provider_id": "experimental_openai_images", "display_name": "OpenAI Images (experimental)",
@@ -97,14 +97,14 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "API key", "password", required=True),
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
-            "operations": ["image"], "experimental": True,
+            "operations": ["image", "visual_theme"], "experimental": True,
         },
         {
             "capability": "image", "provider_id": "codex_image", "display_name": "Codex Image Bridge",
             "category": "local", "description": "Audited asynchronous image handoff to a live Codex agent session",
             "fields": [_field("api_key", "Bridge token", "password", required=True),
                        _field("model", "Model label", placeholder="codex-image")],
-            "operations": ["image"],
+            "operations": ["image", "visual_theme"],
         },
         {
             "capability": "tts", "provider_id": "placeholder", "display_name": "Deterministic tone",

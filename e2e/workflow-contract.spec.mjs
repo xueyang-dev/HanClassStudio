@@ -71,6 +71,67 @@ test("responsive workflow and settings dialog remain keyboard-safe", async ({ pa
   await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("");
 });
 
+test("visual theme selection is explicit, persistent, accessible, and responsive", async ({ page }) => {
+  let themePuts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().includes("/visual-theme")) themePuts += 1;
+  });
+  await page.goto("/");
+  const onboarding = page.locator("dialog.onboarding-dialog[open]");
+  if (await onboarding.count()) await onboarding.getByRole("button", { name: "跳过", exact: true }).click();
+  await page.locator('input[type="file"]').first().setInputFiles(fixture);
+  await expect(page).toHaveURL(/project_id=[^&]+&stage=profile/, { timeout: 30_000 });
+  const projectId = new URL(page.url()).searchParams.get("project_id");
+  await page.goto(`/?project_id=${projectId}&stage=presentation`);
+
+  const card = page.locator(".visual-theme-section");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("视觉主题");
+  await expect(card).toContainText("PPT、图片与视频请求将共享同一主题方向");
+  await expect.poll(() => themePuts).toBe(0);
+
+  const change = card.getByRole("button", { name: "更换", exact: true });
+  await change.click();
+  let dialog = page.locator("dialog.visual-theme-dialog[open]");
+  await expect(dialog).toHaveAttribute("aria-describedby", "visualThemeDialogDescription");
+  await expect(dialog.getByRole("radio")).toHaveCount(6);
+  await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Tab");
+  await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(change).toBeFocused();
+  await expect.poll(() => page.evaluate(() => document.body.style.overflow)).toBe("");
+
+  await change.click();
+  dialog = page.locator("dialog.visual-theme-dialog[open]");
+  await dialog.getByRole("radio", { name: /温暖叙事/ }).check();
+  await dialog.locator(".visual-theme-dialog-actions").getByRole("button", { name: "取消", exact: true }).click();
+  await expect.poll(() => themePuts).toBe(0);
+
+  await change.click();
+  dialog = page.locator("dialog.visual-theme-dialog[open]");
+  await dialog.getByRole("radio", { name: /温暖叙事/ }).check();
+  const save = page.waitForResponse((response) =>
+    response.request().method() === "PUT"
+    && response.url().includes("/visual-theme")
+    && response.ok()
+  );
+  await dialog.getByRole("button", { name: "完成", exact: true }).click();
+  await save;
+  await expect(dialog).toBeHidden();
+  await expect(card).toContainText("温暖叙事");
+  await expect.poll(() => themePuts).toBe(1);
+
+  await page.reload();
+  await expect(page.locator(".visual-theme-section")).toContainText("温暖叙事");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.locator(".visual-theme-section").getByRole("button", { name: "更换", exact: true }).click();
+  await expect(page.locator("dialog.visual-theme-dialog[open] .visual-theme-option")).toHaveCount(6);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
 test("provider save reports a failed edit and retries the next edit", async ({ page }) => {
   let providerPuts = 0;
   let aborted = false;

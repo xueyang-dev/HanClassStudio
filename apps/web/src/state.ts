@@ -91,6 +91,7 @@ const EDITABLE_ACTIONS = new Set([
   "review_media",
   "replace_media",
   "force_regenerate_media",
+  "regenerate_media_for_theme",
 ]);
 
 /**
@@ -126,6 +127,14 @@ export function getStageAccess(project: ProjectState | null, stageId: WorkflowSt
 export function canUseStageAction(project: ProjectState | null, stageId: WorkflowStageId, action: string): boolean {
   const access = getStageAccess(project, stageId);
   return access.executable && access.availableActions.includes(action);
+}
+
+export function canUnifyVisualThemeMedia(project: ProjectState | null): boolean {
+  return Boolean(
+    project?.visual_theme?.mismatched_media_count
+    && project.visual_theme.regeneration_available
+    && canUseStageAction(project, "presentation", "regenerate_media_for_theme"),
+  );
 }
 
 /** Only ask for the teacher summary after the design stage has produced

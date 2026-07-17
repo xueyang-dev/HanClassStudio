@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
+import { canUnifyVisualThemeMedia, canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
 import type { ProjectState, ProviderRegistryCatalog } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -218,5 +218,31 @@ equal(shouldPersistProviderConfig({
 equal(isCurrentRequest(2, 2), true);
 equal(isCurrentRequest(1, 2), false);
 equal(isCurrentRequest(2, 2, true), false);
+
+const mixedThemeProject: ProjectState = {
+  ...project,
+  visual_theme: {
+    selection: { mode: "manual", selected_theme_id: "warm-story", theme_version: "1" },
+    effective_theme_id: "warm-story",
+    effective_theme_version: "1",
+    media_state: "mixed",
+    mismatched_media_count: 2,
+    mismatched_media_ids: ["hero", "scene"],
+    provider_support: [],
+    regeneration_available: true,
+  },
+  stages: project.stages!.map((stage) => stage.stage_id === "presentation"
+    ? { ...stage, available_actions: ["edit_blueprint", "regenerate_media_for_theme"] }
+    : stage),
+};
+equal(canUnifyVisualThemeMedia(mixedThemeProject), true);
+equal(canUnifyVisualThemeMedia({
+  ...mixedThemeProject,
+  stages: mixedThemeProject.stages!.map((stage) => stage.stage_id === "presentation" ? { ...stage, available_actions: ["edit_blueprint"] } : stage),
+}), false);
+equal(canUnifyVisualThemeMedia({
+  ...mixedThemeProject,
+  visual_theme: { ...mixedThemeProject.visual_theme!, regeneration_available: false },
+}), false);
 
 console.log("frontend state contract tests passed");

@@ -27,7 +27,7 @@ from hcs_api.models import (
 )
 from hcs_api.raster_provider import EXPERIMENTAL_PROVIDER, RasterProviderError, generate_experimental_raster_image
 from hcs_api.raster_provider_benchmark import BENCHMARK_CONCEPTS, create_raster_provider_ab_gallery
-from hcs_api.presentation_theme import DEFAULT_THEME_ID
+from hcs_api.presentation_theme import DEFAULT_THEME_ID, theme_by_id
 
 
 PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00"
@@ -121,7 +121,7 @@ def test_timeout_http_and_invalid_mime_each_keep_svg_fallback(tmp_path: Path, mo
     ]
     for number, failure in enumerate(cases):
         root = tmp_path / str(number)
-        expected = generate_placeholder_media(root, _blueprint()).images[0]
+        expected = generate_placeholder_media(root, _blueprint(), theme=theme_by_id(DEFAULT_THEME_ID)).images[0]
         expected_bytes = (root / expected.path).read_bytes()
         if failure is None:
             _mock_generation(monkeypatch, {"url": "https://temporary.test/image.png"}, download=PNG, mime_type="text/html")
