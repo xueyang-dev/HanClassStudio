@@ -316,9 +316,12 @@ def test_registry_refresh_source_is_restricted_to_official_https_feed() -> None:
     assert registry._validate_registry_feed_url(registry._DEFAULT_REGISTRY_URL) == registry._DEFAULT_REGISTRY_URL
     for source in (
         "http://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
         "https://evil.example/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
         "https://raw.githubusercontent.com/evil/HanClassStudio/main/providers/registry.v1.json",
         "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json?redirect=1",
+        "https://user:secret@raw.githubusercontent.com/xueyang-dev/HanClassStudio/e289417dbc640b0734d997352a60ee89b6a50e24/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/e289417dbc640b0734d997352a60ee89b6a50e24/extra/providers/registry.v1.json",
     ):
         with pytest.raises(registry.ProviderRegistryError) as error:
             registry._validate_registry_feed_url(source)

@@ -27,7 +27,8 @@ Registry discovery is deliberately user-triggered. Normal application startup,
 the bundled index or the last validated local cache; none of them contact an
 external catalog. Clicking **Check catalog updates** calls
 `POST /api/providers/registry/refresh`, which downloads the first-party
-`providers/registry.v1.json` index from a backend-controlled, commit-pinned URL
+`providers/registry.v1.json` index from a backend-controlled, 40-character
+commit-pinned URL
 over HTTPS. It rejects redirects and non-public DNS results, applies connection,
 read, and total timeouts, and enforces the one-megabyte limit while bytes are
 read rather than trusting `Content-Length`. Only a complete catalog with valid

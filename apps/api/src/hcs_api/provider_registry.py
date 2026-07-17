@@ -64,7 +64,7 @@ _TRUSTED_SOURCE_REPOSITORIES: dict[str, set[str]] = {
 
 _DEFAULT_REGISTRY_URL = (
     "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/"
-    "main/providers/registry.v1.json"
+    "e289417dbc640b0734d997352a60ee89b6a50e24/providers/registry.v1.json"
 )
 _REGISTRY_SCHEMA = "hanclassstudio.provider_registry.v1"
 _REGISTRY_CACHE_FILE = "provider_registry_cache.json"
@@ -762,8 +762,9 @@ def _validate_registry_feed_url(value: str) -> str:
         or parsed.port
         or parsed.query
         or parsed.fragment
-        or len(parts) < 4
+        or len(parts) != 5
         or parts[:2] != ["xueyang-dev", "HanClassStudio"]
+        or not re.fullmatch(r"[0-9a-f]{40}", parts[2])
         or parts[-2:] != ["providers", "registry.v1.json"]
     ):
         raise ProviderRegistryError(
