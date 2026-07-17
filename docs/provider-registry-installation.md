@@ -29,18 +29,66 @@ external catalog. Clicking **Check catalog updates** calls
 `POST /api/providers/registry/refresh`, which downloads the first-party
 `providers/registry.v1.json` index from a backend-controlled, 40-character
 commit-pinned URL
-over HTTPS. It rejects redirects and non-public DNS results, applies connection,
-read, and total timeouts, and enforces the one-megabyte limit while bytes are
-read rather than trusting `Content-Length`. Only a complete catalog with valid
-schema, bounds, unique IDs, source/ref consistency, license policy, manifests,
-and whole-catalog digest can replace the cache.
-If the request or validation fails, the last valid catalog remains active. The
-feed is a curated HanClassStudio trust boundary, not a GitHub/Hugging Face
-popularity search, and it cannot authorize a repository outside the explicit
-trust store. A process-local single-flight lock rejects overlapping refreshes;
-an older catalog version, or different content reusing the active version, is
-rejected. The cache is written to a same-directory temporary file, flushed and
-`fsync`ed, atomically replaced, and followed by a directory `fsync`.
+over HTTPS. It rejects redirects, requires the initial DNS resolution to remain
+on public addresses, applies connection, read, and total timeouts, and enforces
+the one-megabyte limit while bytes are read rather than trusting
+`Content-Length`. Only a complete catalog with valid schema, bounds, unique IDs,
+source/ref consistency, license policy, manifests, and whole-catalog digest can
+replace the cache. If the request or validation fails, the last valid catalog
+remains active. The feed is a curated HanClassStudio trust boundary, not a
+GitHub/Hugging Face popularity search, and it cannot authorize a repository
+outside the explicit trust store. A process-local single-flight lock rejects
+overlapping refreshes; an older catalog version, or different content reusing
+the active version, is rejected.
+
+### Cache commit-point contract
+
+The cache is written with a single explicit commit point so that the API
+result, the active on-disk cache, and the persistence contract never
+contradict each other:
+
+1. **Pre-commit.** A same-directory temporary file is created, written,
+   flushed, and `fsync`ed. If temp creation, the write, the flush, or the
+   file `fsync` fails, the target file is never touched, the temporary file
+   is cleaned up, and the refresh returns a structured
+   `provider_registry_cache_write_failed` error. The previous cache remains
+   the active cache.
+2. **Commit.** `os.replace()` is the single explicit commit point. Once it
+   returns, the new cache is the active cache on disk. If `os.replace()`
+   itself fails, the previous cache is still untouched and the same
+   structured write failure is returned.
+3. **Post-commit durability.** On platforms that support it, the parent
+   directory is `fsync`ed after the commit to improve crash-durability.
+   Because the commit has already happened, a directory `fsync` failure is
+   never reported as a write failure: doing so would tell callers the old
+   cache is still in use while subsequent reads already observe the new one.
+   A platform or filesystem that explicitly does not support directory
+   `fsync` (for example `EINVAL`, `ENOSYS`, `ENOTSUP`, or `EPERM`) is
+   treated as a best-effort durability warning and the refresh succeeds.
+   Any other `OSError` from the directory `fsync` is also treated as a
+   durability warning rather than a write failure, because the new cache is
+   already active; the warning is recorded with its stable `errno` for
+   observability and never silently ignored. The raw exception message is
+   never persisted, so a filesystem error containing sensitive material
+   cannot leak through the warning log.
+
+This means a refresh either returns a structured failure with the previous
+cache still active (pre-commit or commit failure), or returns success with
+the new cache active (post-commit, regardless of directory `fsync` outcome).
+The API never returns "refresh failed" while the new cache is already the
+active cache on disk.
+
+### DNS resolution boundary
+
+The refresh transport checks the initial DNS resolution of the official host
+and rejects non-public addresses, but it does **not** pin the HTTPS connection
+to the verified IP. `HTTPSConnection(hostname)` re-resolves the hostname when
+establishing the connection, so a DNS answer that changes between the
+check and the connection (a TOCTOU gap) is not fully mitigated. TLS SNI and
+hostname verification are still performed by the default SSL context. Pinning
+the connection to the already-verified resolved IP, while preserving TLS SNI
+and hostname verification, is recorded as a follow-up P2 hardening item and is
+not claimed by this PR.
 
 The `GET /api/providers/registry` response separates registry availability from
 installation facts:
@@ -154,3 +202,19 @@ The catalog digest and pinned first-party transport protect against malformed,
 stale, and equivocated catalog responses. This version does not implement a
 detached signature or transparency log and therefore does not claim to defend
 against a complete compromise of the official source and repository account.
+
+Current security boundaries:
+
+- No detached signature or transparency log; compromise of the allowlisted
+  official repository/account is not fully mitigated.
+- Refresh and install locks are process-local and assume one API worker.
+- The refresh transport checks the initial DNS resolution of the official host
+  and rejects non-public addresses, but does not pin the HTTPS connection to
+  the verified IP. `HTTPSConnection(hostname)` re-resolves the hostname, so a
+  DNS answer that changes between the check and the connection (a TOCTOU gap)
+  is not fully mitigated. TLS SNI and hostname verification are still enforced
+  by the default SSL context. Pinning the connection to the already-verified
+  resolved IP, while preserving TLS SNI and hostname verification, is a
+  follow-up P2 hardening item.
+- There is no real third-party executor, repository discovery, arbitrary shell
+  execution, or automatic external tool installation in this version.

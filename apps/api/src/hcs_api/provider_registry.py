@@ -8,6 +8,7 @@ executor behind the same structured interface after a separate security review.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import http.client
 import ipaddress
@@ -359,6 +360,25 @@ class ProviderAuditEvent(BaseModel):
     reason: str | None = None
 
 
+class DurabilityWarning(BaseModel):
+    """Post-commit durability warning emitted after a committed cache replace.
+
+    These records are observability for crash-durability only. The committed
+    cache is already active on disk when a warning is recorded, so a warning
+    never implies that a refresh failed or that the previous cache is still
+    in use. Only the stable ``errno`` is persisted; the underlying exception
+    message is deliberately never stored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: str
+    file: str
+    stage: Literal["post_commit_directory_fsync"]
+    category: Literal["unsupported", "io_error"]
+    errno: int | None = None
+
+
 class RegistryProviderStatus(BaseModel):
     entry: ProviderRegistryEntry
     installation: ProviderInstallationRecord
@@ -701,34 +721,152 @@ def _read_mapping(name: str) -> dict[str, Any]:
 
 
 def _write_mapping(name: str, value: dict[str, Any]) -> None:
+    """Atomically commit ``value`` to the mapping file ``name``.
+
+    The write is split into three phases with a single commit point:
+
+    1. **pre-commit** -- stage a same-directory temp file, write, flush, and
+       ``fsync`` its contents. Any failure here leaves the previous file
+       untouched; the temp file is cleaned up and a structured write failure
+       is raised.
+    2. **commit** -- ``os.replace()`` is the single explicit commit point.
+       Once it returns, the new file is the active cache on disk. A failure
+       here is still a pre-commit-class failure (the target was not swapped)
+       and raises the same structured write failure.
+    3. **post-commit durability** -- best-effort ``fsync`` of the parent
+       directory on platforms that support it. Because the commit has
+       already happened, a failure here cannot be reported as a write
+       failure: doing so would tell callers the old cache is still in use
+       while subsequent reads already observe the new one. Platform or
+       filesystem "not supported" errors are a best-effort durability
+       warning; other ``OSError`` values are recorded as durability
+       warnings as well. Neither is silently ignored.
+    """
     path = _state_path(name)
     payload = json.dumps(value, ensure_ascii=False, indent=2)
     temporary_name: str | None = None
+    committed = False
     try:
+        # --- pre-commit: stage a durably-written temp file ---
+        # Any failure here leaves the previous file untouched; the temp file
+        # is cleaned up by the finally block below. os.replace() has not run,
+        # so the target path is still the previous cache.
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        # --- commit: os.replace() is the single explicit commit point ---
+        # Once it returns, the new file is the active cache on disk.
         os.replace(temporary_name, path)
-        temporary_name = None
-        if os.name != "nt":
-            directory_fd = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+        temporary_name = None  # committed; the temp file no longer exists
+        committed = True
     except OSError as exc:
-        code = "provider_registry_cache_write_failed" if name == _REGISTRY_CACHE_FILE else "provider_persistence_write_failed"
-        message = "Provider Registry cache could not be committed safely" if name == _REGISTRY_CACHE_FILE else "Provider persistence could not be committed safely"
+        # Pre-commit or commit failure. The previous file is preserved and
+        # the temp file (if any) is cleaned up by the finally block. Surface
+        # a structured, redacted failure; never leak the original OSError.
+        code = (
+            "provider_registry_cache_write_failed"
+            if name == _REGISTRY_CACHE_FILE
+            else "provider_persistence_write_failed"
+        )
+        message = (
+            "Provider Registry cache could not be committed safely"
+            if name == _REGISTRY_CACHE_FILE
+            else "Provider persistence could not be committed safely"
+        )
         raise ProviderRegistryError(code, message) from exc
     finally:
         if temporary_name is not None:
-            try:
-                os.unlink(temporary_name)
-            except OSError:
-                pass
+            _discard_temporary(temporary_name)
+    # --- post-commit durability: best-effort parent directory fsync ---
+    # This runs only after the commit succeeded. It must never turn a
+    # successful commit into a write failure.
+    if committed:
+        _sync_parent_directory_best_effort(path, name)
+
+
+def _discard_temporary(temporary_name: str) -> None:
+    try:
+        os.unlink(temporary_name)
+    except OSError:
+        pass
+
+
+# Errnos that indicate the platform or filesystem does not support fsync on
+# a directory fd. These are treated as best-effort durability warnings, not
+# write failures, because os.replace() has already committed the new cache.
+_DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS = frozenset(
+    code for code in (
+        getattr(errno, "EINVAL", None),
+        getattr(errno, "ENOSYS", None),
+        getattr(errno, "ENOTSUP", None),
+        getattr(errno, "EOPNOTSUPP", None),
+        getattr(errno, "EPERM", None),
+    )
+    if code is not None
+)
+
+
+def _sync_parent_directory_best_effort(path: Path, name: str) -> None:
+    """Best-effort ``fsync`` of the parent directory after a committed replace.
+
+    ``os.replace()`` has already made the new file the active cache; this
+    call only improves crash-durability. Failures are therefore durability
+    warnings, not write failures: the API must not claim the old cache is
+    still in use when the new one is already on disk.
+    """
+    if os.name == "nt":
+        # Windows cannot fsync a directory fd; durability is delegated to
+        # the OS. This is the platform contract, not a warning.
+        return
+    try:
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+    except OSError as exc:
+        _record_durability_warning(name, exc, category="io_error")
+        return
+    try:
+        os.fsync(directory_fd)
+    except OSError as exc:
+        category = (
+            "unsupported"
+            if exc.errno in _DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS
+            else "io_error"
+        )
+        _record_durability_warning(name, exc, category=category)
+    finally:
+        os.close(directory_fd)
+
+
+def _record_durability_warning(
+    name: str,
+    exc: OSError,
+    *,
+    category: Literal["unsupported", "io_error"],
+) -> None:
+    """Record a post-commit durability warning without leaking the error.
+
+    The committed cache is already active on disk; this channel is
+    observability for crash-durability, never a write-failure signal. Only
+    the stable ``errno`` is persisted; the exception message is never
+    recorded, so a filesystem error containing sensitive material cannot
+    leak through the warning log.
+    """
+    try:
+        _append_jsonl(
+            "provider_registry_durability_warnings.jsonl",
+            DurabilityWarning(
+                timestamp=_iso(),
+                file=name,
+                stage="post_commit_directory_fsync",
+                category=category,
+                errno=exc.errno,
+            ),
+        )
+    except Exception:
+        # Observability must never turn a successful commit into a failure.
+        return
 
 
 def _update_mapping(name: str, update: Any) -> dict[str, Any]:

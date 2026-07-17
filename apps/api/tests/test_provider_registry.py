@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -512,18 +513,166 @@ def test_atomic_cache_temp_creation_failure_is_structured_and_preserves_previous
     assert cache_path.read_bytes() == original
 
 
-def test_atomic_cache_commit_syncs_file_and_directory(tmp_path, monkeypatch) -> None:
+def test_atomic_cache_commit_orders_file_fsync_replace_then_directory_fsync(tmp_path, monkeypatch) -> None:
     _isolate(tmp_path, monkeypatch)
     real_fsync = registry.os.fsync
-    synced: list[int] = []
+    real_replace = registry.os.replace
+    events: list[str] = []
 
-    def track_fsync(fd: int) -> None:
-        synced.append(fd)
+    def tracking_fsync(fd: int) -> None:
+        events.append("fsync")
         real_fsync(fd)
 
-    monkeypatch.setattr(registry.os, "fsync", track_fsync)
+    def tracking_replace(src, dst) -> None:
+        events.append("replace")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(registry.os, "fsync", tracking_fsync)
+    monkeypatch.setattr(registry.os, "replace", tracking_replace)
+
     registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"sentinel": True})
-    assert len(synced) == 2
+
+    # The file fsync must happen before the commit (os.replace), and the
+    # directory fsync must happen after the commit on platforms that support
+    # it. This ordering is the commit-point contract: a crash before replace
+    # preserves the old cache; a crash after replace leaves the new cache.
+    assert events == ["fsync", "replace", "fsync"]
+
+
+def test_atomic_cache_file_fsync_failure_skips_replace_and_preserves_previous_catalog(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    cache_path = storage.CONFIG_DIR / registry._REGISTRY_CACHE_FILE
+    registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"sentinel": True})
+    original = cache_path.read_bytes()
+
+    replace_calls: list[int] = []
+    monkeypatch.setattr(registry.os, "replace", lambda src, dst: replace_calls.append(1))
+
+    def failing_file_fsync(_fd: int) -> None:
+        raise OSError(errno.EIO, "disk write failed with token=secret-value")
+
+    monkeypatch.setattr(registry.os, "fsync", failing_file_fsync)
+
+    with pytest.raises(registry.ProviderRegistryError) as error:
+        registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"replacement": True})
+
+    assert error.value.code == "provider_registry_cache_write_failed"
+    assert "secret-value" not in error.value.message
+    # os.replace() must not have executed: the commit point was never reached.
+    assert replace_calls == []
+    # The previous cache is untouched.
+    assert cache_path.read_bytes() == original
+    # The temp file was cleaned up by the finally block.
+    assert not list(cache_path.parent.glob(f".{cache_path.name}.*"))
+
+
+def test_post_commit_directory_fsync_unsupported_keeps_new_cache_active(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    current = _catalog()
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    upgraded = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (upgraded.model_dump(mode="json", by_alias=True), source_url),
+    )
+
+    # The pre-commit file fsync succeeds; the post-commit directory fsync
+    # raises a platform/filesystem "not supported" error. os.replace() has
+    # already committed the new cache, so the refresh must succeed and the
+    # API must not claim the old cache is still in use.
+    real_fsync = registry.os.fsync
+    call_count = {"n": 0}
+
+    def selective_fsync(fd: int) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise OSError(errno.EINVAL, "fsync not supported on this filesystem token=secret-value")
+        real_fsync(fd)
+
+    monkeypatch.setattr(registry.os, "fsync", selective_fsync)
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["catalog"]["source"]["kind"] == "remote"
+    assert refreshed.json()["catalog"]["source"]["catalog_version"] == 2
+
+    # The refresh response and subsequent reads must both observe the new
+    # cache; the interface state must match the on-disk active cache.
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert after.json()["source"]["catalog_version"] == 2
+    assert after.json()["source"]["kind"] == "remote"
+
+    # The raw OSError message must not leak through the API surface.
+    assert "secret-value" not in refreshed.text
+    assert "secret-value" not in after.text
+
+    # The unsupported directory fsync was recorded as a durability warning,
+    # not silently ignored. Only the stable errno is persisted.
+    warning_path = storage.CONFIG_DIR / "provider_registry_durability_warnings.jsonl"
+    assert warning_path.exists()
+    warnings = [json.loads(line) for line in warning_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(w["category"] == "unsupported" and w["file"] == registry._REGISTRY_CACHE_FILE for w in warnings)
+    assert all("secret-value" not in line for line in warning_path.read_text(encoding="utf-8").splitlines())
+
+
+def test_post_commit_directory_fsync_io_error_keeps_new_cache_active_with_warning(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    current = _catalog()
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    upgraded = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (upgraded.model_dump(mode="json", by_alias=True), source_url),
+    )
+
+    # A non-"not supported" OSError on the post-commit directory fsync must
+    # still not turn the committed refresh into a failure. The contract is:
+    # the new cache is active, the refresh succeeds, and the exception is
+    # recorded as a durability warning with a distinct category.
+    real_fsync = registry.os.fsync
+    call_count = {"n": 0}
+
+    def selective_fsync(fd: int) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise OSError(errno.EIO, "block device io error token=secret-value")
+        real_fsync(fd)
+
+    monkeypatch.setattr(registry.os, "fsync", selective_fsync)
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["catalog"]["source"]["catalog_version"] == 2
+
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert after.json()["source"]["catalog_version"] == 2
+
+    assert "secret-value" not in refreshed.text
+    assert "secret-value" not in after.text
+
+    warning_path = storage.CONFIG_DIR / "provider_registry_durability_warnings.jsonl"
+    assert warning_path.exists()
+    warnings = [json.loads(line) for line in warning_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(w["category"] == "io_error" and w["file"] == registry._REGISTRY_CACHE_FILE for w in warnings)
+    assert all("secret-value" not in line for line in warning_path.read_text(encoding="utf-8").splitlines())
 
 
 def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monkeypatch) -> None:
