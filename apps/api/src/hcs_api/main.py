@@ -48,9 +48,12 @@ from .models import (
     ProjectSummary,
     ProviderCapabilityDescriptor,
     ProviderSettings,
+    QualityReport,
     SourceMaterial,
     StateFirstTeacherSummary,
     VideoProviderSettings,
+    VisualThemeCatalog,
+    VisualThemeSelectionUpdate,
 )
 from .parser import parse_source
 from .source_understanding import OCRPolicy, get_engine_status
@@ -76,6 +79,12 @@ from .provider_registry import (
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
 from .pptx_exporter import export_editable_pptx
+from .presentation_theme import (
+    persist_visual_theme_selection,
+    recommend_visual_theme,
+    visual_theme_catalog,
+    visual_theme_selection_for_project,
+)
 from .storage import (
     PROJECTS_DIR,
     RUNTIME_DIR,
@@ -1071,6 +1080,11 @@ def component_registry() -> dict:
     return load_component_registry()
 
 
+@app.get("/api/visual-themes", response_model=VisualThemeCatalog)
+def read_visual_theme_catalog() -> VisualThemeCatalog:
+    return visual_theme_catalog()
+
+
 @app.post("/api/projects/upload", response_model=ProjectState)
 async def upload_project(file: UploadFile = File(...), engine: str | None = Query(default=None)) -> ProjectState:
     if not file.filename:
@@ -1159,6 +1173,58 @@ def list_projects(limit: int = Query(default=20, ge=1, le=100)) -> list[ProjectS
 @app.get("/api/projects/{project_id}", response_model=ProjectState)
 def read_project(project_id: str) -> ProjectState:
     _assert_project(project_id)
+    return get_project_state(project_id)
+
+
+@app.put("/api/projects/{project_id}/visual-theme", response_model=ProjectState)
+def save_visual_theme(
+    project_id: str,
+    update: VisualThemeSelectionUpdate,
+    expected_revision: int | None = Query(default=None),
+) -> ProjectState:
+    root = _assert_project(project_id)
+    _assert_expected_revision(project_id, expected_revision)
+    profile = read_model(project_id, "lesson_profile.json", LessonProfile)
+    blueprint = read_model(project_id, "lesson_blueprint.json", LessonBlueprint)
+    current = visual_theme_selection_for_project(root, profile=profile, blueprint=blueprint)
+    recommended, reason = recommend_visual_theme(profile, blueprint)
+    target_theme_id = recommended if update.mode == "auto" else update.selected_theme_id
+    if update.mode == "manual" and target_theme_id is None:
+        raise HTTPException(status_code=422, detail={
+            "code": "visual_theme_selection_invalid",
+            "message": "A supported visual theme is required for manual mode.",
+        })
+    no_change = (
+        current.mode == update.mode
+        and current.selected_theme_id == target_theme_id
+        and (update.mode != "auto" or current.recommendation_reason == reason)
+    )
+    if no_change:
+        return get_project_state(project_id)
+    try:
+        selection = persist_visual_theme_selection(
+            root,
+            mode=update.mode,
+            selected_theme_id=target_theme_id,
+            profile=profile,
+            blueprint=blueprint,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={
+            "code": "visual_theme_selection_invalid",
+            "message": str(exc),
+        }) from exc
+    if selection.selected_theme_id != current.selected_theme_id and (
+        (root / "courseware/lesson.html").is_file()
+        or read_model(project_id, "quality_report.json", QualityReport) is not None
+        or latest_export_path(project_id) is not None
+    ):
+        invalidate_downstream(
+            project_id,
+            "visual_theme",
+            "Visual theme changed; render, quality, and export must be refreshed.",
+        )
+    bump_project_revision(project_id)
     return get_project_state(project_id)
 
 

@@ -28,6 +28,7 @@ from .models import (
     QualityReport,
     SourceMaterial,
     StaleState,
+    VisualThemeState,
 )
 
 
@@ -310,6 +311,7 @@ def invalidate_downstream(project_id: str, dependency: str, reason: str) -> None
         "design": {"presentation", "media", "render", "quality", "delivery"},
         "blueprint": {"media", "render", "quality", "delivery"},
         "media": {"render", "quality", "delivery"},
+        "visual_theme": {"render", "quality", "delivery"},
         "render": {"quality", "delivery"},
     }
     affected = downstream.get(dependency, set())
@@ -433,6 +435,24 @@ def get_project_state(project_id: str) -> ProjectState:
         stale_stages=stale_stages,
     )
     profile_state = "stale" if "profile" in stale_stages else read_profile_state(project_id, profile)
+    provider_readiness = _provider_readiness()
+    from .presentation_theme import visual_theme_state_for_project
+
+    try:
+        provider_settings = read_provider_settings()
+    except (OSError, ValueError):
+        # Provider configuration is optional for reading a project. Theme
+        # truth still needs to be returned, with capability support reported
+        # as unavailable instead of silently dropping the theme contract.
+        provider_settings = None
+    visual_theme = visual_theme_state_for_project(
+        root,
+        profile=profile,
+        blueprint=blueprint,
+        manifest=manifest,
+        provider_catalog=provider_readiness,
+        provider_settings=provider_settings,
+    )
     stages = _project_stages(
         project_id,
         source=source,
@@ -444,6 +464,7 @@ def get_project_state(project_id: str) -> ProjectState:
         export_exists=export_exists,
         gate_summary=gate_summary,
         stale_stages=stale_stages,
+        visual_theme=visual_theme,
     )
     current_stage = next(
         (stage.stage_id for stage in stages if stage.state not in {"completed", "warning"}),
@@ -458,7 +479,6 @@ def get_project_state(project_id: str) -> ProjectState:
         "quality_report": report is not None,
         "export": export_exists,
     }
-    provider_readiness = _provider_readiness()
     file_times = [path.stat().st_mtime for path in root.rglob("*") if path.is_file()]
     last_updated_at = (
         datetime.fromtimestamp(max(file_times), tz=timezone.utc).isoformat()
@@ -477,6 +497,7 @@ def get_project_state(project_id: str) -> ProjectState:
         artifacts=artifacts,
         stale_state=stale_state,
         provider_readiness=provider_readiness,
+        visual_theme=visual_theme,
         last_updated_at=last_updated_at,
         quality_state=report.state if report else None,
         source_material=source,
@@ -643,6 +664,7 @@ def _project_stages(
     export_exists: bool,
     gate_summary: GateSummary,
     stale_stages: set[str] | None = None,
+    visual_theme: VisualThemeState | None = None,
 ) -> list[StageStatus]:
     stale_stages = stale_stages or set()
     learning_artifacts = [
@@ -724,7 +746,12 @@ def _project_stages(
             state=presentation_state,
             required_artifacts=["blueprints/lesson_blueprint.json", "presentation/activity_bindings.json"],
             blockers=presentation_blockers,
-            available_actions=["edit_blueprint", "generate_media"] if blueprint else ["generate_blueprint"],
+            available_actions=(
+                ["edit_blueprint", "generate_media"]
+                + (["regenerate_media_for_theme"] if visual_theme and visual_theme.regeneration_available else [])
+                if blueprint
+                else ["generate_blueprint"]
+            ),
         ),
         StageStatus(
             stage_id="quality",

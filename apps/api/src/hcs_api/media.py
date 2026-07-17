@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import math
 import wave
@@ -15,12 +14,14 @@ from .asset_review import (
 from .models import (
     AssetCandidate, AssetFile, AssetManifest, GeneratedImage, GeneratedImageFailure,
     IllustrationRequest, LessonBlueprint, PresentationTheme, ProviderSettings,
+    VideoGenerationRequestPlan,
 )
 from .presentation_theme import (
-    THEME_DECISION_PATH, THEME_SELECTION_PATH, persist_theme_decision,
-    resolve_presentation_theme,
+    THEME_DECISION_PATH, THEME_SELECTION_PATH, VIDEO_REQUEST_PATH,
+    persist_theme_decision, resolve_presentation_theme, video_generation_requests,
+    visual_theme_state_for_project,
 )
-from .providers import ProviderError, _llm_enabled, generate_openai_image, generate_openai_tts
+from .providers import ProviderError, _llm_enabled, generate_openai_image, generate_openai_tts, provider_capability_catalog
 from .raster_provider import (
     ProviderImagePayload, RasterProviderError,
     generate_experimental_raster_image,
@@ -57,7 +58,7 @@ def generate_placeholder_media(
                 path.write_text(render_scene_spec(spec, presentation_theme=theme), encoding="utf-8")
                 path.with_suffix(".scene.json").write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
             else:
-                path.write_text(_placeholder_svg(slide.media_requirements.image_prompt, slide.id), encoding="utf-8")
+                path.write_text(_placeholder_svg(slide.media_requirements.image_prompt, slide.id, theme), encoding="utf-8")
             images.append(
                 AssetFile(
                     id=slide.media_requirements.image_key,
@@ -65,6 +66,8 @@ def generate_placeholder_media(
                     path=f"assets/images/{filename}",
                     prompt=slide.media_requirements.image_prompt,
                     origin_media_requirement_ids=[slide.media_requirements.image_key] if preserve_media_origin_trace else [],
+                    presentation_theme_id=theme.theme_id if theme else None,
+                    presentation_theme_version=theme.version if theme else None,
                 )
             )
         if slide.media_requirements.audio_key and slide.media_requirements.audio_text:
@@ -156,11 +159,16 @@ def generate_configured_media(
         for slide in blueprint.slides
         if slide.media_requirements.image_key and slide.media_requirements.media_kind != "svg_illustration"
     }
+    video_requested = any(
+        slide.media_requirements.video_key and slide.media_requirements.video_scene_prompt
+        for slide in blueprint.slides
+    )
     # Raster art and presentation chrome must resolve the same project theme
     # before provider prompts are created; otherwise the exporter defaults to
     # blue while an unthemed provider is free to choose an unrelated palette.
     theme_requested = (
         bool(raster_keys)
+        or video_requested
         or (project_root / THEME_SELECTION_PATH).is_file()
         or (project_root / THEME_DECISION_PATH).is_file()
     )
@@ -169,7 +177,7 @@ def generate_configured_media(
     if theme_requested:
         previous_manifest = AssetManifest(images=list(previous.values()))
         decision = resolve_presentation_theme(
-            project_root, lesson_title=blueprint.lesson_title, manifest=previous_manifest,
+            project_root, lesson_title=blueprint.lesson_title, blueprint=blueprint, manifest=previous_manifest,
         )
         theme = decision.theme
     manifest = generate_placeholder_media(project_root, blueprint, preserve_media_origin_trace, theme=theme)
@@ -205,6 +213,22 @@ def generate_configured_media(
         _assert_provider_media_success(manifest, settings, raster_keys)
     if decision is not None:
         persist_theme_decision(project_root, decision, manifest)
+        theme_state = visual_theme_state_for_project(
+            project_root,
+            blueprint=blueprint,
+            manifest=manifest,
+            provider_catalog=provider_capability_catalog(settings),
+            provider_settings=settings,
+        )
+        video_support = next(item for item in theme_state.provider_support if item.capability == "video")
+        requests = video_generation_requests(blueprint, decision.theme, video_support)
+        if requests:
+            request_path = project_root / VIDEO_REQUEST_PATH
+            request_path.parent.mkdir(parents=True, exist_ok=True)
+            request_path.write_text(
+                VideoGenerationRequestPlan(requests=requests).model_dump_json(by_alias=True, indent=2),
+                encoding="utf-8",
+            )
     return manifest
 
 
@@ -598,21 +622,5 @@ def _write_tone(path: Path) -> None:
             wav.writeframesraw(amplitude.to_bytes(2, byteorder="little", signed=True))
 
 
-def _placeholder_svg(prompt: str, slide_id: int) -> str:
-    safe_prompt = html.escape(prompt[:120])
-    hue = (slide_id * 41) % 360
-    accent = f"hsl({hue}, 76%, 52%)"
-    secondary = f"hsl({(hue + 120) % 360}, 62%, 60%)"
-    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" role="img" aria-label="{safe_prompt}">
-  <rect width="1200" height="675" fill="#F8FAF7"/>
-  <circle cx="260" cy="210" r="132" fill="{accent}" opacity="0.22"/>
-  <circle cx="930" cy="455" r="168" fill="{secondary}" opacity="0.24"/>
-  <path d="M190 505 C330 360 440 430 560 332 C684 232 792 258 1010 140" fill="none" stroke="{accent}" stroke-width="24" stroke-linecap="round" opacity="0.82"/>
-  <rect x="252" y="188" width="504" height="324" rx="8" fill="#FFFFFF" stroke="#DCE8E2" stroke-width="4"/>
-  <rect x="312" y="248" width="168" height="24" rx="8" fill="{accent}" opacity="0.38"/>
-  <rect x="312" y="306" width="356" height="18" rx="8" fill="#6F8D88" opacity="0.32"/>
-  <rect x="312" y="356" width="292" height="18" rx="8" fill="#6F8D88" opacity="0.24"/>
-  <rect x="800" y="220" width="148" height="148" rx="8" fill="{secondary}" opacity="0.48"/>
-  <path d="M820 366 L874 300 L916 342 L948 306 L948 366 Z" fill="#FFFFFF" opacity="0.82"/>
-  <circle cx="846" cy="260" r="20" fill="#FFFFFF" opacity="0.82"/>
-</svg>"""
+def _placeholder_svg(prompt: str, slide_id: int, theme: PresentationTheme | None = None) -> str:
+    return placeholder_svg(prompt, slide_id, presentation_theme=theme)
