@@ -283,6 +283,14 @@ class LessonBlueprint(BaseModel):
 ThemeDecisionSource = Literal[
     "ppt_master_auto", "teacher_selected", "inherited_from_existing_assets",
 ]
+VisualThemeId = Literal[
+    "classroom-clear",
+    "active-learning",
+    "warm-story",
+    "eastern-elegance",
+    "future-exploration",
+]
+VisualThemeMode = Literal["auto", "manual"]
 
 
 class ThemeTypography(BaseModel):
@@ -349,6 +357,19 @@ class ThemeImageTreatment(BaseModel):
     prohibited_traits: list[str] = Field(default_factory=list)
 
 
+class ThemeVideoTreatment(BaseModel):
+    """Provider-neutral direction retained even when video is unavailable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visual_style: str = "clear educational footage"
+    color_grade: str = "balanced classroom colour"
+    lighting: str = "soft, readable lighting"
+    motion_style: str = "stable, restrained camera movement"
+    subtitle_direction: str = "high-contrast lower-third subtitles within title-safe margins"
+    prohibited_traits: list[str] = Field(default_factory=list)
+
+
 class PresentationTheme(BaseModel):
     """Master-derived design decisions; never a provider or pedagogy contract."""
 
@@ -364,6 +385,102 @@ class PresentationTheme(BaseModel):
     shapes: ThemeShapeLanguage = Field(default_factory=ThemeShapeLanguage)
     layout: ThemeLayout = Field(default_factory=ThemeLayout)
     image_treatment: ThemeImageTreatment
+    # Default keeps presentation_theme.v1 files from older projects readable.
+    video_treatment: ThemeVideoTreatment = Field(default_factory=ThemeVideoTreatment)
+
+
+class VisualThemeSelection(BaseModel):
+    """Persisted teacher decision. ``auto`` resolves to one real preset."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+    schema_: str = Field(default="hanclassstudio.visual_theme_selection.v1", alias="schema")
+    mode: VisualThemeMode = "auto"
+    selected_theme_id: VisualThemeId = "classroom-clear"
+    recommended_theme_id: VisualThemeId | None = None
+    recommendation_reason: str | None = None
+    theme_version: str = "1"
+
+
+class VisualThemeSelectionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: VisualThemeMode
+    selected_theme_id: VisualThemeId | None = None
+
+
+class VisualThemePreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    background: str
+    surface: str
+    primary: str
+    accent: str
+    text: str
+    motif: str
+
+
+class VisualThemePresetSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    theme_id: VisualThemeId
+    version: str
+    name_key: str
+    description_key: str
+    preview: VisualThemePreview
+
+
+class VisualThemeCatalog(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+    schema_: str = Field(default="hanclassstudio.visual_theme_catalog.v1", alias="schema")
+    theme_version: str = "1"
+    presets: list[VisualThemePresetSummary] = Field(default_factory=list)
+
+
+class ThemeCapabilitySupport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capability: Literal["presentation", "image", "video"]
+    provider_id: str | None = None
+    state: Literal["supported", "unsupported", "unavailable", "not_configured"]
+    theme_metadata_preserved: bool = True
+    reason: str | None = None
+
+
+class VisualThemeState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selection: VisualThemeSelection
+    effective_theme_id: VisualThemeId
+    effective_theme_version: str
+    media_state: Literal["not_generated", "current", "mixed"] = "not_generated"
+    mismatched_media_count: int = 0
+    mismatched_media_ids: list[str] = Field(default_factory=list)
+    provider_support: list[ThemeCapabilitySupport] = Field(default_factory=list)
+    regeneration_available: bool = False
+
+
+class VideoGenerationRequest(BaseModel):
+    """Auditable request contract; it does not imply a provider executed it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    prompt: str
+    provider_id: str | None = None
+    theme_id: VisualThemeId
+    theme_version: str
+    theme_direction: ThemeVideoTreatment
+    theme_application_state: Literal["supported", "unsupported", "unavailable", "not_configured"]
+    theme_application_reason: str | None = None
+
+
+class VideoGenerationRequestPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+
+    schema_: str = Field(default="hanclassstudio.video_generation_requests.v1", alias="schema")
+    requests: list[VideoGenerationRequest] = Field(default_factory=list)
 
 
 class PresentationThemeDecision(BaseModel):
@@ -688,6 +805,7 @@ class ProjectState(BaseModel):
     artifacts: dict[str, Any] = Field(default_factory=dict)
     stale_state: StaleState = Field(default_factory=StaleState)
     provider_readiness: list[ProviderCapabilityDescriptor] = Field(default_factory=list)
+    visual_theme: VisualThemeState | None = None
     last_updated_at: str | None = None
     quality_state: QualityState | None = None
     source_material: SourceMaterial | None = None
