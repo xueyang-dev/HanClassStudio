@@ -169,6 +169,10 @@ def test_provider_capability_contract_marks_unimplemented_provider_unavailable(t
     openai = next(item for item in descriptors if item["provider_id"] == "openai_compatible")
     assert openai["api_signup_url"] == "https://platform.openai.com/api-keys"
     assert openai["api_docs_url"].startswith("https://platform.openai.com/")
+    assert openai["terms_url"] == "https://openai.com/policies/service-terms/"
+    lm_studio = next(item for item in descriptors if item["provider_id"] == "lm_studio")
+    assert lm_studio["terms_url"] == "https://lmstudio.ai/app-terms"
+    assert lm_studio["privacy_url"] == "https://lmstudio.ai/app-privacy"
     paddle = next(item for item in descriptors if item["provider_id"] == "paddle_ocr")
     assert paddle["repository_url"] == "https://github.com/PaddlePaddle/PaddleOCR"
     assert paddle["code_license_name"] == "Apache-2.0"

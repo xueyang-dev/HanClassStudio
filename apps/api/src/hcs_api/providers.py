@@ -39,7 +39,7 @@ def _provider_definitions() -> list[dict[str, Any]]:
     hcs_license = f"{hcs_repository}/blob/main/LICENSE"
     openai_docs = "https://platform.openai.com/docs/"
     openai_signup = "https://platform.openai.com/api-keys"
-    openai_terms = "https://openai.com/policies/terms-of-use/"
+    openai_terms = "https://openai.com/policies/service-terms/"
     openai_privacy = "https://openai.com/policies/privacy-policy/"
     return [
         {
@@ -73,8 +73,8 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("base_url", "Base URL", "url", placeholder="http://127.0.0.1:1234/v1"),
                        _field("model", "Model", required=True)],
             "operations": ["blueprint", "illustration"],
-            "official_homepage_url": "https://lmstudio.ai/", "terms_url": "https://lmstudio.ai/terms",
-            "privacy_url": "https://lmstudio.ai/privacy",
+            "official_homepage_url": "https://lmstudio.ai/", "terms_url": "https://lmstudio.ai/app-terms",
+            "privacy_url": "https://lmstudio.ai/app-privacy",
         },
         {
             "capability": "llm", "provider_id": "custom", "display_name": "Custom endpoint",
