@@ -1,4 +1,4 @@
-import { type ChangeEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ChangeEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Boxes,
@@ -22,6 +22,7 @@ import {
   Pencil,
   Play,
   PackageCheck,
+  Palette,
   Plus,
   RefreshCw,
   Save,
@@ -40,6 +41,7 @@ import {
   exportEditablePptx,
   exportUrl,
   fetchProject,
+  fetchVisualThemeCatalog,
   fetchDesignSummary,
   fetchHealth,
   fetchProviderCapabilities,
@@ -69,6 +71,7 @@ import {
   saveBlueprint,
   saveProfile,
   uploadProject,
+  updateVisualTheme,
   validateAgentOutput
 } from "./api";
 import type { BackendProviderSettings } from "./api";
@@ -103,9 +106,12 @@ import type {
   SourceAnalysis,
   SourceAnalysisPage,
   StateFirstTeacherSummary,
-  StageStatus
+  StageStatus,
+  VisualThemeCatalog,
+  VisualThemeId,
+  VisualThemePreset
 } from "./types";
-import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUnifyVisualThemeMedia, canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -355,6 +361,11 @@ export function App() {
   const [settingsSynced, setSettingsSynced] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(() => readStoredTheme());
+  const [visualThemeCatalog, setVisualThemeCatalog] = useState<VisualThemeCatalog | null>(null);
+  const [visualThemeDialogOpen, setVisualThemeDialogOpen] = useState(false);
+  const [themeMediaConfirmOpen, setThemeMediaConfirmOpen] = useState(false);
+  const [visualThemeSaving, setVisualThemeSaving] = useState(false);
+  const [visualThemeError, setVisualThemeError] = useState("");
   const [navNotice, setNavNotice] = useState("");
   const [exportFormat, setExportFormat] = useState<"html" | "pptx">("html");
   const [forceExportType, setForceExportType] = useState<"html" | "pptx" | null>(null);
@@ -395,6 +406,9 @@ export function App() {
     getComponentRegistry()
       .then(setComponentRegistry)
       .catch((err) => setError(readableError(err, t)));
+    fetchVisualThemeCatalog()
+      .then(setVisualThemeCatalog)
+      .catch(() => setVisualThemeCatalog(null));
     if (!readOnboardingSeen() && !routeProjectId) {
       setOnboardingOpen(true);
     }
@@ -463,6 +477,39 @@ export function App() {
   function handleThemeChange(next: ThemeMode) {
     setTheme(next);
     writeStoredTheme(next);
+  }
+
+  async function handleVisualThemeSave(mode: "auto" | "manual", selectedThemeId?: VisualThemeId) {
+    if (!project) return;
+    setVisualThemeSaving(true);
+    setVisualThemeError("");
+    try {
+      const next = await updateVisualTheme(
+        project.project_id,
+        { mode, ...(mode === "manual" && selectedThemeId ? { selected_theme_id: selectedThemeId } : {}) },
+        project.project_revision,
+      );
+      updateProject(next);
+      setVisualThemeDialogOpen(false);
+    } catch (err) {
+      setVisualThemeError(readableError(err, t));
+    } finally {
+      setVisualThemeSaving(false);
+    }
+  }
+
+  async function handleUnifyVisualThemeMedia() {
+    if (!project || !canUnifyVisualThemeMedia(project)) {
+      setNavNotice(t("status.actionUnavailable"));
+      setThemeMediaConfirmOpen(false);
+      return;
+    }
+    setThemeMediaConfirmOpen(false);
+    await run(
+      t("busy.regeneratingMedia"),
+      () => generateMedia(project.project_id, true, project.project_revision),
+      "quality",
+    );
   }
 
   // Load persisted provider settings from the backend (source of truth) on mount.
@@ -1122,6 +1169,16 @@ export function App() {
           <section className="panel">
             <PanelHeader icon={<LayoutTemplate size={22} />} title={t("presentation.title")} action={t("panel.outline.action", { n: blueprint?.slides.length ?? 0 })} state={stageAccess.presentation.state} />
             <StageNotice stage={project?.stages?.find((item) => item.stage_id === "presentation")} />
+            <VisualThemeCard
+              catalog={visualThemeCatalog}
+              state={project?.visual_theme ?? null}
+              canUnify={canUnifyVisualThemeMedia(project)}
+              onChange={() => {
+                setVisualThemeError("");
+                setVisualThemeDialogOpen(true);
+              }}
+              onUnify={() => setThemeMediaConfirmOpen(true)}
+            />
             <p className="production-note">{t("presentation.compatibility")}</p>
             {blueprint ? (
               <BlueprintEditor blueprint={blueprint} componentRegistry={componentRegistry} componentOptions={componentOptions} editable={stageAccess.presentation.editable} onChange={setBlueprint} />
@@ -1344,6 +1401,27 @@ export function App() {
             if (type === "html") await handleForceExport();
             else await handleEditablePptxExport(true);
           }}
+        />
+      )}
+      {visualThemeDialogOpen && project?.visual_theme && visualThemeCatalog && (
+        <VisualThemeDialog
+          catalog={visualThemeCatalog}
+          selection={project.visual_theme.selection}
+          busy={visualThemeSaving}
+          error={visualThemeError}
+          onCancel={() => {
+            if (!visualThemeSaving) setVisualThemeDialogOpen(false);
+          }}
+          onComplete={handleVisualThemeSave}
+        />
+      )}
+      {themeMediaConfirmOpen && project?.visual_theme && (
+        <ThemeMediaConfirmDialog
+          count={project.visual_theme.mismatched_media_count}
+          canConfirm={canUnifyVisualThemeMedia(project)}
+          busy={Boolean(busy)}
+          onCancel={() => setThemeMediaConfirmOpen(false)}
+          onConfirm={handleUnifyVisualThemeMedia}
         />
       )}
       {onboardingOpen && (
@@ -2116,6 +2194,195 @@ function ModelSettingsModal({
           <button type="button" className="primary" onClick={onClose}>
             {t("settings.done")}
           </button>
+        </div>
+      </section>
+    </dialog>
+  );
+}
+
+function visualThemePreviewStyle(preset?: VisualThemePreset): CSSProperties {
+  if (!preset) return {};
+  return {
+    "--visual-theme-bg": preset.preview.background,
+    "--visual-theme-surface": preset.preview.surface,
+    "--visual-theme-primary": preset.preview.primary,
+    "--visual-theme-accent": preset.preview.accent,
+    "--visual-theme-text": preset.preview.text,
+  } as CSSProperties;
+}
+
+function VisualThemePreviewTile({ preset }: { preset?: VisualThemePreset }) {
+  return (
+    <span
+      className={`visual-theme-preview visual-theme-preview-${preset?.preview.motif ?? "loading"}`}
+      style={visualThemePreviewStyle(preset)}
+      aria-hidden="true"
+    >
+      <span className="visual-theme-preview-heading" />
+      <span className="visual-theme-preview-copy" />
+      <span className="visual-theme-preview-card" />
+      <span className="visual-theme-preview-accent" />
+    </span>
+  );
+}
+
+function VisualThemeCard({
+  catalog,
+  state,
+  canUnify,
+  onChange,
+  onUnify,
+}: {
+  catalog: VisualThemeCatalog | null;
+  state: ProjectState["visual_theme"] | null;
+  canUnify: boolean;
+  onChange: () => void;
+  onUnify: () => void;
+}) {
+  const { t } = useI18n();
+  const preset = catalog?.presets.find((item) => item.theme_id === state?.effective_theme_id);
+  const unsupported = state?.provider_support.filter((item) => item.state !== "supported") ?? [];
+  return (
+    <section className="visual-theme-section" aria-labelledby="visualThemeCardTitle">
+      <h3 id="visualThemeCardTitle"><Palette size={17} aria-hidden="true" />{t("visualTheme.title")}</h3>
+      <div className="visual-theme-current-card">
+        <VisualThemePreviewTile preset={preset} />
+        <div className="visual-theme-current-copy">
+          <div className="visual-theme-name-row">
+            <strong>{preset ? t(preset.name_key) : t("visualTheme.unavailable")}</strong>
+            {state?.selection.mode === "auto" && <span className="visual-theme-auto-badge">{t("visualTheme.autoBadge")}</span>}
+          </div>
+          <span>{preset ? t(preset.description_key) : t("visualTheme.unavailableDetail")}</span>
+          {state?.selection.mode === "auto" && state.selection.recommendation_reason && (
+            <small>{t(`visualTheme.reason.${state.selection.recommendation_reason}`)}</small>
+          )}
+        </div>
+        <button type="button" className="secondary visual-theme-change" disabled={!catalog || !state} onClick={onChange}>
+          {t("visualTheme.change")}
+        </button>
+      </div>
+      <p className="visual-theme-consistency"><CheckCircle2 size={15} aria-hidden="true" />{t("visualTheme.consistency")}</p>
+      {unsupported.length > 0 && (
+        <p className="visual-theme-support-note">
+          {t("visualTheme.providerUnsupported", {
+            capabilities: unsupported.map((item) => t(`visualTheme.capability.${item.capability}`)).join("、"),
+          })}
+        </p>
+      )}
+      {Boolean(state?.mismatched_media_count) && (
+        <div className="visual-theme-mismatch" role="status">
+          <span>{t("visualTheme.mismatch", { n: state?.mismatched_media_count ?? 0 })}</span>
+          {canUnify ? (
+            <button type="button" className="small-button" onClick={onUnify}>{t("visualTheme.unify")}</button>
+          ) : (
+            <small>{t("visualTheme.unifyUnavailable")}</small>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VisualThemeDialog({
+  catalog,
+  selection,
+  busy,
+  error,
+  onCancel,
+  onComplete,
+}: {
+  catalog: VisualThemeCatalog;
+  selection: NonNullable<ProjectState["visual_theme"]>["selection"];
+  busy: boolean;
+  error: string;
+  onCancel: () => void;
+  onComplete: (mode: "auto" | "manual", selectedThemeId?: VisualThemeId) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [mode, setMode] = useState<"auto" | "manual">(selection.mode);
+  const [selectedThemeId, setSelectedThemeId] = useState<VisualThemeId>(selection.selected_theme_id);
+  useNativeDialog(dialogRef, onCancel);
+  const recommended = selection.recommended_theme_id ?? selection.selected_theme_id;
+  const recommendedPreset = catalog.presets.find((item) => item.theme_id === recommended) ?? catalog.presets[0];
+
+  return (
+    <dialog ref={dialogRef} className="settings-dialog visual-theme-dialog" aria-labelledby="visualThemeDialogTitle" aria-describedby="visualThemeDialogDescription" aria-modal="true">
+      <section className="settings-modal visual-theme-modal">
+        <header>
+          <div>
+            <p className="eyebrow">{t("visualTheme.eyebrow")}</p>
+            <h2 id="visualThemeDialogTitle">{t("visualTheme.dialogTitle")}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onCancel} disabled={busy} aria-label={t("visualTheme.cancel")}><X size={20} aria-hidden="true" /></button>
+        </header>
+        <p id="visualThemeDialogDescription" className="visual-theme-dialog-description">{t("visualTheme.dialogDescription")}</p>
+        {error && <div className="notice error" role="alert">{error}</div>}
+        <div className="visual-theme-options" role="radiogroup" aria-label={t("visualTheme.dialogTitle")}>
+          <label className={`visual-theme-option ${mode === "auto" ? "selected" : ""}`}>
+            <input type="radio" name="visual-theme" checked={mode === "auto"} onChange={() => setMode("auto")} />
+            <VisualThemePreviewTile preset={recommendedPreset} />
+            <span className="visual-theme-option-copy">
+              <strong>{t("visualTheme.autoName")}</strong>
+              <span>{t("visualTheme.autoDescription", { theme: t(recommendedPreset.name_key) })}</span>
+            </span>
+            {mode === "auto" && <span className="visual-theme-selected"><Check size={14} aria-hidden="true" />{t("visualTheme.selected")}</span>}
+          </label>
+          {catalog.presets.map((preset) => {
+            const selected = mode === "manual" && selectedThemeId === preset.theme_id;
+            return (
+              <label className={`visual-theme-option ${selected ? "selected" : ""}`} key={preset.theme_id}>
+                <input
+                  type="radio"
+                  name="visual-theme"
+                  checked={selected}
+                  onChange={() => {
+                    setMode("manual");
+                    setSelectedThemeId(preset.theme_id);
+                  }}
+                />
+                <VisualThemePreviewTile preset={preset} />
+                <span className="visual-theme-option-copy"><strong>{t(preset.name_key)}</strong><span>{t(preset.description_key)}</span></span>
+                {selected && <span className="visual-theme-selected"><Check size={14} aria-hidden="true" />{t("visualTheme.selected")}</span>}
+              </label>
+            );
+          })}
+        </div>
+        <div className="action-row visual-theme-dialog-actions">
+          <button type="button" className="secondary" onClick={onCancel} disabled={busy}>{t("visualTheme.cancel")}</button>
+          <button type="button" className="primary" disabled={busy} onClick={() => void onComplete(mode, mode === "manual" ? selectedThemeId : undefined)}>
+            {busy ? t("visualTheme.saving") : t("visualTheme.done")}
+          </button>
+        </div>
+      </section>
+    </dialog>
+  );
+}
+
+function ThemeMediaConfirmDialog({
+  count,
+  canConfirm,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  count: number;
+  canConfirm: boolean;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useNativeDialog(dialogRef, onCancel);
+  return (
+    <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="themeMediaConfirmTitle" aria-describedby="themeMediaConfirmDescription" aria-modal="true">
+      <section className="confirm-modal" role="alertdialog" aria-modal="true">
+        <h2 id="themeMediaConfirmTitle">{t("visualTheme.unifyTitle")}</h2>
+        <p id="themeMediaConfirmDescription">{t("visualTheme.unifyBody", { n: count })}</p>
+        <div className="action-row">
+          <button type="button" className="secondary" onClick={onCancel} disabled={busy}>{t("visualTheme.cancel")}</button>
+          <button type="button" className="primary" onClick={() => void onConfirm()} disabled={busy || !canConfirm}>{t("visualTheme.unifyConfirm")}</button>
         </div>
       </section>
     </dialog>

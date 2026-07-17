@@ -406,6 +406,63 @@ export interface StaleState {
   changed_at?: string | null;
 }
 
+export type VisualThemeId =
+  | "classroom-clear"
+  | "active-learning"
+  | "warm-story"
+  | "eastern-elegance"
+  | "future-exploration";
+
+export interface VisualThemeSelection {
+  mode: "auto" | "manual";
+  selected_theme_id: VisualThemeId;
+  recommended_theme_id?: VisualThemeId | null;
+  recommendation_reason?: string | null;
+  theme_version: string;
+}
+
+export interface VisualThemePreview {
+  background: string;
+  surface: string;
+  primary: string;
+  accent: string;
+  text: string;
+  motif: string;
+}
+
+export interface VisualThemePreset {
+  theme_id: VisualThemeId;
+  version: string;
+  name_key: string;
+  description_key: string;
+  preview: VisualThemePreview;
+}
+
+export interface VisualThemeCatalog {
+  schema: string;
+  theme_version: string;
+  presets: VisualThemePreset[];
+}
+
+export interface ThemeCapabilitySupport {
+  capability: "presentation" | "image" | "video";
+  provider_id?: string | null;
+  state: "supported" | "unsupported" | "unavailable" | "not_configured";
+  theme_metadata_preserved: boolean;
+  reason?: string | null;
+}
+
+export interface VisualThemeState {
+  selection: VisualThemeSelection;
+  effective_theme_id: VisualThemeId;
+  effective_theme_version: string;
+  media_state: "not_generated" | "current" | "mixed";
+  mismatched_media_count: number;
+  mismatched_media_ids: string[];
+  provider_support: ThemeCapabilitySupport[];
+  regeneration_available: boolean;
+}
+
 export interface ProjectState {
   project_id: string;
   status: string;
@@ -418,6 +475,7 @@ export interface ProjectState {
   artifacts?: Record<string, boolean>;
   stale_state?: StaleState;
   provider_readiness?: ProviderDefinition[];
+  visual_theme?: VisualThemeState | null;
   last_updated_at?: string | null;
   quality_state?: QualityState | null;
   source_material?: SourceMaterial | null;

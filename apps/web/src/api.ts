@@ -19,7 +19,9 @@ import type {
   ProviderDefinition,
   ProviderRegistryCatalog,
   ProjectSummary,
-  StateFirstTeacherSummary
+  StateFirstTeacherSummary,
+  VisualThemeCatalog,
+  VisualThemeId
 } from "./types";
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
@@ -91,6 +93,22 @@ export async function listProjects(limit = 20): Promise<ProjectSummary[]> {
 
 export async function fetchProject(projectId: string): Promise<ProjectState> {
   return request<ProjectState>(`/api/projects/${encodeURIComponent(projectId)}`);
+}
+
+export async function fetchVisualThemeCatalog(): Promise<VisualThemeCatalog> {
+  return request<VisualThemeCatalog>("/api/visual-themes");
+}
+
+export async function updateVisualTheme(
+  projectId: string,
+  selection: { mode: "auto" | "manual"; selected_theme_id?: VisualThemeId },
+  expectedRevision?: number | null,
+): Promise<ProjectState> {
+  return request<ProjectState>(withExpectedRevision(`/api/projects/${encodeURIComponent(projectId)}/visual-theme`, expectedRevision), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(selection),
+  });
 }
 
 export async function fetchDesignSummary(projectId: string): Promise<StateFirstTeacherSummary> {
