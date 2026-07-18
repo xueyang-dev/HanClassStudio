@@ -1666,7 +1666,7 @@ def _assert_media_provider_ready(settings: ProviderSettings) -> None:
         )
         if descriptor is None or not descriptor.implemented or not descriptor.available or not descriptor.configured:
             reason = descriptor.unavailable_reason if descriptor else "Provider is not in the backend capability catalog."
-            if descriptor and not descriptor.configured:
+            if descriptor and descriptor.implemented and not descriptor.configured:
                 reason = "Provider credentials or required configuration are missing."
             raise HTTPException(
                 status_code=409,
@@ -1687,7 +1687,7 @@ def _assert_llm_provider_supported(settings: ProviderSettings) -> None:
     )
     if descriptor is None or not descriptor.implemented or not descriptor.available or not descriptor.configured:
         reason = descriptor.unavailable_reason if descriptor else "LLM provider is not in the backend capability catalog."
-        if descriptor and not descriptor.configured:
+        if descriptor and descriptor.implemented and not descriptor.configured:
             reason = "Provider credentials or required configuration are missing."
         raise HTTPException(
             status_code=409,

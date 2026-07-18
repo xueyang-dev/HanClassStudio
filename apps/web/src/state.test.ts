@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
+import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
 import type { ProjectState, ProviderRegistryCatalog } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -126,15 +126,15 @@ const registry: ProviderRegistryCatalog = {
         capability: "ocr",
         display_name: "OCR sandbox",
         description: "",
-        source_url: "https://github.com/xueyang-dev/HanClassStudio",
+        source_url: "https://github.com/xueyang-dev/HanClassStudio/tree/69b5f7dfe1231c4dd2e504a47c5d85992efb558a/providers",
         repository: "xueyang-dev/HanClassStudio",
         publisher: "HanClassStudio",
         license: "MIT",
         license_status: "approved",
-        license_url: "https://github.com/xueyang-dev/HanClassStudio/blob/main/LICENSE",
+        license_url: "https://github.com/xueyang-dev/HanClassStudio/blob/69b5f7dfe1231c4dd2e504a47c5d85992efb558a/LICENSE",
         trust_level: "first_party",
         version: "0.1.0",
-        source_ref: "v0.1.0",
+        source_ref: "69b5f7dfe1231c4dd2e504a47c5d85992efb558a",
         checksum_sha256: "0".repeat(64),
         manifest_version: "1",
         manifest_digest: "1".repeat(64),
@@ -170,15 +170,16 @@ const registry: ProviderRegistryCatalog = {
 };
 const ocrCatalog = [
   { ...providerCatalog[0], id: "tesseract", name: "Tesseract", capability: "ocr" as const, category: "local" as const, available: false },
-  { ...providerCatalog[0], id: "hcs_mock_ocr", name: "OCR sandbox", capability: "ocr" as const, category: "local" as const, available: false, experimental: true },
+  { ...providerCatalog[0], id: "hcs_mock_ocr", name: "OCR sandbox", capability: "ocr" as const, category: "local" as const, implemented: false, configurable: false, available: false, experimental: true },
 ];
 equal(getCapabilityProviders("ocr", "local", ocrCatalog).length, 2);
-equal(getConfigurableCapabilityProviders("ocr", "local", ocrCatalog).length, 2);
+equal(getConfigurableCapabilityProviders("ocr", "local", ocrCatalog).length, 1);
 equal(getAvailableCapabilityProviders("ocr", "local", ocrCatalog).length, 0);
 equal(getCapabilityRegistryProviders("ocr", registry).length, 1);
 deepEqual(getCapabilityRegistryProviders("llm", registry), []);
 const availableOcrCatalog = ocrCatalog.map((item) => item.id === "hcs_mock_ocr" ? { ...item, available: true, configured: true } : item);
-equal(getAvailableCapabilityProviders("ocr", "local", availableOcrCatalog).map((item) => item.id).join(","), "hcs_mock_ocr");
+equal(getAvailableCapabilityProviders("ocr", "local", availableOcrCatalog).length, 0);
+equal(getProviderById("hcs_mock_ocr", "ocr", ocrCatalog)?.implemented, false);
 const codexBridgeCatalog = [{
   ...providerCatalog[0],
   id: "codex_chatgpt",

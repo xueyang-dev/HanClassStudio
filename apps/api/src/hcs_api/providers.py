@@ -220,7 +220,7 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
         engine_status = {}
 
     definitions = _provider_definitions()
-    known = {(item["capability"], item["provider_id"]) for item in definitions}
+    definition_keys = {(item["capability"], item["provider_id"]) for item in definitions}
     result: list[ProviderCapabilityDescriptor] = []
     for item in definitions:
         provider_id, values = _selected_provider(settings, item["capability"])
@@ -256,17 +256,6 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             configuration_schema=item["fields"], supported_operations=item["operations"],
         ))
 
-    # Preserve visibility of a previously stored but no longer supported choice.
-    for capability in ("llm", "image", "tts", "ocr", "video"):
-        provider_id, values = _selected_provider(settings, capability)
-        if not provider_id or (capability, provider_id) in known:
-            continue
-        result.append(ProviderCapabilityDescriptor(
-            capability=capability, provider_id=provider_id, display_name=provider_id,
-            category="cloud", configured=False, available=False,
-            unavailable_reason="This provider is not implemented for this capability.",
-        ))
-
     # Registry-backed providers are part of the same capability contract. The
     # registry owns install/configuration facts; this adapter only translates
     # those facts into the descriptor shape consumed by settings and onboarding.
@@ -280,36 +269,48 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
         raise
     except Exception as exc:
         raise ProviderRegistryError("provider_registry_unavailable", "Provider registry is unavailable") from exc
+    registry_keys = {(status.entry.capability, status.entry.provider_id) for status in registry.providers}
+    seen = definition_keys | registry_keys
     for status in registry.providers:
         entry = status.entry
-        if (entry.capability, entry.provider_id) in known:
+        key = (entry.capability, entry.provider_id)
+        if key in definition_keys:
             continue
         installation = status.installation
-        blockers = [*status.environment.blockers, *status.policy_blockers, *installation.blockers]
+        blockers = [*status.environment.blockers, *getattr(status, "policy_blockers", []), *installation.blockers]
         selected = _selected_provider(settings, entry.capability)[0] == entry.provider_id
-        lifecycle_available = installation.install_state == "available" and installation.configuration_status == "configured" and not blockers
-        available = lifecycle_available and not entry.mock_only
-        configured = selected and available
         if entry.mock_only:
-            unavailable_reason = "Sandbox lifecycle only; no production Provider executor is installed or available."
-        elif available:
-            unavailable_reason = None
-        elif blockers:
-            unavailable_reason = blockers[0].message
-        elif installation.install_state in {"installed", "configuring"}:
-            unavailable_reason = "Provider configuration is required before activation."
-        elif installation.failure:
-            unavailable_reason = installation.failure.message
+            implemented = False
+            configurable = False
+            configured = False
+            available = False
+            unavailable_reason = (
+                "Sandbox fixture only: no real Provider executor is available; "
+                "no third-party tool will be downloaded, installed, or executed."
+            )
         else:
-            unavailable_reason = "Provider is not installed."
+            implemented = True
+            configurable = True
+            available = installation.install_state == "available" and installation.configuration_status == "configured" and not blockers
+            configured = selected and available and installation.configuration_status == "configured"
+            if available:
+                unavailable_reason = None
+            elif blockers:
+                unavailable_reason = blockers[0].message
+            elif installation.install_state in {"installed", "configuring"}:
+                unavailable_reason = "Provider configuration is required before activation."
+            elif installation.failure:
+                unavailable_reason = installation.failure.message
+            else:
+                unavailable_reason = "Provider is not installed."
         result.append(ProviderCapabilityDescriptor(
             capability=entry.capability,
             provider_id=entry.provider_id,
             display_name=entry.display_name,
             category="local",
             description=entry.description,
-            implemented=not entry.mock_only,
-            configurable=not entry.mock_only,
+            implemented=implemented,
+            configurable=configurable,
             configured=configured,
             available=available,
             experimental=entry.experimental,
@@ -331,6 +332,25 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             rollback_available=installation.rollback_available,
             failure=installation.failure.model_dump(mode="json") if installation.failure else None,
         ))
+
+    # Preserve visibility of a previously stored but no longer supported choice
+    # only after registry keys have been added to the seen set. This prevents a
+    # registry-backed provider from receiving an unknown fallback descriptor.
+    for capability in ("llm", "image", "tts", "ocr", "video"):
+        provider_id, values = _selected_provider(settings, capability)
+        key = (capability, provider_id)
+        if not provider_id or key in seen:
+            continue
+        result.append(ProviderCapabilityDescriptor(
+            capability=capability, provider_id=provider_id, display_name=provider_id,
+            category="cloud", configured=False, available=False,
+            unavailable_reason="This provider is not implemented for this capability.",
+        ))
+        seen.add(key)
+
+    result_keys = [(item.capability, item.provider_id) for item in result]
+    if len(result_keys) != len(set(result_keys)):
+        raise ProviderRegistryError("provider_capability_duplicate", "Provider capability catalog contains duplicate descriptors")
     return result
 
 

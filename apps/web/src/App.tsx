@@ -107,7 +107,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -125,10 +125,6 @@ const CAPABILITY_META: Record<ProviderCapability, { labelKey: string; icon: type
   tts: { labelKey: "provider.tts.label", icon: Mic },
   video: { labelKey: "provider.video.label", icon: Video },
 };
-
-function getProviderById(id: string, capability: ProviderCapability, catalog: ProviderDefinition[]): ProviderDefinition | undefined {
-  return catalog.find((p) => p.id === id && p.capability === capability);
-}
 
 function isCapabilityConfigured(config: CapabilityConfig | undefined, capability: ProviderCapability, catalog: ProviderDefinition[]): boolean {
   return providerStatus(config, capability, catalog).configured;
@@ -1630,7 +1626,7 @@ function CapabilityConfigPanel({
     ? selectableProviders
     : [...selectableProviders, ...providers.filter((provider) => provider.id === selectedId)];
   const registryProviders = getCapabilityRegistryProviders(capability, registry ?? null);
-  const showOnboardingRegistry = showRegistryEntry && mode === "local" && availableProviders.length === 0;
+  const showOnboardingRegistry = showRegistryEntry && mode === "local" && availableProviders.length === 0 && registryProviders.length > 0;
   const providerSelectRef = useRef<HTMLSelectElement>(null);
   const hadAvailableProviderRef = useRef(availableProviders.length > 0);
   const previousCapabilityRef = useRef(capability);

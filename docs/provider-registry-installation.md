@@ -22,6 +22,12 @@ GitHub. A self-declared `verified_maintainer` value cannot expand that trust
 boundary; adding another repository requires an intentional registry change and
 review.
 
+The bundled first-party sandbox fixtures display version `0.1.0` but pin their
+source and LICENSE evidence to commit
+`69b5f7dfe1231c4dd2e504a47c5d85992efb558a`; the version label is not treated as
+a Git ref. The checked-in catalog, manifest refs, artifact checksums, manifest
+digests, and catalog digest are generated from that same fixed source ref.
+
 Registry discovery is deliberately user-triggered. Normal application startup,
 `GET /api/providers/registry`, capability polling, and project loading read only
 the bundled index or the last validated local cache; none of them contact an

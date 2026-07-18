@@ -91,7 +91,7 @@ export interface ProviderRegistryEntry {
   publisher: string;
   license: string;
   license_status: "approved" | "review_required" | "gated";
-  license_url?: string | null;
+  license_url: string;
   model_license?: string | null;
   model_license_url?: string | null;
   trust_level: "first_party" | "verified_maintainer";
