@@ -230,7 +230,7 @@ test("first-use provider selection installs a capability-scoped local provider",
   await expect(onboarding).not.toContainText("新的服务商已经可用，请在上方下拉菜单中选择。");
 });
 
-test("first-use registry keeps an installed provider blocked until configuration", async ({ page }) => {
+test("first-use registry keeps a configured sandbox blocked without a real executor", async ({ page }) => {
   let blockCapabilities = new Set(["llm"]);
   await page.addInitScript(() => {
     window.localStorage.removeItem("hcs_onboarding_seen");
@@ -263,12 +263,11 @@ test("first-use registry keeps an installed provider blocked until configuration
   const secretField = registry.locator("input[type='password']");
   await expect(secretField).toHaveCount(1);
   await secretField.fill("onboarding-test-secret");
-  blockCapabilities = new Set();
   await registry.getByRole("button", { name: "配置并启用", exact: true }).click();
-  const providerSelect = onboarding.getByRole("combobox", { name: "选择服务商", exact: true });
-  await expect(providerSelect).toContainText("HanClassStudio LLM Sandbox");
-  await expect(providerSelect).toBeEnabled();
-  await expect(providerSelect).toBeFocused();
+  await expect(registry.locator(".provider-registry-state.available")).toBeVisible();
+  await expect(registry).toContainText("仅用于安全演示");
+  await expect(onboarding.locator('option[value="hcs_mock_llm"]')).toHaveCount(0);
+  await expect(onboarding).not.toContainText("新的服务商已经可用，请在上方下拉菜单中选择。");
   await expect(page.locator("body")).not.toContainText("onboarding-test-secret");
 });
 
