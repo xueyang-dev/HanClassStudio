@@ -166,6 +166,14 @@ test("trusted provider registry requires explicit confirmation and keeps dialog 
   await expect(registry.locator(".provider-registry-card")).toHaveCount(2);
   await expect(registry).toContainText("HanClassStudio OCR Sandbox");
   await expect(registry).toContainText("HanClassStudio first-party");
+  const sourceLink = registry.getByRole("link", { name: "查看官方项目", exact: true }).first();
+  const licenseLink = registry.getByRole("link", { name: "查看许可证", exact: true }).first();
+  await expect(sourceLink).toHaveAttribute("href", /github\.com\/xueyang-dev\/HanClassStudio\/tree\/[0-9a-f]{40}\/providers/);
+  await expect(sourceLink).toHaveAttribute("target", "_blank");
+  await expect(sourceLink).toHaveAttribute("rel", /noopener/);
+  await expect(licenseLink).toHaveAttribute("href", /github\.com\/xueyang-dev\/HanClassStudio\/blob\/[0-9a-f]{40}\/LICENSE/);
+  await expect(licenseLink).toHaveAttribute("target", "_blank");
+  await expect(licenseLink).toHaveAttribute("rel", /noopener/);
 
   const prepare = registry.getByRole("button", { name: "生成安装计划" }).first();
   await prepare.click();

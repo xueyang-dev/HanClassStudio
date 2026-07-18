@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -235,6 +236,9 @@ def test_capability_catalog_merges_registry_keys_once_and_preserves_unknown_fall
 def test_mock_provider_is_never_an_llm_executor() -> None:
     assert not _llm_enabled(LLMProviderSettings(provider="hcs_mock_llm", api_key="sandbox-secret", model="sandbox"))
     assert _resolve_ocr_engine(None, ProviderSettings(ocr=OCRProviderSettings(provider="hcs_mock_ocr"))) is None
+    with pytest.raises(HTTPException) as error:
+        main._assert_llm_provider_supported(ProviderSettings(llm=LLMProviderSettings(provider="hcs_mock_llm", api_key="sandbox-secret", model="sandbox")))
+    assert error.value.detail["code"] == "provider_capability_unavailable"
 
 
 def test_confirmation_token_is_bound_to_plan_and_provider(tmp_path, monkeypatch) -> None:
