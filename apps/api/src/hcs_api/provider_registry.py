@@ -836,7 +836,13 @@ def _sync_parent_directory_best_effort(path: Path, name: str) -> None:
         )
         _record_durability_warning(name, exc, category=category)
     finally:
-        os.close(directory_fd)
+        # Closing the directory descriptor is also post-commit cleanup.  A
+        # close failure must not escape after ``os.replace`` has committed the
+        # new cache; record the stable errno as a durability warning instead.
+        try:
+            os.close(directory_fd)
+        except OSError as exc:
+            _record_durability_warning(name, exc, category="io_error")
 
 
 def _record_durability_warning(

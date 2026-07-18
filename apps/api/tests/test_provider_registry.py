@@ -675,6 +675,60 @@ def test_post_commit_directory_fsync_io_error_keeps_new_cache_active_with_warnin
     assert all("secret-value" not in line for line in warning_path.read_text(encoding="utf-8").splitlines())
 
 
+def test_post_commit_directory_close_error_keeps_new_cache_active_with_warning(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    current = _catalog()
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    upgraded = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (upgraded.model_dump(mode="json", by_alias=True), source_url),
+    )
+
+    real_open = registry.os.open
+    real_close = registry.os.close
+    directory_fd: dict[str, int] = {}
+
+    def tracking_open(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if Path(path) == storage.CONFIG_DIR:
+            directory_fd["value"] = fd
+        return fd
+
+    def failing_directory_close(fd: int) -> None:
+        if fd == directory_fd.get("value"):
+            real_close(fd)
+            raise OSError(errno.EIO, "directory close failed with token=secret-value")
+        real_close(fd)
+
+    monkeypatch.setattr(registry.os, "open", tracking_open)
+    monkeypatch.setattr(registry.os, "close", failing_directory_close)
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["catalog"]["source"]["catalog_version"] == 2
+
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert after.json()["source"]["catalog_version"] == 2
+    assert "secret-value" not in refreshed.text
+    assert "secret-value" not in after.text
+
+    warning_path = storage.CONFIG_DIR / "provider_registry_durability_warnings.jsonl"
+    assert warning_path.exists()
+    warnings = [json.loads(line) for line in warning_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(w["category"] == "io_error" and w["file"] == registry._REGISTRY_CACHE_FILE for w in warnings)
+    assert all("secret-value" not in line for line in warning_path.read_text(encoding="utf-8").splitlines())
+
+
 def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monkeypatch) -> None:
     client = _isolate(tmp_path, monkeypatch)
     catalog = client.get("/api/providers/registry")
