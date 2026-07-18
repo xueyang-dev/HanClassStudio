@@ -65,7 +65,7 @@ _TRUSTED_SOURCE_REPOSITORIES: dict[str, set[str]] = {
 
 _DEFAULT_REGISTRY_URL = (
     "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/"
-    "e289417dbc640b0734d997352a60ee89b6a50e24/providers/registry.v1.json"
+    "61276508791b76ffff354d6d993a7098b0d657f5/providers/registry.v1.json"
 )
 _REGISTRY_SCHEMA = "hanclassstudio.provider_registry.v1"
 _REGISTRY_CACHE_FILE = "provider_registry_cache.json"
