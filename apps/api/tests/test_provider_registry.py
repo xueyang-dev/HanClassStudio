@@ -72,6 +72,14 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
     payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["source_url"] += "?download=1"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["manifest"]["source_ref"] = "0" * 40
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
     payload["manifest_version"] = "2"
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
