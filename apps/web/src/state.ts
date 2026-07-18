@@ -24,6 +24,17 @@ export interface ProviderStatus {
   available: boolean;
 }
 
+/** Resolve a provider only within its backend-declared capability. The
+ * capability catalog is expected to be unique by this key; callers must not
+ * use ordering to resolve duplicate descriptors. */
+export function getProviderById(
+  id: string,
+  capability: ProviderCapability,
+  catalog: ProviderDefinition[],
+): ProviderDefinition | undefined {
+  return catalog.find((provider) => provider.id === id && provider.capability === capability);
+}
+
 export function getCapabilityProviders(
   capability: ProviderCapability,
   mode: "local" | "cloud",

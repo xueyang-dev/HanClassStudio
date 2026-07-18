@@ -404,6 +404,9 @@ def validate_registry(entries: list[ProviderRegistryEntry] | None = None) -> lis
     ids = [entry.provider_id for entry in entries]
     if len(ids) != len(set(ids)):
         raise ProviderRegistryError("registry_duplicate_provider", "Provider IDs must be unique")
+    keys = [(entry.capability, entry.provider_id) for entry in entries]
+    if len(keys) != len(set(keys)):
+        raise ProviderRegistryError("registry_duplicate_capability", "Provider capability keys must be unique")
     return entries
 
 

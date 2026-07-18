@@ -224,13 +224,10 @@ test("first-use provider selection installs a capability-scoped local provider",
   await confirmDialog.getByRole("button", { name: "确认安装", exact: true }).click();
   blockCapabilities = new Set();
 
-  const providerSelect = onboarding.getByRole("combobox", { name: "选择服务商", exact: true });
-  await expect(providerSelect).toContainText("HanClassStudio OCR Sandbox");
-  await expect(providerSelect).toBeEnabled();
-  await expect(providerSelect).toBeFocused();
-  await providerSelect.selectOption("hcs_mock_ocr");
-  await expect(providerSelect).toHaveValue("hcs_mock_ocr");
-  await expect(onboarding.getByText("新的服务商已经可用，请在上方下拉菜单中选择。", { exact: true })).toBeVisible();
+  await expect(registry.locator(".provider-registry-state.available")).toBeVisible();
+  await expect(registry).toContainText("仅用于安全演示");
+  await expect(onboarding.locator('option[value="hcs_mock_ocr"]')).toHaveCount(0);
+  await expect(onboarding).not.toContainText("新的服务商已经可用，请在上方下拉菜单中选择。");
 });
 
 test("first-use registry keeps an installed provider blocked until configuration", async ({ page }) => {

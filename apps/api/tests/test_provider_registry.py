@@ -11,7 +11,9 @@ from pydantic import ValidationError
 import hcs_api.main as main
 import hcs_api.provider_registry as registry
 import hcs_api.storage as storage
-from hcs_api.main import app
+from hcs_api.main import _resolve_ocr_engine, app
+from hcs_api.models import LLMProviderSettings, OCRProviderSettings, ProviderSettings
+from hcs_api.providers import _llm_enabled
 
 
 def _isolate(tmp_path, monkeypatch) -> TestClient:
@@ -141,10 +143,14 @@ def test_registry_install_state_flows_into_capability_contract(tmp_path, monkeyp
     after = client.get("/api/settings/providers/capabilities")
     assert after.status_code == 200
     ocr_after = next(item for item in after.json() if item["provider_id"] == "hcs_mock_ocr")
-    assert ocr_after["available"] is True
+    assert ocr_after["implemented"] is False
+    assert ocr_after["configurable"] is False
+    assert ocr_after["available"] is False
     assert ocr_after["configured"] is False
     assert ocr_after["install_state"] == "available"
     assert ocr_after["configuration_status"] == "configured"
+    assert "sandbox" in ocr_after["unavailable_reason"].lower()
+    assert "executor" in ocr_after["unavailable_reason"].lower()
 
 
 def test_registry_configuration_state_flows_into_capability_contract_without_secret(tmp_path, monkeypatch) -> None:
@@ -164,10 +170,60 @@ def test_registry_configuration_state_flows_into_capability_contract_without_sec
     secret = "capability-contract-secret"
     assert client.post("/api/providers/registry/hcs_mock_llm/configure", json={"values": {"api_key": secret}}).status_code == 200
     available = next(item for item in client.get("/api/settings/providers/capabilities").json() if item["provider_id"] == "hcs_mock_llm")
-    assert available["available"] is True
+    assert available["implemented"] is False
+    assert available["configurable"] is False
+    assert available["available"] is False
     assert available["configured"] is False
     assert available["configuration_status"] == "configured"
+    assert "sandbox" in available["unavailable_reason"].lower()
     assert secret not in json.dumps(available)
+
+
+def test_capability_catalog_merges_registry_keys_once_and_preserves_unknown_fallback(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+
+    prepared = client.post("/api/providers/registry/hcs_mock_llm/install/prepare").json()
+    assert client.post(
+        "/api/providers/registry/hcs_mock_llm/install/confirm",
+        json={"plan_id": prepared["plan"]["plan_id"], "confirmation_token": prepared["confirmation_token"]},
+    ).status_code == 200
+    assert client.post("/api/providers/registry/hcs_mock_llm/configure", json={"values": {"api_key": "sandbox-secret"}}).status_code == 200
+    saved = client.put(
+        "/api/settings/providers",
+        json={"capabilities": {"llm": {"providerId": "hcs_mock_llm", "values": {"api_key": "sandbox-secret"}}}},
+    )
+    assert saved.status_code == 200
+    assert "sandbox-secret" not in saved.text
+
+    saved = client.put(
+        "/api/settings/providers",
+        json={"capabilities": {"ocr": {"providerId": "legacy_ocr", "values": {}}}},
+    )
+    assert saved.status_code == 200
+
+    descriptors = client.get("/api/settings/providers/capabilities").json()
+    keys = [(item["capability"], item["provider_id"]) for item in descriptors]
+    assert len(keys) == len(set(keys))
+
+    sandbox = [item for item in descriptors if item["provider_id"] == "hcs_mock_llm"]
+    assert len(sandbox) == 1
+    assert sandbox[0]["implemented"] is False
+    assert sandbox[0]["configurable"] is False
+    assert sandbox[0]["configured"] is False
+    assert sandbox[0]["available"] is False
+    assert sandbox[0]["install_state"] == "available"
+    assert "sandbox" in sandbox[0]["unavailable_reason"].lower()
+    assert "executor" in sandbox[0]["unavailable_reason"].lower()
+
+    unknown = [item for item in descriptors if item["capability"] == "ocr" and item["provider_id"] == "legacy_ocr"]
+    assert len(unknown) == 1
+    assert unknown[0]["implemented"] is False
+    assert unknown[0]["available"] is False
+
+
+def test_mock_provider_is_never_an_llm_executor() -> None:
+    assert not _llm_enabled(LLMProviderSettings(provider="hcs_mock_llm", api_key="sandbox-secret", model="sandbox"))
+    assert _resolve_ocr_engine(None, ProviderSettings(ocr=OCRProviderSettings(provider="hcs_mock_ocr"))) is None
 
 
 def test_confirmation_token_is_bound_to_plan_and_provider(tmp_path, monkeypatch) -> None:
