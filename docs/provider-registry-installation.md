@@ -58,14 +58,15 @@ contradict each other:
    itself fails, the previous cache is still untouched and the same
    structured write failure is returned.
 3. **Post-commit durability.** On platforms that support it, the parent
-   directory is `fsync`ed after the commit to improve crash-durability.
-   Because the commit has already happened, a directory `fsync` failure is
-   never reported as a write failure: doing so would tell callers the old
-   cache is still in use while subsequent reads already observe the new one.
+   directory is `fsync`ed and the directory descriptor is closed after the
+   commit to improve crash-durability. Because the commit has already
+   happened, a directory `fsync` or close failure is never reported as a
+   write failure: doing so would tell callers the old cache is still in use
+   while subsequent reads already observe the new one.
    A platform or filesystem that explicitly does not support directory
    `fsync` (for example `EINVAL`, `ENOSYS`, `ENOTSUP`, or `EPERM`) is
    treated as a best-effort durability warning and the refresh succeeds.
-   Any other `OSError` from the directory `fsync` is also treated as a
+   Any other `OSError` from the directory sync or close is also treated as a
    durability warning rather than a write failure, because the new cache is
    already active; the warning is recorded with its stable `errno` for
    observability and never silently ignored. The raw exception message is
@@ -74,7 +75,8 @@ contradict each other:
 
 This means a refresh either returns a structured failure with the previous
 cache still active (pre-commit or commit failure), or returns success with
-the new cache active (post-commit, regardless of directory `fsync` outcome).
+the new cache active (post-commit, regardless of directory sync or close
+outcome).
 The API never returns "refresh failed" while the new cache is already the
 active cache on disk.
 
