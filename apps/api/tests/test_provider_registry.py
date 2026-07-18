@@ -239,6 +239,7 @@ def test_mock_provider_is_never_an_llm_executor() -> None:
     with pytest.raises(HTTPException) as error:
         main._assert_llm_provider_supported(ProviderSettings(llm=LLMProviderSettings(provider="hcs_mock_llm", api_key="sandbox-secret", model="sandbox")))
     assert error.value.detail["code"] == "provider_capability_unavailable"
+    assert "sandbox" in error.value.detail["message"].lower()
 
 
 def test_confirmation_token_is_bound_to_plan_and_provider(tmp_path, monkeypatch) -> None:
