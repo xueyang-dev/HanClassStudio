@@ -79,6 +79,7 @@ export interface ProviderRegistryEntry {
   repository: string;
   publisher: string;
   license: string;
+  license_url: string;
   trust_level: "first_party" | "verified_maintainer";
   version: string;
   source_ref: string;

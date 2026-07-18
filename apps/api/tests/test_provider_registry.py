@@ -32,6 +32,9 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
     for entry in entries:
         assert entry.trust_level == "first_party"
         assert entry.source_ref not in {"main", "latest"}
+        assert entry.source_ref == entry.manifest.source_ref
+        assert entry.source_url.endswith(f"/tree/{entry.source_ref}/providers")
+        assert entry.license_url.endswith(f"/blob/{entry.source_ref}/LICENSE")
         assert len(entry.checksum_sha256) == 64
         assert entry.manifest_digest == registry._digest(entry.manifest.model_dump(mode="json", by_alias=True))
         assert entry.executor == "mock"
@@ -57,6 +60,14 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
 
     payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
     payload["source_url"] = "http://github.com/xueyang-dev/HanClassStudio/tree/v0.1.0/providers"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["license_url"] = payload["license_url"].replace("/LICENSE", "/NOTICE")
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["license_url"] = payload["license_url"].replace("https://", "https://user:pass@")
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
     payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)

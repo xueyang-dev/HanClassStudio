@@ -7,9 +7,12 @@ provider-supplied shell commands.
 
 ## Registry contract
 
-Each entry has a stable `provider_id`, capability, publisher, license, trust
-level, fixed version/ref, artifact SHA-256, manifest version/digest, structured
-configuration schema, and environment requirements. Floating refs (`main`,
+Each entry has a stable `provider_id`, capability, publisher, license,
+`license_url`, trust level, fixed version/ref, artifact SHA-256, manifest
+version/digest, structured configuration schema, and environment requirements.
+The source and license links must both be HTTPS links to the same repository and
+the same fixed ref (`tree/<ref>/providers` and `blob/<ref>/LICENSE`); credentials,
+ports, query strings, fragments, and mismatched refs are rejected. Floating refs (`main`,
 `latest`, and similar values), untrusted hosts, repository/source mismatches,
 missing checksums, unknown manifest schemas, and invalid manifest digests are
 rejected before the entry can be served. Manifest steps are a closed enum; the
@@ -33,8 +36,11 @@ installation facts:
 
 The same facts are projected into `GET /api/settings/providers/capabilities`.
 Registry-backed descriptors keep `install_state`, `configuration_status`,
-`install_actions`, blockers, and failure details aligned with the registry; a
-provider is `available` only after the backend lifecycle reaches `available`.
+`install_actions`, blockers, and failure details aligned with the registry. A
+real registry entry is `available` only after the backend lifecycle reaches
+`available`; a `mock_only` entry is always `implemented=false`,
+`configurable=false`, `configured=false`, and `available=false`, even when its
+sandbox lifecycle record reaches `available`.
 The WebUI uses this contract for both model settings and first-use onboarding.
 
 When the selected local capability has no available provider, onboarding shows
@@ -94,10 +100,12 @@ fields, and URL query credentials, including JSON-shaped messages.
 ## Current scope
 
 `hcs_mock_ocr` and `hcs_mock_llm` are deterministic first-party fixtures used by
-API and Playwright tests. Real provider discovery, downloads, dependency
-installation, GPU validation, and model acquisition require a future executor
-implementation and a separate security review. Until then the UI labels these
-entries as sandbox-only and the backend never reports an external provider as
-installed or available. Environment checks can report platform, architecture,
+API and Playwright tests. Their fixed source evidence is the `providers/`
+directory at the commit recorded in `source_ref`, and their MIT license link is
+the `LICENSE` file at that same commit. Real provider discovery, downloads,
+dependency installation, GPU validation, and model acquisition require a future
+executor implementation and a separate security review. Until then the UI
+labels these entries as sandbox-only and the backend never reports an external
+provider as installed or available. Environment checks can report platform, architecture,
 Python, disk, memory, and GPU blockers, but no real executor consumes those
 requirements yet.

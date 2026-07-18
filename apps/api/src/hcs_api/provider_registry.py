@@ -109,6 +109,7 @@ class ProviderRegistryEntry(BaseModel):
     repository: str
     publisher: str
     license: str
+    license_url: str
     trust_level: TrustLevel
     version: str
     source_ref: str
@@ -135,7 +136,7 @@ class ProviderRegistryEntry(BaseModel):
     def _fixed_ref(cls, value: str) -> str:
         if value.lower() in {"main", "master", "latest", "head", "develop"}:
             raise ValueError("floating provider refs are not allowed")
-        if not value.strip():
+        if not value.strip() or value != value.strip() or "/" in value:
             raise ValueError("provider source_ref is required")
         return value
 
@@ -148,7 +149,11 @@ class ProviderRegistryEntry(BaseModel):
 
     @model_validator(mode="after")
     def _validate_manifest(self) -> "ProviderRegistryEntry":
-        if self.manifest.provider_id != self.provider_id or self.manifest.version != self.version:
+        if (
+            self.manifest.provider_id != self.provider_id
+            or self.manifest.version != self.version
+            or self.manifest.source_ref != self.source_ref
+        ):
             raise ValueError("manifest identity does not match registry entry")
         if self.manifest_version != "1" or self.manifest.schema_ != "hanclassstudio.provider_manifest.v1":
             raise ValueError("unknown provider manifest version")
@@ -157,19 +162,17 @@ class ProviderRegistryEntry(BaseModel):
             raise ValueError("manifest digest cannot be verified")
         if self.trust_level not in {"first_party", "verified_maintainer"}:
             raise ValueError("registry source is not trusted")
-        source = urlparse(self.source_url)
+        source = _validate_repository_link(self.source_url, self.repository, self.source_ref, kind="tree", leaf="providers")
+        license_link = _validate_repository_link(self.license_url, self.repository, self.source_ref, kind="blob", leaf="LICENSE")
         host = source.hostname or ""
-        if source.scheme != "https" or source.username or source.password or source.port:
-            raise ValueError("registry source must use HTTPS without embedded credentials")
+        if license_link.hostname != host:
+            raise ValueError("license URL host must match registry source")
         if host not in {"github.com", "huggingface.co"}:
             raise ValueError("registry source host is not trusted")
         if self.repository not in _TRUSTED_SOURCE_REPOSITORIES.get(host, set()):
             raise ValueError("registry repository is not in the explicit trust store")
         if self.trust_level == "first_party" and self.repository != "xueyang-dev/HanClassStudio":
             raise ValueError("first-party entries must point to the HanClassStudio repository")
-        source_parts = [part for part in source.path.strip("/").split("/") if part]
-        if len(source_parts) < 2 or "/".join(source_parts[:2]) != self.repository:
-            raise ValueError("registry source URL does not match its repository")
         if not self.checksum_sha256:
             raise ValueError("artifact checksum is required")
         if not self.manifest.steps:
@@ -177,6 +180,23 @@ class ProviderRegistryEntry(BaseModel):
         if any(step == "activate_version" for step in self.manifest.steps) and "cleanup_temp_environment" not in self.manifest.steps:
             raise ValueError("activation plans must include cleanup")
         return self
+
+
+def _validate_repository_link(value: str, repository: str, source_ref: str, *, kind: str, leaf: str):
+    parsed = urlparse(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("registry links must not contain an explicit port") from exc
+    if parsed.scheme != "https" or parsed.username or parsed.password or port is not None:
+        raise ValueError("registry links must use HTTPS without embedded credentials or ports")
+    if parsed.query or parsed.fragment:
+        raise ValueError("registry links must not contain query parameters or fragments")
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    expected = [*repository.split("/"), kind, source_ref, leaf]
+    if parts != expected:
+        raise ValueError("registry link must match its repository, fixed ref, and declared path")
+    return parsed
 
 
 class EnvironmentBlocker(BaseModel):
@@ -342,7 +362,7 @@ def _fixture(
     description: str, operations: list[str], fields: list[RegistryConfigField], requirements: EnvironmentRequirement,
 ) -> ProviderRegistryEntry:
     version = "0.1.0"
-    source_ref = "v0.1.0"
+    source_ref = "69b5f7dfe1231c4dd2e504a47c5d85992efb558a"
     steps: list[InstallStepKind] = [
         "create_isolated_environment", "download_and_verify_artifact", "checkout_exact_ref",
         "install_controlled_dependencies", "verify_model_files", "run_configuration_check",
@@ -354,10 +374,11 @@ def _fixture(
         capability=capability,
         display_name=display_name,
         description=description,
-        source_url="https://github.com/xueyang-dev/HanClassStudio/tree/v0.1.0/providers",
+        source_url=f"https://github.com/xueyang-dev/HanClassStudio/tree/{source_ref}/providers",
         repository="xueyang-dev/HanClassStudio",
         publisher="HanClassStudio first-party",
         license="MIT",
+        license_url=f"https://github.com/xueyang-dev/HanClassStudio/blob/{source_ref}/LICENSE",
         trust_level="first_party",
         version=version,
         source_ref=source_ref,

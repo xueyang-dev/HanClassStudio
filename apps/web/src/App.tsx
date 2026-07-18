@@ -1967,9 +1967,9 @@ function ProviderRegistryPanel({
                 </span>
               </div>
               <dl className="provider-registry-meta">
-                <div><dt>{t("provider.registry.source")}</dt><dd>{entry.repository}</dd></div>
+                <div><dt>{t("provider.registry.source")}</dt><dd><a href={entry.source_url} target="_blank" rel="noopener noreferrer">{t("provider.registry.viewSource")}</a></dd></div>
                 <div><dt>{t("provider.registry.publisher")}</dt><dd>{entry.publisher}</dd></div>
-                <div><dt>{t("provider.registry.license")}</dt><dd>{entry.license}</dd></div>
+                <div><dt>{t("provider.registry.license")}</dt><dd>{entry.license} · <a href={entry.license_url} target="_blank" rel="noopener noreferrer">{t("provider.registry.viewLicense")}</a></dd></div>
                 <div><dt>{t("provider.registry.available")}</dt><dd>{installation.available_version ?? entry.version}</dd></div>
                 <div><dt>{t("provider.registry.installed")}</dt><dd>{installation.installed_version ?? "—"}</dd></div>
               </dl>
@@ -3044,6 +3044,7 @@ const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
   [/quality gate/i, "status.blocker.quality"],
   [/credentials or required configuration are missing|configure a bridge token/i, "status.blocker.providerConfig"],
   [/codex agent bridge.*no live agent heartbeat/i, "status.blocker.codexBridgeDisconnected"],
+  [/sandbox fixture.*no real provider executor|no third-party tool will be downloaded/i, "provider.registry.mockUnavailable"],
   [/not implemented.*capability|not implemented in the production media pipeline/i, "status.blocker.providerUnavailable"],
   [/ocr engine is not available/i, "status.blocker.ocrUnavailable"],
   [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],
