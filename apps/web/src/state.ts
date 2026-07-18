@@ -1,4 +1,4 @@
-import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, StageState } from "./types";
+import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, ProviderRegistryCatalog, ProviderRegistryStatus, StageState } from "./types";
 
 export type PipelineStepStatus = "pending" | "running" | "done" | "error";
 
@@ -22,6 +22,57 @@ export interface WorkflowAction {
 export interface ProviderStatus {
   configured: boolean;
   available: boolean;
+}
+
+/** Resolve a provider only within its backend-declared capability. The
+ * capability catalog is expected to be unique by this key; callers must not
+ * use ordering to resolve duplicate descriptors. */
+export function getProviderById(
+  id: string,
+  capability: ProviderCapability,
+  catalog: ProviderDefinition[],
+): ProviderDefinition | undefined {
+  return catalog.find((provider) => provider.id === id && provider.capability === capability);
+}
+
+export function getCapabilityProviders(
+  capability: ProviderCapability,
+  mode: "local" | "cloud",
+  catalog: ProviderDefinition[],
+): ProviderDefinition[] {
+  return catalog.filter((provider) => (
+    provider.capability === capability
+      && provider.category === mode
+      && (provider.configurable || provider.experimental || !provider.implemented)
+  ));
+}
+
+export function getAvailableCapabilityProviders(
+  capability: ProviderCapability,
+  mode: "local" | "cloud",
+  catalog: ProviderDefinition[],
+): ProviderDefinition[] {
+  return getConfigurableCapabilityProviders(capability, mode, catalog)
+    .filter((provider) => provider.available);
+}
+
+/** The full settings dialog must allow a user to select an implemented Provider
+ * before entering its required credentials. Onboarding deliberately uses the
+ * stricter available-only helper above. */
+export function getConfigurableCapabilityProviders(
+  capability: ProviderCapability,
+  mode: "local" | "cloud",
+  catalog: ProviderDefinition[],
+): ProviderDefinition[] {
+  return getCapabilityProviders(capability, mode, catalog)
+    .filter((provider) => provider.implemented && provider.configurable);
+}
+
+export function getCapabilityRegistryProviders(
+  capability: ProviderCapability,
+  registry: ProviderRegistryCatalog | null,
+): ProviderRegistryStatus[] {
+  return registry?.providers.filter((status) => status.entry.capability === capability) ?? [];
 }
 
 /** Provider status is derived only from the backend capability catalog. Local
@@ -134,11 +185,12 @@ export const PIPELINE_STEP_KEYS = [
  * localStorage or other persisted client state.
  */
 export function sanitizeProviderConfig(config: ProviderConfig): ProviderConfig {
+  const sensitiveKey = /^(?:api[_-]?key|access[_-]?token|authorization|bearer|password|secret|credential|token)$/i;
   const sanitized: ProviderConfig = {};
   for (const [capability, value] of Object.entries(config) as [ProviderCapability, ProviderConfig[ProviderCapability]][]) {
     if (!value?.providerId) continue;
     const values = Object.fromEntries(
-      Object.entries(value.values ?? {}).filter(([key]) => key !== "api_key" && key !== "apiKey"),
+      Object.entries(value.values ?? {}).filter(([key]) => !sensitiveKey.test(key)),
     );
     sanitized[capability] = { providerId: value.providerId, values };
   }

@@ -31,6 +31,137 @@ export interface ProviderDefinition {
   experimental: boolean;
   unavailable_reason?: string | null;
   supported_operations: string[];
+  install_state?: ProviderInstallState | null;
+  installed_version?: string | null;
+  available_version?: string | null;
+  environment_requirements?: Record<string, unknown>;
+  environment_blockers?: ProviderEnvironmentBlocker[];
+  install_actions?: ProviderInstallAction[];
+  configuration_status?: "unknown" | "missing" | "configured" | "invalid";
+  rollback_available?: boolean;
+  failure?: { code: string; message: string; stage?: string | null; recoverable?: boolean } | null;
+}
+
+export type ProviderInstallState = "discovered" | "ready" | "installing" | "installed" | "configuring" | "available" | "failed";
+export type ProviderInstallAction = "prepare_install" | "confirm_install" | "retry_install" | "configure" | "rollback" | "view_logs";
+
+export interface ProviderEnvironmentBlocker {
+  code: string;
+  message: string;
+  requirement?: string | null;
+}
+
+export interface ProviderEnvironmentReport {
+  platform: string;
+  architecture: string;
+  python_version: string;
+  free_disk_mb: number;
+  gpu_available: boolean;
+  blockers: ProviderEnvironmentBlocker[];
+  checked_at: string;
+}
+
+export interface ProviderRegistryConfigField {
+  key: string;
+  label: string;
+  type: "text" | "password" | "url";
+  required: boolean;
+  secret: boolean;
+  placeholder?: string | null;
+}
+
+export interface ProviderRegistryEntry {
+  provider_id: string;
+  capability: ProviderCapability;
+  display_name: string;
+  description: string;
+  source_url: string;
+  repository: string;
+  publisher: string;
+  license: string;
+  license_url: string;
+  trust_level: "first_party" | "verified_maintainer";
+  version: string;
+  source_ref: string;
+  checksum_sha256: string;
+  manifest_version: string;
+  manifest_digest: string;
+  configuration_schema: ProviderRegistryConfigField[];
+  requirements: Record<string, unknown>;
+  supported_operations: string[];
+  executor: "mock";
+  mock_only: boolean;
+  experimental: boolean;
+}
+
+export interface ProviderInstallation {
+  provider_id: string;
+  capability: ProviderCapability;
+  install_state: ProviderInstallState;
+  installed_version?: string | null;
+  available_version?: string | null;
+  active_version?: string | null;
+  previous_version?: string | null;
+  configuration_status: "unknown" | "missing" | "configured" | "invalid";
+  api_key_present: boolean;
+  environment_blockers: ProviderEnvironmentBlocker[];
+  blockers: ProviderEnvironmentBlocker[];
+  failure?: { code: string; message: string; stage?: string | null; recoverable?: boolean } | null;
+  rollback_available: boolean;
+  current_plan_id?: string | null;
+  updated_at: string;
+}
+
+export interface ProviderRegistryStatus {
+  entry: ProviderRegistryEntry;
+  installation: ProviderInstallation;
+  environment: ProviderEnvironmentReport;
+  install_actions: ProviderInstallAction[];
+}
+
+export interface ProviderRegistryCatalog {
+  providers: ProviderRegistryStatus[];
+}
+
+export interface ProviderInstallStep {
+  kind: string;
+  label: string;
+}
+
+export interface ProviderInstallPlan {
+  plan_id: string;
+  provider_id: string;
+  version: string;
+  source_ref: string;
+  checksum_sha256: string;
+  manifest_digest: string;
+  steps: ProviderInstallStep[];
+  environment: ProviderEnvironmentReport;
+  rollback_strategy: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface ProviderInstallPrepareResponse {
+  plan: ProviderInstallPlan;
+  confirmation_token: string;
+  expires_at: string;
+}
+
+export interface ProviderInstallResult {
+  installation: ProviderInstallation;
+  install_actions: ProviderInstallAction[];
+}
+
+export interface ProviderInstallLog {
+  timestamp: string;
+  provider_id: string;
+  plan_id?: string | null;
+  stage: string;
+  operation: string;
+  message: string;
+  success?: boolean | null;
+  failure_code?: string | null;
 }
 
 /** Stored configuration for one capability. */

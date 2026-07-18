@@ -622,6 +622,19 @@ class ProviderCapabilityDescriptor(BaseModel):
     unavailable_reason: str | None = None
     configuration_schema: list[dict[str, Any]] = Field(default_factory=list)
     supported_operations: list[str] = Field(default_factory=list)
+    # Installation facts are optional for legacy built-in providers.  Registry
+    # backed providers populate these fields from the backend lifecycle
+    # contract; clients must not infer them from filesystem presence.
+    install_state: Literal["discovered", "ready", "installing", "installed", "configuring", "available", "failed"] | None = None
+    installed_version: str | None = None
+    available_version: str | None = None
+    environment_requirements: dict[str, Any] = Field(default_factory=dict)
+    environment_blockers: list[dict[str, Any]] = Field(default_factory=list)
+    install_actions: list[str] = Field(default_factory=list)
+    install_logs: list[dict[str, Any]] = Field(default_factory=list)
+    configuration_status: Literal["unknown", "missing", "configured", "invalid"] = "unknown"
+    rollback_available: bool = False
+    failure: dict[str, Any] | None = None
 
 
 class StageStatus(BaseModel):

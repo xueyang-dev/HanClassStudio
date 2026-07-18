@@ -72,6 +72,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "operations": ["blueprint", "illustration"],
         },
         {
+            "capability": "llm", "provider_id": "codex_chatgpt", "display_name": "Codex ChatGPT Bridge",
+            "category": "local", "description": "Audited asynchronous handoff to a live Codex agent session",
+            "fields": [_field("api_key", "Bridge token", "password", required=True),
+                       _field("model", "Model label", placeholder="codex-chatgpt")],
+            "operations": ["blueprint", "illustration"],
+        },
+        {
             "capability": "image", "provider_id": "placeholder", "display_name": "Deterministic SVG",
             "category": "local", "description": "Offline-safe deterministic illustration fallback",
             "fields": [], "operations": ["placeholder"],
@@ -91,6 +98,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
             "operations": ["image"], "experimental": True,
+        },
+        {
+            "capability": "image", "provider_id": "codex_image", "display_name": "Codex Image Bridge",
+            "category": "local", "description": "Audited asynchronous image handoff to a live Codex agent session",
+            "fields": [_field("api_key", "Bridge token", "password", required=True),
+                       _field("model", "Model label", placeholder="codex-image")],
+            "operations": ["image"],
         },
         {
             "capability": "tts", "provider_id": "placeholder", "display_name": "Deterministic tone",
@@ -176,7 +190,7 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
         engine_status = {}
 
     definitions = _provider_definitions()
-    known = {(item["capability"], item["provider_id"]) for item in definitions}
+    definition_keys = {(item["capability"], item["provider_id"]) for item in definitions}
     result: list[ProviderCapabilityDescriptor] = []
     for item in definitions:
         provider_id, values = _selected_provider(settings, item["capability"])
@@ -184,6 +198,14 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
         implemented = item.get("implemented", True)
         available = implemented
         reason = item.get("unavailable_reason")
+        if item["provider_id"] in {"codex_chatgpt", "codex_image"}:
+            from .codex_bridge import is_active
+
+            available = configured and is_active(item["capability"], values.get("api_key", ""))
+            if not configured:
+                reason = "Configure a bridge token and select this Provider before connecting a Codex agent."
+            elif not available:
+                reason = "Codex agent bridge is configured but no live agent heartbeat is available."
         if provider_id == item["provider_id"] and not configured:
             reason = "Provider credentials or required configuration are missing."
         if item["capability"] == "ocr" and item["provider_id"] in engine_status:
@@ -198,16 +220,98 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             configuration_schema=item["fields"], supported_operations=item["operations"],
         ))
 
-    # Preserve visibility of a previously stored but no longer supported choice.
+    # Registry-backed providers are part of the same capability contract. The
+    # registry owns install/configuration facts; this adapter only translates
+    # those facts into the descriptor shape consumed by settings and onboarding.
+    # Keep this import local so the provider catalog remains usable by the
+    # registry module without creating an import cycle.
+    try:
+        from .provider_registry import ProviderRegistryError, registry_status
+
+        registry = registry_status()
+    except ProviderRegistryError:
+        raise
+    except Exception as exc:
+        raise ProviderRegistryError("provider_registry_unavailable", "Provider registry is unavailable") from exc
+    registry_keys = {(status.entry.capability, status.entry.provider_id) for status in registry.providers}
+    seen = definition_keys | registry_keys
+    for status in registry.providers:
+        entry = status.entry
+        key = (entry.capability, entry.provider_id)
+        if key in definition_keys:
+            continue
+        installation = status.installation
+        blockers = [*status.environment.blockers, *installation.blockers]
+        selected = _selected_provider(settings, entry.capability)[0] == entry.provider_id
+        if entry.mock_only:
+            # Installation lifecycle state is useful evidence in the registry,
+            # but a mock executor never provides a production capability.
+            implemented = False
+            configurable = False
+            configured = False
+            available = False
+            unavailable_reason = (
+                "Sandbox fixture only: no real Provider executor is available; "
+                "no third-party tool will be downloaded, installed, or executed."
+            )
+        else:
+            implemented = True
+            configurable = True
+            available = installation.install_state == "available" and installation.configuration_status == "configured" and not blockers
+            configured = selected and available and installation.configuration_status == "configured"
+            if available:
+                unavailable_reason = None
+            elif blockers:
+                unavailable_reason = blockers[0].message
+            elif installation.install_state in {"installed", "configuring"}:
+                unavailable_reason = "Provider configuration is required before activation."
+            elif installation.failure:
+                unavailable_reason = installation.failure.message
+            else:
+                unavailable_reason = "Provider is not installed."
+        result.append(ProviderCapabilityDescriptor(
+            capability=entry.capability,
+            provider_id=entry.provider_id,
+            display_name=entry.display_name,
+            category="local",
+            description=entry.description,
+            implemented=implemented,
+            configurable=configurable,
+            configured=configured,
+            available=available,
+            experimental=entry.experimental,
+            unavailable_reason=unavailable_reason,
+            configuration_schema=[field.model_dump(mode="json") for field in entry.configuration_schema],
+            supported_operations=entry.supported_operations,
+            install_state=installation.install_state,
+            installed_version=installation.installed_version,
+            available_version=installation.available_version,
+            environment_requirements=entry.requirements.model_dump(mode="json"),
+            environment_blockers=[item.model_dump(mode="json") for item in blockers],
+            install_actions=status.install_actions,
+            configuration_status=installation.configuration_status,
+            rollback_available=installation.rollback_available,
+            failure=installation.failure.model_dump(mode="json") if installation.failure else None,
+        ))
+
+    # Preserve visibility of a previously stored but no longer supported choice
+    # only after registry keys have been added to the seen set. This prevents a
+    # registry-backed provider from receiving an unknown fallback descriptor.
     for capability in ("llm", "image", "tts", "ocr", "video"):
         provider_id, values = _selected_provider(settings, capability)
-        if not provider_id or (capability, provider_id) in known:
+        key = (capability, provider_id)
+        if not provider_id or key in seen:
             continue
         result.append(ProviderCapabilityDescriptor(
             capability=capability, provider_id=provider_id, display_name=provider_id,
             category="cloud", configured=False, available=False,
             unavailable_reason="This provider is not implemented for this capability.",
         ))
+        seen.add(key)
+
+    result_keys = [(item.capability, item.provider_id) for item in result]
+    if len(result_keys) != len(set(result_keys)):
+        raise ProviderRegistryError("provider_capability_duplicate", "Provider capability catalog contains duplicate descriptors")
     return result
 
 
@@ -215,6 +319,7 @@ def generate_blueprint_with_llm(
     source: SourceMaterial,
     profile: LessonProfile,
     settings: LLMProviderSettings,
+    project_id: str | None = None,
 ) -> LessonBlueprint | None:
     if not _llm_enabled(settings):
         return None
@@ -229,6 +334,23 @@ def generate_blueprint_with_llm(
         },
         {"role": "user", "content": _blueprint_prompt(source, profile)},
     ]
+    if settings.provider == "codex_chatgpt":
+        if not project_id:
+            raise ProviderError("Codex ChatGPT Bridge requires a project workspace")
+        from .codex_bridge import CodexBridgeActionRequired, completed_json, request_job
+
+        job = request_job(project_id, "llm", "blueprint", {
+            "messages": messages,
+            "response_schema": "LessonBlueprint",
+        })
+        data = completed_json(job)
+        if data is None:
+            raise CodexBridgeActionRequired([job.job_id])
+        blueprint = LessonBlueprint.model_validate(data)
+        if not blueprint.slides:
+            raise ProviderError("Codex ChatGPT Bridge returned an empty lesson blueprint")
+        return _normalize_blueprint(blueprint, profile)
+
     content = _chat_completion(settings, messages)
     data = _extract_json(content)
     if isinstance(data, dict) and "blueprint" in data:
@@ -277,6 +399,8 @@ def _llm_enabled(settings: LLMProviderSettings) -> bool:
         return bool(settings.model.strip())
     if provider in {"openai_compatible", "custom"}:
         return bool(settings.base_url.strip() and settings.model.strip() and settings.api_key.strip())
+    if provider == "codex_chatgpt":
+        return bool(settings.api_key.strip())
     return False
 
 

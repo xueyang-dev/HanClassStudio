@@ -22,7 +22,7 @@ from .presentation_theme import (
 )
 from .providers import ProviderError, _llm_enabled, generate_openai_image, generate_openai_tts
 from .raster_provider import (
-    RasterProviderError,
+    ProviderImagePayload, RasterProviderError,
     generate_experimental_raster_image,
     image_dimensions,
 )
@@ -177,10 +177,16 @@ def generate_configured_media(
         for s in blueprint.slides
         if s.media_requirements.image_key and s.media_requirements.media_kind != "svg_illustration"
     }
-    _replace_images_with_provider_assets(
-        project_root, manifest, settings, allowed_keys=raster_keys,
-        previous=previous, force_regenerate=force_regenerate, theme=theme,
-    )
+    if settings.image.provider == "codex_image":
+        _replace_images_with_codex_bridge(
+            project_root, manifest, settings, allowed_keys=raster_keys,
+            previous=previous, force_regenerate=force_regenerate, theme=theme,
+        )
+    else:
+        _replace_images_with_provider_assets(
+            project_root, manifest, settings, allowed_keys=raster_keys,
+            previous=previous, force_regenerate=force_regenerate, theme=theme,
+        )
 
     svg_keys = {
         s.media_requirements.image_key
@@ -337,6 +343,71 @@ def _replace_images_with_provider_assets(
             "experimental": True,
             "records": diagnostic_records,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _replace_images_with_codex_bridge(
+    project_root: Path,
+    manifest: AssetManifest,
+    settings: ProviderSettings,
+    allowed_keys: set[str],
+    previous: dict[str, AssetFile],
+    force_regenerate: bool,
+    theme: PresentationTheme | None,
+) -> None:
+    from .codex_bridge import CodexBridgeActionRequired, completed_image, request_job
+
+    image_dir = project_root / "assets" / "images"
+    pending: list[str] = []
+    for index, asset in enumerate(manifest.images):
+        if asset.id not in allowed_keys:
+            continue
+        request = IllustrationRequest(
+            id=asset.id,
+            concept=asset.prompt,
+            scene_description=_theme_aware_prompt(asset.prompt, theme),
+            aspect_ratio="16:9",
+            style_profile=theme.image_treatment.illustration_style if theme else "legacy_unspecified",
+            style_profile_version="1" if theme else "0",
+            theme_id=theme.theme_id if theme else None,
+            theme_version=theme.version if theme else None,
+            source_trace=[f"legacy_media_requirement:{asset.id}"],
+        )
+        fingerprint = raster_request_fingerprint(request, settings.image)
+        prior = previous.get(asset.id)
+        if not force_regenerate:
+            cached = reusable_asset(project_root, prior, fingerprint)
+            if cached:
+                manifest.images[index] = cached
+                continue
+        if prior:
+            asset.candidates = [item.model_copy(deep=True) for item in prior.candidates]
+            asset.review_history = [item.model_copy(deep=True) for item in prior.review_history]
+        asset.request_fingerprint = fingerprint
+        job = request_job(project_root.name, "image", "image", {
+            "asset_id": asset.id,
+            "illustration_request": request.model_dump(mode="json"),
+            "accepted_mime_types": ["image/png", "image/jpeg", "image/webp"],
+            "generation_attempt": sum(item.source == "generated" for item in asset.candidates) if force_regenerate else 0,
+        })
+        result = completed_image(job)
+        if result is None:
+            pending.append(job.job_id)
+            continue
+        content, mime_type = result
+        payload = ProviderImagePayload(
+            image_bytes=content,
+            mime_type=mime_type,
+            model=settings.image.model or "codex-image",
+            prompt=request.scene_description,
+            revised_prompt=None,
+            seed=None,
+            retry_count=0,
+            provider_request_id=job.job_id,
+            warnings=[],
+        )
+        _persist_raster_asset(image_dir, asset, request, settings, payload)
+    if pending:
+        raise CodexBridgeActionRequired(pending)
 
 
 def _extension_for_mime(mime_type: str) -> str:

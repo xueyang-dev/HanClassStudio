@@ -1,5 +1,5 @@
-import { canUseStageAction, exportActionsFromProject, getNextWorkflowAction, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
-import type { ProjectState } from "./types";
+import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
+import type { ProjectState, ProviderRegistryCatalog } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
   if (actual !== expected) throw new Error(`Expected ${String(expected)}, got ${String(actual)}`);
@@ -110,6 +110,77 @@ deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "dr
 deepEqual(providerStatus({ providerId: "openai_compatible", values: { model: "saved" } }, "llm", providerCatalog.map((item) => ({ ...item, configured: true }))), { configured: true, available: true });
 deepEqual(providerStatus({ providerId: "openai_compatible", values: {} }, "llm", providerCatalog.map((item) => ({ ...item, configured: true, available: false }))), { configured: true, available: false });
 
+const registry: ProviderRegistryCatalog = {
+  providers: [
+    {
+      entry: {
+        provider_id: "hcs_mock_ocr",
+        capability: "ocr",
+        display_name: "OCR sandbox",
+        description: "",
+        source_url: "https://github.com/xueyang-dev/HanClassStudio/tree/69b5f7dfe1231c4dd2e504a47c5d85992efb558a/providers",
+        repository: "xueyang-dev/HanClassStudio",
+        publisher: "HanClassStudio",
+        license: "MIT",
+        license_url: "https://github.com/xueyang-dev/HanClassStudio/blob/69b5f7dfe1231c4dd2e504a47c5d85992efb558a/LICENSE",
+        trust_level: "first_party",
+        version: "0.1.0",
+        source_ref: "69b5f7dfe1231c4dd2e504a47c5d85992efb558a",
+        checksum_sha256: "0".repeat(64),
+        manifest_version: "1",
+        manifest_digest: "1".repeat(64),
+        configuration_schema: [],
+        requirements: {},
+        supported_operations: ["ocr"],
+        executor: "mock",
+        mock_only: true,
+        experimental: true,
+      },
+      installation: {
+        provider_id: "hcs_mock_ocr",
+        capability: "ocr",
+        install_state: "ready",
+        installed_version: null,
+        available_version: "0.1.0",
+        active_version: null,
+        previous_version: null,
+        configuration_status: "unknown",
+        api_key_present: false,
+        environment_blockers: [],
+        blockers: [],
+        failure: null,
+        rollback_available: false,
+        current_plan_id: null,
+        updated_at: "",
+      },
+      environment: { platform: "macos", architecture: "arm64", python_version: "3.11", free_disk_mb: 1000, gpu_available: false, blockers: [], checked_at: "" },
+      install_actions: ["prepare_install"],
+    },
+  ],
+};
+const ocrCatalog = [
+  { ...providerCatalog[0], id: "tesseract", name: "Tesseract", capability: "ocr" as const, category: "local" as const, available: false },
+  { ...providerCatalog[0], id: "hcs_mock_ocr", name: "OCR sandbox", capability: "ocr" as const, category: "local" as const, implemented: false, configurable: false, available: false, experimental: true },
+];
+equal(getCapabilityProviders("ocr", "local", ocrCatalog).length, 2);
+equal(getConfigurableCapabilityProviders("ocr", "local", ocrCatalog).length, 1);
+equal(getAvailableCapabilityProviders("ocr", "local", ocrCatalog).length, 0);
+equal(getCapabilityRegistryProviders("ocr", registry).length, 1);
+deepEqual(getCapabilityRegistryProviders("llm", registry), []);
+const availableOcrCatalog = ocrCatalog.map((item) => item.id === "hcs_mock_ocr" ? { ...item, available: true, configured: true } : item);
+equal(getAvailableCapabilityProviders("ocr", "local", availableOcrCatalog).length, 0);
+equal(getProviderById("hcs_mock_ocr", "ocr", ocrCatalog)?.implemented, false);
+const codexBridgeCatalog = [{
+  ...providerCatalog[0],
+  id: "codex_chatgpt",
+  name: "Codex ChatGPT Bridge",
+  category: "local" as const,
+  available: false,
+  configured: false,
+}];
+equal(getConfigurableCapabilityProviders("llm", "local", codexBridgeCatalog).map((item) => item.id).join(","), "codex_chatgpt");
+equal(getAvailableCapabilityProviders("llm", "local", codexBridgeCatalog).length, 0);
+
 const notRunExport = exportActionsFromProject({
   ...project,
   gate_summary: {
@@ -122,10 +193,12 @@ deepEqual(notRunExport, { normal: false, force: false, qualityState: "not_run" }
 const persisted = sanitizeProviderConfig({
   llm: { providerId: "openai_compatible", values: { api_key: "secret", model: "teacher" } },
   image: { providerId: "placeholder", values: { apiKey: "another-secret", model: "svg" } },
+  tts: { providerId: "custom", values: { token: "third-secret", voice: "default" } },
 });
 deepEqual(persisted, {
   llm: { providerId: "openai_compatible", values: { model: "teacher" } },
   image: { providerId: "placeholder", values: { model: "svg" } },
+  tts: { providerId: "custom", values: { voice: "default" } },
 });
 
 const providerBaseline = providerConfigSnapshot({

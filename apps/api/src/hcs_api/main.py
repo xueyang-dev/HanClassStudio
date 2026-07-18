@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 import shutil
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +15,18 @@ from .agent import generate_agent_package, validate_agent_output
 from .agents import infer_profile
 from .asset_review import apply_review, render_review_page, replace_with_teacher_image
 from .components import load_component_registry
+from .codex_bridge import (
+    CodexBridgeActionRequired,
+    CodexBridgeError,
+    CodexBridgeHeartbeat,
+    CodexBridgeJob,
+    authorize_token as authorize_codex_bridge_token,
+    complete_blueprint as complete_codex_blueprint,
+    complete_image as complete_codex_image,
+    get_job as get_codex_bridge_job,
+    heartbeat as codex_bridge_heartbeat,
+    pending_or_completed_jobs as codex_bridge_jobs,
+)
 from .models import (
     AgentPackage,
     AgentValidation,
@@ -41,6 +55,24 @@ from .models import (
 from .parser import parse_source
 from .source_understanding import OCRPolicy, get_engine_status
 from .providers import ProviderError, provider_capability_catalog
+from .provider_registry import (
+    InstallConfirmRequest,
+    ProviderConfigureRequest,
+    ProviderInstallLog,
+    ProviderRegistryError,
+    RegistryCatalogResponse,
+    InstallPrepareResponse,
+    InstallResult,
+    audit_events,
+    confirm_install,
+    configure_install,
+    install_logs,
+    prepare_install,
+    registry_status,
+    retry_install,
+    rollback_install,
+    _redact_sensitive_text,
+)
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
 from .pptx_exporter import export_editable_pptx
@@ -82,6 +114,8 @@ app.add_middleware(
         "http://127.0.0.1:4173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
         "http://localhost:4174",
         "http://127.0.0.1:4174",
     ],
@@ -98,6 +132,95 @@ app.mount("/runtime/projects", StaticFiles(directory=PROJECTS_DIR), name="runtim
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _bearer_token(authorization: str | None) -> str:
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail={
+            "code": "codex_bridge_unauthorized",
+            "message": "A Codex bridge bearer token is required.",
+        })
+    return token.strip()
+
+
+def _codex_bridge_http_error(error: CodexBridgeError) -> HTTPException:
+    status_code = 401 if error.code == "codex_bridge_unauthorized" else 404 if error.code == "codex_bridge_job_not_found" else 400
+    return HTTPException(status_code=status_code, detail={"code": error.code, "message": error.message})
+
+
+def _codex_action_required(error: CodexBridgeActionRequired) -> HTTPException:
+    return HTTPException(status_code=409, detail={
+        "code": "codex_agent_action_required",
+        "capability": "codex_bridge",
+        "job_ids": error.job_ids,
+        "message": "A connected Codex agent must complete the queued provider jobs, then retry this action.",
+    })
+
+
+@app.post("/api/providers/codex-bridge/heartbeat")
+def heartbeat_codex_bridge(
+    payload: CodexBridgeHeartbeat,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    try:
+        return codex_bridge_heartbeat(read_provider_settings(), _bearer_token(authorization), payload.capabilities)
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
+
+
+@app.get("/api/providers/codex-bridge/jobs", response_model=list[CodexBridgeJob])
+def list_codex_bridge_jobs(
+    state: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+) -> list[CodexBridgeJob]:
+    token = _bearer_token(authorization)
+    try:
+        authorized = authorize_codex_bridge_token(read_provider_settings(), token)
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
+    if state not in {None, "pending", "completed"}:
+        raise HTTPException(status_code=400, detail={"code": "codex_bridge_state_invalid", "message": "Unsupported job state"})
+    return [job for job in codex_bridge_jobs(state) if job.capability in authorized]
+
+
+@app.post("/api/providers/codex-bridge/jobs/{job_id}/complete-blueprint", response_model=CodexBridgeJob)
+def submit_codex_blueprint(
+    job_id: str,
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+) -> CodexBridgeJob:
+    token = _bearer_token(authorization)
+    try:
+        authorized = authorize_codex_bridge_token(read_provider_settings(), token)
+        job = get_codex_bridge_job(job_id)
+        if job.capability not in authorized:
+            raise CodexBridgeError("codex_bridge_capability_denied", "Token cannot complete this job")
+        return complete_codex_blueprint(job, payload)
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail={
+            "code": "codex_bridge_blueprint_invalid",
+            "message": str(error),
+        }) from error
+
+
+@app.post("/api/providers/codex-bridge/jobs/{job_id}/complete-image", response_model=CodexBridgeJob)
+async def submit_codex_image(
+    job_id: str,
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> CodexBridgeJob:
+    token = _bearer_token(authorization)
+    try:
+        authorized = authorize_codex_bridge_token(read_provider_settings(), token)
+        job = get_codex_bridge_job(job_id)
+        if job.capability not in authorized:
+            raise CodexBridgeError("codex_bridge_capability_denied", "Token cannot complete this job")
+        return complete_codex_image(job, await file.read(), file.content_type or "")
+    except CodexBridgeError as error:
+        raise _codex_bridge_http_error(error) from error
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -686,6 +809,7 @@ def _public_provider_settings(settings: ProviderSettings) -> PublicProviderSetti
         "video": bool(str(settings.video.api_key or "").strip()),
     }
     raw_capabilities = settings.capabilities if isinstance(settings.capabilities, dict) else {}
+    sensitive_keys = re.compile(r"(?i)^(?:api[_-]?key|access[_-]?token|authorization|bearer|password|secret|credential|token)$")
     for capability, raw in raw_capabilities.items():
         if not isinstance(raw, dict) or not raw.get("providerId"):
             continue
@@ -693,13 +817,13 @@ def _public_provider_settings(settings: ProviderSettings) -> PublicProviderSetti
         safe_values = {
             str(key): str(value)
             for key, value in values.items()
-            if str(key) not in {"api_key", "apiKey"}
+            if not sensitive_keys.search(str(key))
         }
         capabilities[str(capability)] = PublicCapabilityConfig(
             providerId=str(raw["providerId"]),
             values=safe_values,
             api_key_present=bool(
-                str(values.get("api_key", values.get("apiKey", "")) or "").strip()
+                any(sensitive_keys.search(str(key)) and str(value or "").strip() for key, value in values.items())
                 or flat_api_key_present.get(str(capability), False)
             ),
         )
@@ -721,7 +845,114 @@ def get_provider_settings() -> PublicProviderSettings:
 
 @app.get("/api/settings/providers/capabilities", response_model=list[ProviderCapabilityDescriptor])
 def get_provider_capabilities() -> list[ProviderCapabilityDescriptor]:
-    return provider_capability_catalog(read_provider_settings())
+    try:
+        return provider_capability_catalog(read_provider_settings())
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error) from error
+
+
+def _provider_registry_http_error(error: ProviderRegistryError, *, provider_id: str | None = None) -> HTTPException:
+    if error.code == "provider_not_registered":
+        status = 404
+    elif error.code.startswith("provider_persistence_") or error.code == "provider_registry_unavailable":
+        status = 503
+    elif error.code.endswith("in_progress") or "transition" in error.code or error.code in {
+        "provider_plan_invalid", "provider_plan_expired", "provider_confirmation_invalid", "provider_plan_stale",
+        "provider_plan_consumed", "provider_not_ready", "provider_retry_unavailable", "provider_configuration_unavailable", "provider_rollback_unavailable",
+    }:
+        status = 409
+    else:
+        status = 400
+    detail = {
+        "code": error.code,
+        "message": _redact_sensitive_text(error.message),
+        "blockers": [
+            {
+                **item,
+                "message": _redact_sensitive_text(str(item.get("message", ""))),
+            }
+            if isinstance(item, dict)
+            else item
+            for item in error.blockers
+        ],
+    }
+    if provider_id:
+        detail["provider_id"] = provider_id
+    return HTTPException(status_code=status, detail=detail)
+
+
+@app.get("/api/providers/registry", response_model=RegistryCatalogResponse)
+def get_provider_registry() -> RegistryCatalogResponse:
+    """Return trusted registry metadata and backend-owned installation facts."""
+    try:
+        return registry_status()
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error) from error
+
+
+@app.get("/api/providers/registry/audit")
+def get_provider_audit(provider_id: str | None = Query(default=None)) -> list[dict[str, Any]]:
+    return [event.model_dump(mode="json") for event in audit_events(provider_id)]
+
+
+@app.get("/api/providers/registry/{provider_id}")
+def get_provider_registry_entry(provider_id: str) -> dict:
+    try:
+        catalog = registry_status()
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+    for item in catalog.providers:
+        if item.entry.provider_id == provider_id:
+            return item.model_dump(mode="json")
+    raise HTTPException(status_code=404, detail={"code": "provider_not_registered", "provider_id": provider_id})
+
+
+@app.post("/api/providers/registry/{provider_id}/install/prepare", response_model=InstallPrepareResponse)
+def prepare_provider_install(provider_id: str) -> InstallPrepareResponse:
+    try:
+        return prepare_install(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/install/confirm", response_model=InstallResult)
+def confirm_provider_install(provider_id: str, payload: InstallConfirmRequest) -> InstallResult:
+    try:
+        return confirm_install(provider_id, payload)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/configure", response_model=InstallResult)
+def configure_provider_install(provider_id: str, payload: ProviderConfigureRequest) -> InstallResult:
+    try:
+        return configure_install(provider_id, payload)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/install/retry", response_model=InstallPrepareResponse)
+def retry_provider_install(provider_id: str) -> InstallPrepareResponse:
+    try:
+        return retry_install(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.post("/api/providers/registry/{provider_id}/rollback", response_model=InstallResult)
+def rollback_provider_install(provider_id: str) -> InstallResult:
+    try:
+        return rollback_install(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+@app.get("/api/providers/registry/{provider_id}/install/logs", response_model=list[ProviderInstallLog])
+def get_provider_install_logs(provider_id: str) -> list[ProviderInstallLog]:
+    try:
+        return install_logs(provider_id)
+    except ProviderRegistryError as error:
+        raise _provider_registry_http_error(error, provider_id=provider_id) from error
 
 
 # Frontend provider ids that are cloud-hosted (vs. local runtimes). Used to derive
@@ -1004,7 +1235,9 @@ def generate_blueprint(project_id: str, expected_revision: int | None = Query(de
     _assert_llm_provider_supported(read_provider_settings())
     write_spec_artifacts(project_id, source, profile)
     try:
-        blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings())
+        blueprint, _ = generate_lesson_blueprint(source, profile, read_provider_settings(), project_id=project_id)
+    except CodexBridgeActionRequired as exc:
+        raise _codex_action_required(exc) from exc
     except ProviderError as exc:
         raise HTTPException(
             status_code=502,
@@ -1049,6 +1282,8 @@ def generate_media(project_id: str, force_regenerate: bool = Query(False), expec
         manifest = generate_project_media(
             root, blueprint, settings, force_regenerate=force_regenerate, strict_provider=True,
         )
+    except CodexBridgeActionRequired as exc:
+        raise _codex_action_required(exc) from exc
     except ProviderError as exc:
         raise HTTPException(
             status_code=502,
@@ -1149,6 +1384,8 @@ def render_project(project_id: str, expected_revision: int | None = Query(defaul
         _assert_media_provider_ready(settings)
         try:
             manifest = generate_project_media(root, blueprint, settings, strict_provider=True)
+        except CodexBridgeActionRequired as exc:
+            raise _codex_action_required(exc) from exc
         except ProviderError as exc:
             capability = "image" if settings.image.provider != "placeholder" else "tts"
             provider_id = settings.image.provider if capability == "image" else settings.audio.provider
@@ -1214,6 +1451,8 @@ def run_project_pipeline(project_id: str, expected_revision: int | None = Query(
             )
         bump_project_revision(project_id)
         return get_project_state(project_id)
+    except CodexBridgeActionRequired as exc:
+        raise _codex_action_required(exc) from exc
     except ProviderError as exc:
         settings = read_provider_settings()
         capability = "llm" if settings.llm.provider != "deterministic" else "image"
@@ -1414,7 +1653,7 @@ def _assert_media_provider_ready(settings: ProviderSettings) -> None:
         )
         if descriptor is None or not descriptor.implemented or not descriptor.available or not descriptor.configured:
             reason = descriptor.unavailable_reason if descriptor else "Provider is not in the backend capability catalog."
-            if descriptor and not descriptor.configured:
+            if descriptor and descriptor.implemented and not descriptor.configured:
                 reason = "Provider credentials or required configuration are missing."
             raise HTTPException(
                 status_code=409,
@@ -1435,7 +1674,7 @@ def _assert_llm_provider_supported(settings: ProviderSettings) -> None:
     )
     if descriptor is None or not descriptor.implemented or not descriptor.available or not descriptor.configured:
         reason = descriptor.unavailable_reason if descriptor else "LLM provider is not in the backend capability catalog."
-        if descriptor and not descriptor.configured:
+        if descriptor and descriptor.implemented and not descriptor.configured:
             reason = "Provider credentials or required configuration are missing."
         raise HTTPException(
             status_code=409,

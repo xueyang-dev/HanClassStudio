@@ -77,6 +77,7 @@ def generate_lesson_blueprint(
     settings: ProviderSettings,
     candidates: TeachingCandidates | None = None,
     language_items: list | None = None,
+    project_id: str | None = None,
 ) -> tuple[LessonBlueprint, TeachingCandidates]:
     # Always extract teaching candidates from source
     candidates = candidates or extract_candidates(source)
@@ -87,7 +88,7 @@ def generate_lesson_blueprint(
     if settings.llm.provider == "deterministic":
         blueprint = build_blueprint(source, profile, candidates, language_items)
     else:
-        blueprint = generate_blueprint_with_llm(source, profile, settings.llm)
+        blueprint = generate_blueprint_with_llm(source, profile, settings.llm, project_id)
         if blueprint is None:
             raise ProviderError("Selected LLM provider is not configured for execution")
     return blueprint, candidates
@@ -436,7 +437,7 @@ def run_full_pipeline(
         return get_project_state(project_id)
 
     # Presentation remains downstream from the State-Evidence alignment gate.
-    blueprint, _ = generate_lesson_blueprint(source, profile, settings, candidates, language_items)
+    blueprint, _ = generate_lesson_blueprint(source, profile, settings, candidates, language_items, project_id)
     write_blueprint_artifacts(project_id, blueprint)
     if enable_presentation_parity_shadow:
         from .presentation_parity import run_presentation_parity_harness
