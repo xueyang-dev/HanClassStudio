@@ -1,0 +1,200 @@
+# HanClass Provider Hub v1
+
+The Provider Hub is the teacher-facing capability management surface for
+HanClassStudio. It presents online services, local runtimes, model packages,
+and teaching workflows as verified backend facts. It is not a package manager
+for arbitrary repositories and it does not make a Provider usable merely
+because a card can be displayed.
+
+## Architecture and authority
+
+```text
+built-in catalog ─┐
+validated registry ├─> Hub adapter ─> local snapshot API ─> teacher UI
+local settings ────┤       │
+hardware probes ───┘       ├─> explicit refresh tasks
+                           ├─> explicit configuration / connection tests
+                           └─> reviewed installation task runners
+```
+
+The v1 Provider Registry remains the authority for its existing entries,
+refresh validation, cache, and sandbox lifecycle. `provider_hub.py` adapts
+those entries and adds the new layered capability-package contract. Existing
+settings and Registry routes remain compatible.
+
+The backend is authoritative for `status`, `compatible`, `ready`, and
+`available_actions`. The WebUI renders only returned actions. Opening the Hub
+performs local `GET` requests only; it never refreshes a remote source, saves a
+configuration, starts an installation, or tests a connection implicitly.
+
+## Domain model
+
+The layers are intentionally separate:
+
+- **Provider** identifies the vendor or service integration, trust level,
+  source links, license/terms, data boundary, and available actions.
+- **Runtime** is the process or execution environment used by a local
+  capability. A runtime is not itself a model.
+- **Model Package** describes versioned model assets and whether the format is
+  declared non-executable. It does not contain installation commands.
+- **Workflow Pack** maps one or more teacher-facing capabilities to a reviewed
+  workflow definition.
+- **Capability Package** binds reviewed Runtime, Model Package, Workflow Pack,
+  and health-check declarations into one installable unit.
+
+The first featured entries are:
+
+| ID | Type | Phase-1 behavior |
+| --- | --- | --- |
+| `hcs.teaching-video-basic` | local | Detects an existing system FFmpeg and exposes health/source facts. It does not install FFmpeg. |
+| `hcs.local-image-basic` | local | Installs a bundled, checksum-pinned JSON fixture through the real asynchronous task pipeline. It is a safe lifecycle proof, not a generative model. |
+| `hcs.online-image-high-quality` | online | Configures and tests the user's OpenAI image API credentials. The default is `gpt-image-2`; generation/editing still uses the existing media pipeline adapter. |
+
+## Manifest and catalog contract
+
+`ProviderHubItem` uses Pydantic with unknown fields forbidden. External links
+must be plain HTTPS origins/paths with no credentials, custom ports, query, or
+fragment. Entries are validated independently by `isolate_provider_manifests`,
+so one malformed entry produces an `invalid_manifest` record without hiding
+valid peers.
+
+A Provider item may describe stable IDs, display metadata, type, capabilities,
+publisher/version, trust/source, license/terms, redistribution, official links,
+install/configure/readiness/compatibility facts, exact backend actions, and
+optional Runtime/Model Package/Workflow Pack/health-check declarations.
+
+Remote manifests are metadata only. They cannot provide shell commands,
+executable installers, arbitrary URLs, environment mutation, or a new trust
+root. A future installable entry needs a reviewed, code-owned task runner.
+
+## Discovery and refresh
+
+`GET /api/providers/hub` returns the last trusted local snapshot plus best-effort
+hardware facts. `POST /api/providers/hub/refresh` is the only Hub operation that
+starts source refresh. It returns a task ID; the UI polls
+`GET /api/providers/hub/refresh/{task_id}`.
+
+The task reports added, updated, unchanged, failed-source counts, and one result
+per source. Registry item changes use complete-manifest digests, not only version
+labels. If a source fails, the task finishes `partial`, sanitizes the error, and
+retains the previous valid snapshot. Overlapping refreshes are rejected. The
+existing Registry transport continues to enforce commit-pinned HTTPS, public
+address checks, time/size limits, schema validation, and atomic cache commit.
+
+Adding GitHub, Hugging Face, or another discovery source requires a reviewed
+adapter in `_REFRESH_SOURCE_ADAPTERS`. A source adapter can discover metadata;
+it cannot authorize execution.
+
+## Installation task state
+
+Phase 1 implements one real, safe installer for the bundled local-image fixture:
+
+```text
+queued
+  -> preflight -> resolving -> downloading -> verifying -> extracting
+  -> installing_runtime -> installing_model -> installing_workflow
+  -> starting -> health_check -> smoke_test -> completed
+                                      ├-> failed
+                                      └-> cancelled
+```
+
+Task state is persisted and includes overall/file progress, actual copied byte
+counts, phase, teacher-facing message, stable error code, recoverable actions,
+timestamps, and cancellation state. Interrupted in-process tasks fail closed on
+recovery. UI polling has a bounded wait; backend runners also use bounded work.
+
+The fixture runner enforces a bundled `.json` artifact with a 64 KiB limit, a
+fixed SHA-256 and known identity, localhost runtime binding, a non-executable
+model declaration, a known workflow, path containment, isolated staging,
+atomic replacement, deterministic health/smoke tests, and failure cleanup.
+A failure or cancellation never marks the package ready. Phase 1 intentionally
+does not download or execute third-party code.
+
+## Online configuration and secrets
+
+Online configuration is explicit: opening reads public configuration; `PUT`
+saves only after teacher submission; `POST .../test` performs a bounded,
+authenticated model-endpoint request; disable/enable changes availability
+without deleting credentials; `DELETE` removes the key and capability binding.
+Authentication, rate-limit, network, and health failures have stable codes.
+
+API keys are write-only in public responses and never enter browser persistence,
+Hub snapshots, task messages, or logs. The current storage adapter uses the
+existing local backend settings file with atomic replacement and owner-only
+`0600` permissions on POSIX. It is **not encrypted and is not an OS keychain**;
+the UI and API report `local_file_write_only`. A production desktop distribution
+should replace this adapter with Keychain, Credential Manager, Secret Service,
+or equivalent while preserving the public contract.
+
+The OpenAI endpoint is restricted to `https://api.openai.com` with no
+credentials, alternate port, query, or fragment. External links use `noopener
+noreferrer`, and the UI displays the destination hostname.
+
+## Hardware facts
+
+The Hub performs best-effort detection of OS, architecture, memory, free disk,
+NVIDIA GPU/CUDA, Apple MPS, and the DirectML platform signal. Results are
+`compatible`, `compatible_but_slow`, `unsupported`, or `unknown`, with reasons.
+Probe failures degrade to `unknown` and never hide the catalog. No runtime speed
+estimate is shown because phase 1 has no representative benchmark.
+
+## Add an online Provider
+
+1. Add reviewed Provider metadata and links in the built-in catalog or validated
+   Registry adapter.
+2. Add a backend settings/secret adapter; never persist credentials in the
+   browser or return them from an API.
+3. Add allowlisted endpoint validation and a bounded connection checker.
+4. Map errors to stable codes and persist only sanitized health facts.
+5. Return exact backend actions for configure, test, delete, disable, and enable.
+6. Test no implicit writes/network, redaction, auth/network failure, explicit
+   delete, state transitions, and browser behavior.
+
+## Add an offline Provider
+
+1. Define separate Runtime, Model Package, Workflow Pack, license, source,
+   compatibility, and health contracts.
+2. Add a reviewed code-owned installer. A registry manifest cannot introduce
+   commands.
+3. Pin versions/checksums and enforce host, protocol, size, path, format, and
+   license allowlists before materialization.
+4. Stage in isolation, use an explicit atomic commit point, and define cleanup
+   or rollback for every later failure.
+5. Implement deterministic health and teaching-capability smoke tests. Only the
+   backend may mark the package ready.
+6. Test tampering, traversal, malicious metadata, timeout, cancellation,
+   recovery, cleanup, and unsupported hardware before exposing install.
+
+## Test strategy
+
+- Backend: schema/layers, zero-network reads, hardware degradation, link and
+  manifest rejection, real install progress, checksum cleanup, cancellation,
+  refresh/partial retention, secret redaction/permissions, configuration/test/
+  delete/disable, and connection errors.
+- Frontend state: exact action gating and teacher-facing filters.
+- Playwright: no startup refresh, explicit refresh, failed install never ready,
+  real fixture install, mobile overflow, Escape/focus restoration, and explicit
+  configuration without secret rendering.
+- Repository gate: full `npm test` plus full Playwright E2E.
+
+## Explicitly unsupported in phase 1
+
+- arbitrary GitHub/Hugging Face/ComfyUI discovery or installation;
+- remote shell, Python, npm, Docker, Homebrew, or system-package commands;
+- installing FFmpeg, GPU drivers, CUDA, or DirectML;
+- real local model downloads or model execution;
+- detached registry signatures, transparency logs, or multi-process locks;
+- encrypted/keychain secret storage or reliable performance estimates;
+- uninstall/update/log-view actions for the new capability fixture;
+- automatic refresh, implicit credential writes, or quality-gate bypasses.
+
+## ComfyUI follow-up
+
+ComfyUI remains a planned adapter, not a phase-1 claim. The next slice should
+first define a version-pinned local Runtime contract and localhost-only API
+health check, then model/workflow compatibility metadata. Installation should
+use reviewed platform-specific runners, safe model formats, checksums, size and
+disk budgets, source/license evidence, resumable/cancellable tasks, and cleanup/
+rollback. Workflow JSON must be validated against a HanClassStudio allowlist
+before activation; custom nodes and arbitrary Python are out of scope until a
+separate sandbox and supply-chain review exist.

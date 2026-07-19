@@ -13,6 +13,7 @@ This record tracks the incremental frontend hardening work on top of the latest
 | 5 | Editable-stage enforcement, localized revision errors, and first loading-component extraction | Implemented | Frontend state contract; production build |
 | 6 | Backend-confirmed Provider summary, retryable save after failed initialization, native dialog lifecycle for onboarding/force export, and six-stage localization parity | Implemented | Frontend state contract; i18n key parity audit; production build |
 | 7 | Browser acceptance regressions: State-first summary 404 guard, responsive pipeline overflow, dialog descriptions, duplicate list keys, favicon, and atomic provider-settings writes | Implemented | Playwright desktop/mobile audit; 432 backend tests; E2E |
+| 8 | First-class Provider Hub: backend-authoritative capability cards/actions, explicit refresh/configuration, layered package details, task progress/cancellation, responsive native dialog, and secret-safe forms | Implemented | Provider Hub API/state tests; production build; Playwright desktop/mobile acceptance |
 
 ## Browser acceptance
 

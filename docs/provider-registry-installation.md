@@ -5,6 +5,11 @@ current registry is a first-party, mock-only fixture for validating the UI and
 state transitions; it does not clone GitHub/Hugging Face repositories or run
 provider-supplied shell commands.
 
+The teacher-facing v1 Hub now adapts this registry without replacing it. Its
+domain layers, explicit refresh/configuration contracts, safe local capability
+fixture, security boundaries, extension guide, and ComfyUI follow-up are
+documented in [HanClass Provider Hub v1](provider-hub.md).
+
 ## Registry contract
 
 The catalog carries a monotonic `catalog_version`, timezone-aware
@@ -196,9 +201,12 @@ non-infringement claim.
 
 `hcs_mock_ocr` and `hcs_mock_llm` are deterministic first-party fixtures used by
 API and Playwright tests. The explicit refresh mechanism can update this curated
-catalog, but the current entries remain mock-only. Real provider downloads, dependency
-installation, GPU validation, and model acquisition require a future executor
-implementation and a separate security review. Until then the UI labels these
+catalog, but the current entries remain mock-only. Real third-party provider
+downloads, dependency installation, GPU validation, and model acquisition
+require a future executor implementation and a separate security review. The
+Hub does exercise its task pipeline with one bundled, checksum-pinned JSON
+capability fixture; that path does not contain a model or execute code. Until a
+reviewed real executor exists, the Registry UI labels these
 entries as sandbox lifecycle exercises, the plan and logs state that no
 checkout, download, dependency installation, model acquisition, or production
 activation occurs, and the capability contract never reports them as
