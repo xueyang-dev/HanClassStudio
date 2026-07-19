@@ -75,6 +75,26 @@ from .provider_registry import (
     rollback_install,
     _redact_sensitive_text,
 )
+from .provider_hub import (
+    OnlineProviderConfigRequest,
+    ProviderHubCatalog,
+    ProviderHubError,
+    ProviderInstallTask,
+    ProviderRefreshTask,
+    PublicOnlineProviderConfig,
+    cancel_fixture_install,
+    check_local_health,
+    delete_online_config,
+    detect_hardware,
+    get_install_task,
+    get_refresh_task,
+    hub_catalog,
+    save_online_config,
+    set_online_disabled,
+    start_fixture_install,
+    start_refresh,
+    test_online_connection,
+)
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
 from .pptx_exporter import export_editable_pptx
@@ -966,6 +986,124 @@ def get_provider_install_logs(provider_id: str) -> list[ProviderInstallLog]:
         return install_logs(provider_id)
     except ProviderRegistryError as error:
         raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+def _provider_hub_http_error(error: ProviderHubError) -> HTTPException:
+    status = 404 if "not found" in error.message.lower() else 409 if "already" in error.message.lower() or "cancel" in error.message.lower() else 400
+    if error.code == "network_error":
+        status = 502
+    elif error.code in {"authentication_error", "rate_limited"}:
+        status = 401 if error.code == "authentication_error" else 429
+    return HTTPException(status_code=status, detail={"code": error.code, "message": error.message})
+
+
+@app.get("/api/providers/hub", response_model=ProviderHubCatalog)
+def get_provider_hub() -> ProviderHubCatalog:
+    """Return the local Hub snapshot; this endpoint never refreshes remote sources."""
+    return hub_catalog()
+
+
+@app.get("/api/providers/hub/hardware")
+def get_provider_hardware() -> dict[str, Any]:
+    return detect_hardware().model_dump(mode="json")
+
+
+@app.post("/api/providers/hub/refresh", response_model=ProviderRefreshTask)
+def start_provider_hub_refresh() -> ProviderRefreshTask:
+    try:
+        return start_refresh()
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/refresh/{task_id}", response_model=ProviderRefreshTask)
+def get_provider_hub_refresh(task_id: str) -> ProviderRefreshTask:
+    try:
+        return get_refresh_task(task_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/install", response_model=ProviderInstallTask)
+def install_provider_package(package_id: str) -> ProviderInstallTask:
+    try:
+        return start_fixture_install(package_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/install-tasks/{task_id}", response_model=ProviderInstallTask)
+def get_provider_hub_install_task(task_id: str) -> ProviderInstallTask:
+    try:
+        return get_install_task(task_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/install-tasks/{task_id}/cancel", response_model=ProviderInstallTask)
+def cancel_provider_hub_install(task_id: str) -> ProviderInstallTask:
+    try:
+        return cancel_fixture_install(task_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/health")
+def check_provider_package_health(package_id: str) -> dict[str, Any]:
+    try:
+        return check_local_health(package_id).model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/online/{provider_id}/configuration", response_model=PublicOnlineProviderConfig)
+def get_online_provider_configuration(provider_id: str) -> PublicOnlineProviderConfig:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    from .provider_hub import _online_config
+
+    return _online_config()
+
+
+@app.put("/api/providers/hub/online/{provider_id}/configuration", response_model=PublicOnlineProviderConfig)
+def put_online_provider_configuration(provider_id: str, payload: OnlineProviderConfigRequest) -> PublicOnlineProviderConfig:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    try:
+        return save_online_config(payload)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.delete("/api/providers/hub/online/{provider_id}/configuration", response_model=PublicOnlineProviderConfig)
+def remove_online_provider_configuration(provider_id: str) -> PublicOnlineProviderConfig:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    return delete_online_config()
+
+
+@app.post("/api/providers/hub/online/{provider_id}/test")
+def test_online_provider(provider_id: str) -> dict[str, Any]:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    try:
+        return test_online_connection().model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/online/{provider_id}/disable")
+def disable_online_provider(provider_id: str) -> dict[str, Any]:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    return set_online_disabled(True).model_dump(mode="json")
+
+
+@app.post("/api/providers/hub/online/{provider_id}/enable")
+def enable_online_provider(provider_id: str) -> dict[str, Any]:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    return set_online_disabled(False).model_dump(mode="json")
 
 
 # Frontend provider ids that are cloud-hosted (vs. local runtimes). Used to derive
