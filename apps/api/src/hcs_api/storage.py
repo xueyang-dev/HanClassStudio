@@ -381,6 +381,11 @@ def write_provider_settings(settings: ProviderSettings) -> None:
         dir=str(PROVIDER_SETTINGS_PATH.parent),
     )
     try:
+        # Provider settings can contain API credentials. mkstemp already uses
+        # owner-only permissions on POSIX, but make that contract explicit so
+        # future refactors cannot silently widen access before the atomic move.
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
             handle.flush()

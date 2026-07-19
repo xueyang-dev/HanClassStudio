@@ -989,11 +989,15 @@ def get_provider_install_logs(provider_id: str) -> list[ProviderInstallLog]:
 
 
 def _provider_hub_http_error(error: ProviderHubError) -> HTTPException:
-    status = 404 if "not found" in error.message.lower() else 409 if "already" in error.message.lower() or "cancel" in error.message.lower() else 400
-    if error.code == "network_error":
-        status = 502
-    elif error.code in {"authentication_error", "rate_limited"}:
-        status = 401 if error.code == "authentication_error" else 429
+    status_by_code = {
+        "task_not_found": 404,
+        "task_conflict": 409,
+        "network_error": 502,
+        "authentication_error": 401,
+        "rate_limited": 429,
+        "cancelled": 409,
+    }
+    status = status_by_code.get(error.code, 400)
     return HTTPException(status_code=status, detail={"code": error.code, "message": error.message})
 
 

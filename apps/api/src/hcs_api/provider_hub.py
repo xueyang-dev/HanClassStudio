@@ -13,6 +13,7 @@ import http.client
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -64,7 +65,7 @@ ErrorCode = Literal[
     "license_unknown", "unsupported_platform", "insufficient_memory",
     "insufficient_vram", "insufficient_disk", "checksum_mismatch", "unsafe_artifact",
     "download_failed", "installation_failed", "health_check_failed", "cancelled",
-    "internal_error",
+    "internal_error", "task_not_found", "task_conflict",
 ]
 
 _INSTALL_TASK_FILE = "provider_hub_install_tasks.json"
@@ -128,6 +129,8 @@ class SourceLinks(BaseModel):
 
 
 class LicenseInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     url: str | None = None
     redistribution_allowed: bool = False
@@ -140,6 +143,8 @@ class LicenseInfo(BaseModel):
 
 
 class RuntimeSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     name: str
     version: str
@@ -147,6 +152,8 @@ class RuntimeSpec(BaseModel):
 
 
 class ModelPackageSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     name: str
     version: str
@@ -155,6 +162,8 @@ class ModelPackageSpec(BaseModel):
 
 
 class WorkflowPackSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     name: str
     version: str
@@ -162,6 +171,8 @@ class WorkflowPackSpec(BaseModel):
 
 
 class CapabilityPackageSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     name: str
     description: str
@@ -283,7 +294,21 @@ class ProviderInstallTask(BaseModel):
 class OnlineProviderConfigRequest(BaseModel):
     api_key: str | None = Field(default=None, max_length=4096)
     endpoint: str = "https://api.openai.com/v1"
-    model: str = Field(default="gpt-image-1", min_length=1, max_length=160)
+    model: str = Field(default="gpt-image-2", min_length=1, max_length=160)
+
+    @field_validator("api_key")
+    @classmethod
+    def _credential_has_no_control_characters(cls, value: str | None) -> str | None:
+        if value is not None and any(character in value for character in ("\r", "\n", "\x00")):
+            raise ValueError("API Key contains invalid control characters")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _model_is_a_safe_identifier(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", value):
+            raise ValueError("model must be a plain model identifier")
+        return value
 
     @field_validator("endpoint")
     @classmethod
@@ -383,7 +408,7 @@ def _online_config() -> PublicOnlineProviderConfig:
     settings = storage.read_provider_settings()
     return PublicOnlineProviderConfig(
         endpoint=settings.image.endpoint_url or "https://api.openai.com/v1",
-        model=settings.image.model or "gpt-image-1",
+        model=settings.image.model or "gpt-image-2",
         api_key_present=bool(settings.image.api_key.strip()),
     )
 
@@ -493,7 +518,7 @@ def _local_package_item(hardware: HardwareCapability) -> ProviderHubItem:
     elif compatible != "unsupported" and not ready:
         actions.append("repair" if installed else "install")
     if installed:
-        actions.extend(["check_health", "view_logs"])
+        actions.append("check_health")
     return ProviderHubItem(
         id=_LOCAL_PACKAGE_ID, provider_id="fixture_local_image", name="本地基础生图",
         description="用于词汇图片、教学插图和课件配图的安全小型能力包演练。",
@@ -691,7 +716,7 @@ def _save_install_task(task: ProviderInstallTask) -> None:
 def get_install_task(task_id: str) -> ProviderInstallTask:
     raw = _read_mapping(_INSTALL_TASK_FILE).get(task_id)
     if not isinstance(raw, dict):
-        raise ProviderHubError("installation_failed", "Installation task was not found")
+        raise ProviderHubError("task_not_found", "Installation task was not found")
     return ProviderInstallTask.model_validate(raw)
 
 
@@ -757,7 +782,44 @@ def _phase(task_id: str, phase: InstallPhase, progress: int, message: str) -> No
 
 def _run_fixture_install(task_id: str) -> None:
     target_file: Path | None = None
+    staged_target: Path | None = None
+    previous_bytes: bytes | None = None
+    previous_local_state: Any = None
+
+    def restore_previous_target() -> None:
+        if staged_target is not None:
+            try:
+                staged_target.unlink()
+            except FileNotFoundError:
+                pass
+        if target_file is None:
+            return
+        try:
+            if previous_bytes is None:
+                target_file.unlink()
+            else:
+                restore_file = target_file.with_suffix(".restore.tmp")
+                restore_file.write_bytes(previous_bytes)
+                os.replace(restore_file, target_file)
+        except (FileNotFoundError, OSError):
+            pass
+
+    def restore_previous_state() -> None:
+        def restore(current: dict[str, Any]) -> dict[str, Any]:
+            restored = dict(current)
+            if isinstance(previous_local_state, dict):
+                restored["local_image"] = previous_local_state
+            else:
+                restored.pop("local_image", None)
+            return restored
+
+        try:
+            _update_mapping(_HUB_STATE_FILE, restore)
+        except ProviderRegistryError:
+            pass
+
     try:
+        previous_local_state = _hub_state().get("local_image")
         _phase(task_id, "preflight", 4, "正在检查设备和安装目录")
         hardware = detect_hardware()
         if hardware.free_disk_mb is not None and hardware.free_disk_mb < 1:
@@ -814,10 +876,11 @@ def _run_fixture_install(task_id: str) -> None:
             if not target_root.is_relative_to(allowed_root):
                 raise ProviderHubError("unsafe_artifact", "安装目标越出允许目录")
             target_root.mkdir(parents=True, exist_ok=True)
+            target_file = target_root / "package.json"
+            previous_bytes = target_file.read_bytes() if target_file.is_file() else None
             staged_target = target_root / ".package.json.tmp"
             shutil.copyfile(staged, staged_target)
-            os.replace(staged_target, target_root / "package.json")
-            target_file = target_root / "package.json"
+            os.replace(staged_target, target_file)
             _phase(task_id, "health_check", 92, "正在检查已安装文件")
             if hashlib.sha256(target_file.read_bytes()).hexdigest() != _FIXTURE_SHA256:
                 raise ProviderHubError("health_check_failed", "安装后的文件校验失败")
@@ -828,15 +891,14 @@ def _run_fixture_install(task_id: str) -> None:
         _update_hub_state("local_image", {"installed": True, "ready": True, "version": "1.0.0", "sha256": _FIXTURE_SHA256, "checked_at": checked_at})
         _update_install_task(task_id, state="completed", phase="completed", progress=100, current_file_progress=100, message="本地基础生图测试能力包已安装并通过健康检查")
     except ProviderHubError as exc:
-        if target_file is not None and target_file.exists():
-            try:
-                target_file.unlink()
-            except OSError:
-                pass
+        restore_previous_target()
+        restore_previous_state()
         state: TaskState = "cancelled" if exc.code == "cancelled" else "failed"
         phase: InstallPhase = "cancelled" if exc.code == "cancelled" else "failed"
         _update_install_task(task_id, state=state, phase=phase, message=exc.message, error={"code": exc.code, "message": exc.message})
     except Exception:
+        restore_previous_target()
+        restore_previous_state()
         _update_install_task(task_id, state="failed", phase="failed", message="安装任务意外失败", error={"code": "internal_error", "message": "安装任务意外失败"})
     finally:
         with _install_lock:
@@ -904,8 +966,14 @@ def _save_refresh_task(task: ProviderRefreshTask) -> None:
 def get_refresh_task(task_id: str) -> ProviderRefreshTask:
     raw = _read_mapping(_REFRESH_TASK_FILE).get(task_id)
     if not isinstance(raw, dict):
-        raise ProviderHubError("network_error", "Refresh task was not found")
-    return ProviderRefreshTask.model_validate(raw)
+        raise ProviderHubError("task_not_found", "Refresh task was not found")
+    task = ProviderRefreshTask.model_validate(raw)
+    if task.state in {"queued", "running"} and task_id not in _refresh_threads:
+        task.state = "failed"
+        task.finished_at = task.updated_at = _iso()
+        task.error = {"code": "internal_error", "message": "Provider refresh was interrupted; start it again"}
+        _save_refresh_task(task)
+    return task
 
 
 def _refresh_builtin_source() -> tuple[RefreshSourceResult, int, int, int]:
@@ -926,8 +994,12 @@ def _refresh_official_source() -> tuple[RefreshSourceResult, int, int, int]:
     result = refresh_registry()
     after = {item.entry.provider_id: item.entry.version for item in result.catalog.providers}
     added = set(after) - set(before)
-    updated = {item for item in set(after) & set(before) if after[item] != before[item]}
-    unchanged = len(set(after) - added - updated)
+    # The registry computes digests across each complete manifest, so a change
+    # in trust, license, source metadata, or artifacts counts even if the item
+    # version string was accidentally left unchanged. Removed entries are also
+    # surfaced as changes instead of being hidden in the "unchanged" count.
+    updated = set(result.changed_provider_ids) - added
+    unchanged = len((set(after) & set(before)) - updated)
     return (
         RefreshSourceResult(
             source_id="official_registry",
@@ -984,18 +1056,24 @@ def _run_refresh(task_id: str) -> None:
         task.error = {"code": error_code, "message": "Provider refresh was not fully completed"}
     task.finished_at = task.updated_at = _iso()
     _save_refresh_task(task)
-    with _refresh_lock:
-        _refresh_threads.pop(task_id, None)
+
+
+def _run_refresh_guarded(task_id: str) -> None:
+    try:
+        _run_refresh(task_id)
+    finally:
+        with _refresh_lock:
+            _refresh_threads.pop(task_id, None)
 
 
 def start_refresh() -> ProviderRefreshTask:
     with _refresh_lock:
         if _refresh_threads:
-            raise ProviderHubError("network_error", "A Provider refresh is already in progress")
+            raise ProviderHubError("task_conflict", "A Provider refresh is already in progress")
         now = _iso()
         task = ProviderRefreshTask(task_id=uuid.uuid4().hex, started_at=now, updated_at=now)
         _save_refresh_task(task)
-        thread = threading.Thread(target=_run_refresh, args=(task.task_id,), daemon=True, name=f"hcs-provider-refresh-{task.task_id[:8]}")
+        thread = threading.Thread(target=_run_refresh_guarded, args=(task.task_id,), daemon=True, name=f"hcs-provider-refresh-{task.task_id[:8]}")
         _refresh_threads[task.task_id] = thread
         thread.start()
         return task

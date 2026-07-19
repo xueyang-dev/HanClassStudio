@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import time
 from pathlib import Path
 
@@ -101,6 +103,11 @@ def test_external_links_reject_active_or_credentialed_protocols() -> None:
         with pytest.raises((ValidationError, ValueError)):
             hub.SourceLinks(project_url=value)
 
+    with pytest.raises(ValidationError):
+        hub.OnlineProviderConfigRequest(api_key="safe\r\nInjected: value")
+    with pytest.raises(ValidationError):
+        hub.OnlineProviderConfigRequest(model="gpt-image-2?unexpected=true")
+
 
 def test_invalid_manifest_is_isolated_from_valid_entries(tmp_path, monkeypatch) -> None:
     client = _isolate(tmp_path, monkeypatch)
@@ -145,6 +152,23 @@ def test_checksum_mismatch_fails_and_leaves_no_installed_result(tmp_path, monkey
     local = next(item for item in client.get("/api/providers/hub").json()["providers"] if item["id"] == "hcs.local-image-basic")
     assert local["ready"] is False
     assert local["status"] != "ready"
+
+
+def test_unexpected_post_copy_failure_cleans_artifact_and_never_marks_ready(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+
+    def fail_state_commit(_key: str, _value: object) -> None:
+        raise OSError("simulated state persistence failure")
+
+    monkeypatch.setattr(hub, "_update_hub_state", fail_state_commit)
+    started = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
+    task = _wait_install(client, started.json()["task_id"])
+    assert task["state"] == "failed"
+    assert task["error"]["code"] == "internal_error"
+    installed = storage.RUNTIME_DIR / "providers" / "hcs.local-image-basic" / "1.0.0" / "package.json"
+    assert not installed.exists()
+    local = next(item for item in client.get("/api/providers/hub").json()["providers"] if item["id"] == "hcs.local-image-basic")
+    assert local["ready"] is False
 
 
 def test_install_can_be_cancelled_and_cleans_temporary_files(tmp_path, monkeypatch) -> None:
@@ -196,20 +220,27 @@ def test_online_configuration_is_explicit_redacted_testable_and_deletable(tmp_pa
     secret = "hub-online-secret"
     saved = client.put(
         "/api/providers/hub/online/openai_images/configuration",
-        json={"api_key": secret, "endpoint": "https://api.openai.com/v1", "model": "gpt-image-1"},
+        json={"api_key": secret, "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
     )
     assert saved.status_code == 200
     assert saved.json()["api_key_present"] is True
     assert saved.json()["secure_storage"] == "local_file_write_only"
     assert secret not in saved.text
     assert secret not in client.get("/api/providers/hub").text
+    legacy_public_settings = client.get("/api/settings/providers")
+    assert legacy_public_settings.status_code == 200
+    assert secret not in legacy_public_settings.text
+    assert legacy_public_settings.json()["image"]["api_key_present"] is True
+    assert legacy_public_settings.json()["capabilities"]["image"]["api_key_present"] is True
+    if os.name == "posix":
+        assert stat.S_IMODE(storage.PROVIDER_SETTINGS_PATH.stat().st_mode) == 0o600
 
     checked: list[tuple[str, str]] = []
     monkeypatch.setattr(hub, "CONNECTION_CHECKER", lambda endpoint, api_key, model: checked.append((endpoint, model)))
     tested = client.post("/api/providers/hub/online/openai_images/test")
     assert tested.status_code == 200
     assert tested.json()["status"] == "ready"
-    assert checked == [("https://api.openai.com/v1", "gpt-image-1")]
+    assert checked == [("https://api.openai.com/v1", "gpt-image-2")]
 
     disabled = client.post("/api/providers/hub/online/openai_images/disable")
     assert disabled.status_code == 200
@@ -228,7 +259,7 @@ def test_connection_failure_is_classified_and_never_marks_ready(tmp_path, monkey
     client = _isolate(tmp_path, monkeypatch)
     assert client.put(
         "/api/providers/hub/online/openai_images/configuration",
-        json={"api_key": "bad-key", "endpoint": "https://api.openai.com/v1", "model": "gpt-image-1"},
+        json={"api_key": "bad-key", "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
     ).status_code == 200
 
     def reject(_endpoint: str, _api_key: str, _model: str) -> None:
