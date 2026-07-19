@@ -109,6 +109,7 @@ import type {
 } from "./types";
 import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
+import { ProviderHubDialog } from "./components/ProviderHubDialog";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
 
@@ -332,6 +333,7 @@ export function App() {
   const [previewKey, setPreviewKey] = useState(0);
   const [pipelineSteps, setPipelineSteps] = useState<Record<string, PipelineStepStatus>>(() => initialPipelineSteps());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [providerHubOpen, setProviderHubOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [providerSaveError, setProviderSaveError] = useState("");
@@ -983,7 +985,7 @@ export function App() {
           })}
         </nav>
         <RecentProjects projects={recentProjects} loading={projectsLoading} currentProjectId={project?.project_id} onOpen={openProject} />
-        <ProviderStatusPanel config={providerConfig} catalog={providerCatalog} onOpenSettings={() => setSettingsOpen(true)} />
+        <ProviderStatusPanel config={providerConfig} catalog={providerCatalog} onOpenHub={() => setProviderHubOpen(true)} />
       </aside>
 
       <main className="workspace">
@@ -1010,6 +1012,10 @@ export function App() {
               </div>
             </details>
             <div className="top-actions">
+              <button type="button" className="secondary" onClick={() => setProviderHubOpen(true)}>
+                <Boxes size={18} aria-hidden="true" />
+                {t("provider.hub.open")}
+              </button>
               <button type="button" className="secondary" onClick={() => setSettingsOpen(true)}>
                 <Settings2 size={18} aria-hidden="true" />
                 {t("btn.modelSettings")}
@@ -1341,6 +1347,12 @@ export function App() {
           onClose={() => setSettingsOpen(false)}
         />
       )}
+      {providerHubOpen && (
+        <ProviderHubDialog
+          onClose={() => setProviderHubOpen(false)}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+      )}
       {forceExportType && (
         <ForceExportDialog
           type={forceExportType}
@@ -1545,11 +1557,11 @@ function LanguageSwitcher() {
 function ProviderStatusPanel({
   config,
   catalog,
-  onOpenSettings,
+  onOpenHub,
 }: {
   config: ProviderConfig;
   catalog: ProviderDefinition[];
-  onOpenSettings: () => void;
+  onOpenHub: () => void;
 }) {
   const { t } = useI18n();
   const total = CAPABILITY_ORDER.length;
@@ -1561,8 +1573,8 @@ function ProviderStatusPanel({
       <button
         type="button"
         className="provider-summary-card"
-        onClick={onOpenSettings}
-        aria-label={t("provider.open")}
+        onClick={onOpenHub}
+        aria-label={t("provider.hub.open")}
       >
         <div className="provider-summary-icon">
           <Boxes size={22} aria-hidden="true" />

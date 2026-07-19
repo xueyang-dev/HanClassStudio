@@ -1,4 +1,4 @@
-import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, ProviderRegistryCatalog, ProviderRegistryStatus, StageState } from "./types";
+import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, ProviderHubAction, ProviderHubItem, ProviderRegistryCatalog, ProviderRegistryStatus, StageState } from "./types";
 
 export type PipelineStepStatus = "pending" | "running" | "done" | "error";
 
@@ -47,6 +47,24 @@ export function safeExternalProviderUrl(value: string | null | undefined): strin
   } catch {
     return null;
   }
+}
+
+export function hasProviderHubAction(item: ProviderHubItem, action: ProviderHubAction): boolean {
+  return item.available_actions.includes(action);
+}
+
+export type ProviderHubFilter = "all" | "online" | "offline" | "image" | "video" | "free" | "api" | "verified" | "unverified" | "compatible";
+
+export function filterProviderHubItems(items: ProviderHubItem[], filter: ProviderHubFilter): ProviderHubItem[] {
+  if (filter === "all") return items;
+  if (filter === "online" || filter === "offline") return items.filter((item) => item.provider_type === filter);
+  if (filter === "image") return items.filter((item) => item.capabilities.some((capability) => capability.includes("image") || capability.includes("illustration")));
+  if (filter === "video") return items.filter((item) => item.capabilities.some((capability) => capability.includes("video") || capability.includes("ffmpeg")));
+  if (filter === "free") return items.filter((item) => item.runs_locally || item.paid_service === false);
+  if (filter === "api") return items.filter((item) => item.requires_api_key);
+  if (filter === "verified") return items.filter((item) => ["official_verified", "community_verified"].includes(item.trust_level));
+  if (filter === "unverified") return items.filter((item) => item.trust_level === "discovered_unverified");
+  return items.filter((item) => ["compatible", "compatible_but_slow"].includes(item.compatible));
 }
 
 export function getCapabilityProviders(

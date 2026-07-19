@@ -1,5 +1,5 @@
-import { canUseStageAction, exportActionsFromProject, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
-import type { ProjectState, ProviderRegistryCatalog } from "./types";
+import { canUseStageAction, exportActionsFromProject, filterProviderHubItems, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, hasProviderHubAction, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
+import type { ProjectState, ProviderHubItem, ProviderRegistryCatalog } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
   if (actual !== expected) throw new Error(`Expected ${String(expected)}, got ${String(actual)}`);
@@ -235,5 +235,22 @@ equal(shouldPersistProviderConfig({
 equal(isCurrentRequest(2, 2), true);
 equal(isCurrentRequest(1, 2), false);
 equal(isCurrentRequest(2, 2, true), false);
+
+const hubItem: ProviderHubItem = {
+  id: "hcs.local-image-basic", provider_id: "fixture_local_image", name: "Local image", description: "fixture",
+  provider_type: "offline", capabilities: ["text_to_image"], trust_level: "official_verified",
+  registry_source: "official_registry", status: "not_installed", installed: false, configured: false,
+  ready: false, compatible: "compatible", available_actions: ["view_details", "install"], recommended: true,
+  requires_download: true, requires_api_key: false, runs_locally: true, uploads_data: false,
+  update_channel: "stable", source_links: {}, license: { redistribution_allowed: false, clear: false },
+  third_party_executable_code: false, redistributed_by_hanclassstudio: false,
+};
+equal(hasProviderHubAction(hubItem, "install"), true);
+equal(hasProviderHubAction(hubItem, "test_connection"), false);
+equal(filterProviderHubItems([hubItem], "offline").length, 1);
+equal(filterProviderHubItems([hubItem], "online").length, 0);
+equal(filterProviderHubItems([hubItem], "image").length, 1);
+equal(filterProviderHubItems([hubItem], "verified").length, 1);
+equal(filterProviderHubItems([{ ...hubItem, compatible: "unsupported" }], "compatible").length, 0);
 
 console.log("frontend state contract tests passed");
