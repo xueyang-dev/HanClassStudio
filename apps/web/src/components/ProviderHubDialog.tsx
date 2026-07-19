@@ -278,8 +278,9 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
             <div><dt>{t("provider.hub.type")}</dt><dd>{item.provider_type}</dd></div>
             <div><dt>{t("provider.hub.version")}</dt><dd>{item.version ?? "—"} · {item.update_channel}</dd></div>
             <div><dt>{t("provider.hub.capabilities")}</dt><dd>{item.capabilities.join(", ")}</dd></div>
-            <div><dt>{t("provider.hub.license")}</dt><dd>{licenseUrl ? <a href={licenseUrl} target="_blank" rel="noopener noreferrer">{item.license.name ?? t("provider.hub.licenseUnknownShort")}</a> : item.license.name ?? t("provider.hub.licenseUnknownShort")}</dd></div>
+            <div><dt>{t("provider.hub.license")}</dt><dd>{licenseUrl ? <a href={licenseUrl} target="_blank" rel="noopener noreferrer">{item.license.name ?? t("provider.hub.licenseUnknownShort")} · {targetHost(licenseUrl)}</a> : item.license.name ?? t("provider.hub.licenseUnknownShort")}</dd></div>
             <div><dt>{t("provider.hub.registrySource")}</dt><dd>{item.registry_source}</dd></div>
+            {item.last_health_check_at && <div><dt>{t("provider.hub.lastHealthCheck")}</dt><dd>{new Date(item.last_health_check_at).toLocaleString()}</dd></div>}
             <div><dt>{t("provider.hub.redistribution")}</dt><dd>{item.redistributed_by_hanclassstudio ? t("common.yes") : t("common.no")}</dd></div>
             <div><dt>{t("provider.hub.thirdPartyCode")}</dt><dd>{item.third_party_executable_code ? t("common.yes") : t("common.no")}</dd></div>
           </dl>
@@ -309,6 +310,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
             <p className="eyebrow">{t("provider.hub.eyebrow")}</p>
             <h2 id="providerHubTitle">{t("provider.hub.title")}</h2>
             <p id="providerHubDescription">{t("provider.hub.description")}</p>
+            {catalog?.last_refresh_at && <p className="provider-hub-last-refresh">{t("provider.registry.lastRefreshed", { time: new Date(catalog.last_refresh_at).toLocaleString() })}</p>}
           </div>
           <div className="provider-hub-header-actions">
             <button type="button" className="secondary" disabled={refreshing} onClick={() => void refresh()}>

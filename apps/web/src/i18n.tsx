@@ -536,6 +536,7 @@ const zh: Dict = {
   "provider.hub.licenseUnknown": "许可证不明确：只展示来源，不允许自动安装。",
   "provider.hub.licenseUnknownShort": "许可证不明确",
   "provider.hub.registrySource": "注册表来源",
+  "provider.hub.lastHealthCheck": "最后健康检查",
   "provider.hub.source.website": "官方网站",
   "provider.hub.source.project": "项目仓库",
   "provider.hub.source.apiDocs": "API 文档",
