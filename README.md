@@ -4,7 +4,7 @@
 
 **AI 辅助语言教学课件生成器 — 面向国际中文教育**
 
-[![测试](https://img.shields.io/badge/tests-297%20passed-brightgreen)](#)
+[![测试](https://img.shields.io/badge/tests-498%20passed-brightgreen)](#)
 [![阶段](https://img.shields.io/badge/phase-2C%20内部验证-yellow)](#)
 [![许可](https://img.shields.io/badge/license-MIT-blue)](#)
 
@@ -157,7 +157,7 @@ npm run test:api    # 仅后端测试
 npm run build:web   # 前端构建校验
 ```
 
-当前测试：**297 passed**（后端测试 + 前端构建）。
+当前测试：**498 passed，1 skipped**（后端测试 + 前端构建 + 状态契约）。
 
 ---
 
@@ -169,6 +169,7 @@ npm run build:web   # 前端构建校验
 | [State-Evidence 内核白皮书](docs/state-evidence-kernel-v0.2.2.md) | 教学内核架构详细设计 |
 | [呈现绑定规范](docs/presentation-bindings-v0.2.2.md) | v2 呈现契约规格说明 |
 | [架构总览](docs/architecture-overview.md) | 系统设计与组件关系 |
+| [HanClass Provider Hub](docs/provider-hub.md) | Provider 能力模型、刷新/安装任务、安全边界与扩展指南 |
 | [Codex Provider 桥接](docs/codex-provider-bridge.md) | Codex ChatGPT / Image 的鉴权、任务与验证契约 |
 | [冒烟测试报告](docs/smoke-test-v0.2.1.md) | v0.2.1-alpha 端到端验证 |
 | [演示脚本](docs/demo-script.md) | 3–5 分钟快速演示稿 |

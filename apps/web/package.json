@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
-    "test:state": "rm -rf /tmp/hcs-state-contract-test && ../../node_modules/.bin/tsc --module commonjs --target ES2020 --outDir /tmp/hcs-state-contract-test src/state.ts src/state.test.ts && node /tmp/hcs-state-contract-test/state.test.js",
+    "test:state": "rm -rf /tmp/hcs-state-contract-test && ../../node_modules/.bin/tsc --module commonjs --target ES2020 --outDir /tmp/hcs-state-contract-test src/state.ts src/state.test.ts src/api-errors.ts src/api-errors.test.ts && node /tmp/hcs-state-contract-test/state.test.js && node /tmp/hcs-state-contract-test/api-errors.test.js",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4173"
   },

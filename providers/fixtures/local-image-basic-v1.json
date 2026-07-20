@@ -1,0 +1,22 @@
+{
+  "schema": "hanclassstudio.capability_fixture.v1",
+  "package_id": "hcs.local-image-basic",
+  "version": "1.0.0",
+  "runtime": {
+    "id": "fixture-runtime",
+    "version": "1.0.0",
+    "bind_host": "127.0.0.1"
+  },
+  "model_package": {
+    "id": "fixture-safe-image-model",
+    "version": "1.0.0",
+    "format": "json",
+    "executable_code": false
+  },
+  "workflow_pack": {
+    "id": "teaching-illustration-fixture-v1",
+    "version": "1.0.0",
+    "capabilities": ["text_to_image", "teaching_illustration", "vocabulary_image"]
+  },
+  "smoke_test": "deterministic-teaching-illustration-ok"
+}

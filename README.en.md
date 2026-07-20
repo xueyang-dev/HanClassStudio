@@ -4,7 +4,7 @@
 
 **AI-assisted interactive courseware generator for language teaching**
 
-[![tests](https://img.shields.io/badge/tests-297%20passed-brightgreen)](#)
+[![tests](https://img.shields.io/badge/tests-498%20passed-brightgreen)](#)
 [![phase](https://img.shields.io/badge/phase-2C%20internal%20validation-yellow)](#)
 [![license](https://img.shields.io/badge/license-MIT-blue)](#)
 
@@ -151,7 +151,7 @@ npm run test:api    # Backend tests only
 npm run build:web   # Frontend build check
 ```
 
-Current: **297 passed** (backend tests + frontend build).
+Current: **498 passed, 1 skipped** (backend tests + frontend build + state contract).
 
 ---
 
@@ -163,6 +163,7 @@ Current: **297 passed** (backend tests + frontend build).
 | [State-Evidence Kernel](docs/state-evidence-kernel-v0.2.2.md) | Teaching kernel architecture (white paper) |
 | [Presentation Bindings](docs/presentation-bindings-v0.2.2.md) | v2 contract specification |
 | [Architecture Overview](docs/architecture-overview.md) | System design and component relationships |
+| [HanClass Provider Hub](docs/provider-hub.md) | Capability model, refresh/install tasks, security boundaries, and extension guide |
 | [Smoke Test Report](docs/smoke-test-v0.2.1.md) | v0.2.1-alpha end-to-end verification |
 | [Demo Script](docs/demo-script.md) | 3–5 minute walkthrough |
 | [Contributing Guide](CONTRIBUTING.md) | How to contribute |

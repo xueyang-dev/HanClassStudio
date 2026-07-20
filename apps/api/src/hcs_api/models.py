@@ -17,6 +17,22 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class ValidationErrorField(BaseModel):
+    path: str
+    code: str
+    message: str
+
+
+class SafeValidationError(BaseModel):
+    code: Literal["request_validation_failed"] = "request_validation_failed"
+    message: str = "The request contains invalid fields."
+    fields: list[ValidationErrorField] = Field(default_factory=list)
+
+
+class SafeValidationErrorEnvelope(BaseModel):
+    error: SafeValidationError = Field(default_factory=SafeValidationError)
+
+
 class TextBlock(BaseModel):
     id: str
     text: str

@@ -13,6 +13,12 @@ import type {
   ProviderInstallLog,
   ProviderInstallPrepareResponse,
   ProviderInstallResult,
+  ProviderHubCatalog,
+  ProviderHubInstallStartResponse,
+  ProviderHubInstallTask,
+  ProviderHubItem,
+  ProviderRefreshTask,
+  PublicOnlineProviderConfig,
   ProjectState,
   ProviderCapability,
   ProviderConfig,
@@ -22,13 +28,14 @@ import type {
   ProjectSummary,
   StateFirstTeacherSummary
 } from "./types";
+import { responseError } from "./api-errors";
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
-    throw new Error(await responseError(response));
+    throw await responseError(response);
   }
   return response.json() as Promise<T>;
 }
@@ -36,36 +43,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function download(path: string, init?: RequestInit): Promise<Blob> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
-    throw new Error(await responseError(response));
+    throw await responseError(response);
   }
   return response.blob();
-}
-
-async function responseError(response: Response): Promise<string> {
-  let message = response.statusText;
-  try {
-    const body = await response.json();
-    if (typeof body.detail === "string") {
-      message = body.detail;
-    } else if (body.detail && typeof body.detail === "object") {
-      const detail = body.detail as { message?: unknown; blocking_reasons?: unknown; blockers?: unknown };
-      const reasons = Array.isArray(detail.blocking_reasons)
-        ? detail.blocking_reasons.filter((item): item is string => typeof item === "string")
-        : [];
-      if (Array.isArray(detail.blockers)) {
-        reasons.push(...detail.blockers.map((item) => {
-          if (item && typeof item === "object" && "message" in item && typeof item.message === "string") return item.message;
-          return typeof item === "string" ? item : "";
-        }).filter(Boolean));
-      }
-      message = [typeof detail.message === "string" ? detail.message : "", ...reasons]
-        .filter(Boolean)
-        .join("\n") || message;
-    }
-  } catch {
-    message = response.statusText;
-  }
-  return message;
 }
 
 function withExpectedRevision(path: string, expectedRevision?: number | null): string {
@@ -364,6 +344,59 @@ export async function rollbackProviderInstall(providerId: string): Promise<Provi
 
 export async function fetchProviderInstallLogs(providerId: string): Promise<ProviderInstallLog[]> {
   return request<ProviderInstallLog[]>(`/api/providers/registry/${encodeURIComponent(providerId)}/install/logs`);
+}
+
+/** Read the Provider Hub's local snapshot. This GET never triggers discovery. */
+export async function fetchProviderHub(): Promise<ProviderHubCatalog> {
+  return request<ProviderHubCatalog>("/api/providers/hub");
+}
+
+export async function startProviderHubRefresh(): Promise<ProviderRefreshTask> {
+  return request<ProviderRefreshTask>("/api/providers/hub/refresh", { method: "POST" });
+}
+
+export async function fetchProviderHubRefresh(taskId: string): Promise<ProviderRefreshTask> {
+  return request<ProviderRefreshTask>(`/api/providers/hub/refresh/${encodeURIComponent(taskId)}`);
+}
+
+export async function startProviderHubInstall(packageId: string): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install`, { method: "POST" });
+}
+
+export async function fetchProviderHubInstall(taskId: string): Promise<ProviderHubInstallTask> {
+  return request<ProviderHubInstallTask>(`/api/providers/hub/install-tasks/${encodeURIComponent(taskId)}`);
+}
+
+export async function cancelProviderHubInstall(taskId: string): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/install-tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
+}
+
+export async function checkProviderHubHealth(packageId: string): Promise<ProviderHubItem> {
+  return request<ProviderHubItem>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/health`, { method: "POST" });
+}
+
+export async function fetchOnlineProviderConfig(providerId: string): Promise<PublicOnlineProviderConfig> {
+  return request<PublicOnlineProviderConfig>(`/api/providers/hub/online/${encodeURIComponent(providerId)}/configuration`);
+}
+
+export async function saveOnlineProviderConfig(providerId: string, body: { api_key?: string; endpoint: string; model: string }): Promise<PublicOnlineProviderConfig> {
+  return request<PublicOnlineProviderConfig>(`/api/providers/hub/online/${encodeURIComponent(providerId)}/configuration`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteOnlineProviderConfig(providerId: string): Promise<PublicOnlineProviderConfig> {
+  return request<PublicOnlineProviderConfig>(`/api/providers/hub/online/${encodeURIComponent(providerId)}/configuration`, { method: "DELETE" });
+}
+
+export async function testOnlineProviderConnection(providerId: string): Promise<ProviderHubItem> {
+  return request<ProviderHubItem>(`/api/providers/hub/online/${encodeURIComponent(providerId)}/test`, { method: "POST" });
+}
+
+export async function setOnlineProviderEnabled(providerId: string, enabled: boolean): Promise<ProviderHubItem> {
+  return request<ProviderHubItem>(`/api/providers/hub/online/${encodeURIComponent(providerId)}/${enabled ? "enable" : "disable"}`, { method: "POST" });
 }
 
 /** Persist the provider settings to the backend. */

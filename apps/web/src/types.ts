@@ -192,6 +192,140 @@ export interface ProviderInstallLog {
   failure_code?: string | null;
 }
 
+export type ProviderHubStatus = "discovered" | "available" | "not_installed" | "installing" | "installed" | "not_configured" | "configured" | "checking" | "ready" | "degraded" | "incompatible" | "update_available" | "failed" | "disabled" | "unavailable";
+export type ProviderHubAction = "view_details" | "open_project" | "open_api_application" | "configure" | "delete_configuration" | "test_connection" | "install" | "cancel_install" | "repair" | "check_health" | "disable" | "enable" | "view_logs";
+export type ProviderTrustLevel = "official_verified" | "community_verified" | "discovered_unverified" | "user_added" | "deprecated" | "blocked";
+export type ProviderCompatibility = "compatible" | "compatible_but_slow" | "unsupported" | "unknown";
+
+export interface ProviderHubSourceLinks {
+  official_website_url?: string | null;
+  project_url?: string | null;
+  api_application_url?: string | null;
+  api_docs_url?: string | null;
+  pricing_url?: string | null;
+  terms_url?: string | null;
+  privacy_url?: string | null;
+  model_url?: string | null;
+  license_url?: string | null;
+}
+
+export interface ProviderCapabilityPackage {
+  id: string;
+  name: string;
+  description: string;
+  runtime?: { id: string; name: string; version: string; execution: string } | null;
+  model_packages: Array<{ id: string; name: string; version: string; format: string; safe_format: boolean }>;
+  workflow_packs: Array<{ id: string; name: string; version: string; capabilities: string[] }>;
+  healthcheck: string;
+}
+
+export interface ProviderHardwareCapability {
+  operating_system: string;
+  architecture: string;
+  memory_mb?: number | null;
+  free_disk_mb?: number | null;
+  gpu_vendor?: string | null;
+  gpu_name?: string | null;
+  gpu_memory_mb?: number | null;
+  cuda_available?: boolean | null;
+  directml_available?: boolean | null;
+  mps_available?: boolean | null;
+  status: ProviderCompatibility;
+  reasons: string[];
+  speed_estimate?: string | null;
+  checked_at: string;
+}
+
+export interface ProviderHubItem {
+  id: string;
+  provider_id: string;
+  name: string;
+  description: string;
+  provider_type: "online" | "offline" | "hybrid";
+  capabilities: string[];
+  trust_level: ProviderTrustLevel;
+  registry_source: "builtin" | "official_registry" | "local_config";
+  status: ProviderHubStatus;
+  installed: boolean;
+  configured: boolean;
+  ready: boolean;
+  compatible: ProviderCompatibility;
+  available_actions: ProviderHubAction[];
+  recommended: boolean;
+  requires_download: boolean;
+  requires_api_key: boolean;
+  paid_service?: boolean | null;
+  runs_locally: boolean;
+  uploads_data: boolean;
+  version?: string | null;
+  update_channel: "stable" | "beta" | "experimental";
+  source_links: ProviderHubSourceLinks;
+  license: { name?: string | null; url?: string | null; redistribution_allowed: boolean; clear: boolean };
+  publisher?: string | null;
+  third_party_executable_code: boolean;
+  redistributed_by_hanclassstudio: boolean;
+  capability_package?: ProviderCapabilityPackage | null;
+  technical_error?: { code?: string; message?: string; [key: string]: unknown } | null;
+  last_health_check_at?: string | null;
+}
+
+export interface ProviderHubCatalog {
+  schema: "hanclassstudio.provider_hub.v1";
+  providers: ProviderHubItem[];
+  hardware: ProviderHardwareCapability;
+  last_refresh_at?: string | null;
+  isolated_errors: Array<{ code: string; entry: string }>;
+}
+
+export interface ProviderRefreshTask {
+  task_id: string;
+  state: "queued" | "running" | "completed" | "failed" | "cancelled" | "partial";
+  started_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+  summary: {
+    added: number;
+    updated: number;
+    unchanged: number;
+    failed_sources: number;
+    sources: Array<{ source_id: string; status: "updated" | "unchanged" | "failed"; message: string; retained_previous_snapshot: boolean }>;
+  };
+  error?: { code: string; message: string } | null;
+}
+
+export interface ProviderHubInstallTask {
+  task_id: string;
+  package_id: string;
+  state: "queued" | "running" | "completed" | "failed" | "cancelled" | "partial";
+  phase: string;
+  progress: number;
+  current_file_progress: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  message: string;
+  started_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+  cancellable: boolean;
+  cancel_requested: boolean;
+  error?: { code: string; message: string } | null;
+  recoverable_actions: ProviderHubAction[];
+  log_ref: string;
+}
+
+export interface ProviderHubInstallStartResponse {
+  task: ProviderHubInstallTask;
+  provider: ProviderHubItem;
+}
+
+export interface PublicOnlineProviderConfig {
+  provider_id: string;
+  endpoint: string;
+  model: string;
+  api_key_present: boolean;
+  secure_storage: "os_protected" | "local_file_write_only";
+}
+
 /** Stored configuration for one capability. */
 export interface CapabilityConfig {
   providerId: string;

@@ -6,9 +6,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .agent import generate_agent_package, validate_agent_output
@@ -48,6 +50,8 @@ from .models import (
     ProjectSummary,
     ProviderCapabilityDescriptor,
     ProviderSettings,
+    SafeValidationError,
+    SafeValidationErrorEnvelope,
     SourceMaterial,
     StateFirstTeacherSummary,
     VideoProviderSettings,
@@ -74,6 +78,27 @@ from .provider_registry import (
     retry_install,
     rollback_install,
     _redact_sensitive_text,
+)
+from .provider_hub import (
+    OnlineProviderConfigRequest,
+    ProviderHubCatalog,
+    ProviderHubError,
+    ProviderInstallStartResponse,
+    ProviderInstallTask,
+    ProviderRefreshTask,
+    PublicOnlineProviderConfig,
+    cancel_fixture_install,
+    check_local_health,
+    delete_online_config,
+    detect_hardware,
+    get_install_task,
+    get_refresh_task,
+    hub_catalog,
+    save_online_config,
+    set_online_disabled,
+    start_fixture_install,
+    start_refresh,
+    test_online_connection,
 )
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
@@ -106,7 +131,16 @@ from .storage import (
 
 ensure_runtime()
 
-app = FastAPI(title="HanClassStudio API", version="0.1.0")
+app = FastAPI(
+    title="HanClassStudio API",
+    version="0.1.0",
+    responses={
+        422: {
+            "model": SafeValidationErrorEnvelope,
+            "description": "Safe request validation error without reflected input",
+        }
+    },
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -129,6 +163,75 @@ app.add_middleware(
 # the projects under ``runtime/config`` and must never be exposed by the static
 # file server.
 app.mount("/runtime/projects", StaticFiles(directory=PROJECTS_DIR), name="runtime-projects")
+
+
+def _safe_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    safe_schema = {"$ref": "#/components/schemas/SafeValidationErrorEnvelope"}
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            validation_response = operation.get("responses", {}).get("422")
+            if validation_response:
+                validation_response["content"] = {"application/json": {"schema": safe_schema}}
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _safe_openapi
+
+
+_VALIDATION_LOCATION_PREFIXES = {"body", "query", "path", "header", "cookie"}
+_SAFE_VALIDATION_CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
+_SAFE_VALIDATION_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+
+
+def _safe_request_validation_fields(errors: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Keep schema locations and error types without reflecting request input."""
+    fields: list[dict[str, str]] = []
+    for error in errors:
+        code = str(error.get("type") or "validation_error")
+        if not _SAFE_VALIDATION_CODE.fullmatch(code):
+            code = "validation_error"
+        location: list[str] = []
+        for part in error.get("loc", ()):
+            if part in _VALIDATION_LOCATION_PREFIXES and not location:
+                continue
+            if isinstance(part, int):
+                location.append(str(part))
+            elif isinstance(part, str) and _SAFE_VALIDATION_FIELD.fullmatch(part):
+                location.append(part)
+            else:
+                location.append("field")
+        if code == "extra_forbidden" and location:
+            location[-1] = "unexpected_field"
+        message = {
+            "missing": "A required value is missing.",
+            "string_too_long": "The value is too long.",
+            "string_too_short": "The value is too short.",
+            "extra_forbidden": "An unexpected field was submitted.",
+        }.get(code, "The submitted value is invalid.")
+        fields.append({
+            "path": ".".join(location) or "request",
+            "code": code,
+            "message": message,
+        })
+    return fields
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(_request: Request, error: RequestValidationError) -> JSONResponse:
+    # Never serialize ``error`` itself: Pydantic validation errors contain the
+    # original request input, including rejected credentials and endpoints.
+    return JSONResponse(
+        status_code=422,
+        content=SafeValidationErrorEnvelope(error=SafeValidationError(
+            fields=_safe_request_validation_fields(error.errors()),
+        )).model_dump(mode="json"),
+    )
 
 
 @app.get("/api/health")
@@ -966,6 +1069,128 @@ def get_provider_install_logs(provider_id: str) -> list[ProviderInstallLog]:
         return install_logs(provider_id)
     except ProviderRegistryError as error:
         raise _provider_registry_http_error(error, provider_id=provider_id) from error
+
+
+def _provider_hub_http_error(error: ProviderHubError) -> HTTPException:
+    status_by_code = {
+        "task_not_found": 404,
+        "task_conflict": 409,
+        "network_error": 502,
+        "authentication_error": 401,
+        "rate_limited": 429,
+        "cancelled": 409,
+    }
+    status = status_by_code.get(error.code, 400)
+    return HTTPException(status_code=status, detail={"code": error.code, "message": error.message})
+
+
+@app.get("/api/providers/hub", response_model=ProviderHubCatalog)
+def get_provider_hub() -> ProviderHubCatalog:
+    """Return the local Hub snapshot; this endpoint never refreshes remote sources."""
+    return hub_catalog()
+
+
+@app.get("/api/providers/hub/hardware")
+def get_provider_hardware() -> dict[str, Any]:
+    return detect_hardware().model_dump(mode="json")
+
+
+@app.post("/api/providers/hub/refresh", response_model=ProviderRefreshTask)
+def start_provider_hub_refresh() -> ProviderRefreshTask:
+    try:
+        return start_refresh()
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/refresh/{task_id}", response_model=ProviderRefreshTask)
+def get_provider_hub_refresh(task_id: str) -> ProviderRefreshTask:
+    try:
+        return get_refresh_task(task_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/install", response_model=ProviderInstallStartResponse)
+def install_provider_package(package_id: str) -> ProviderInstallStartResponse:
+    try:
+        return start_fixture_install(package_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/install-tasks/{task_id}", response_model=ProviderInstallTask)
+def get_provider_hub_install_task(task_id: str) -> ProviderInstallTask:
+    try:
+        return get_install_task(task_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/install-tasks/{task_id}/cancel", response_model=ProviderInstallStartResponse)
+def cancel_provider_hub_install(task_id: str) -> ProviderInstallStartResponse:
+    try:
+        return cancel_fixture_install(task_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/health")
+def check_provider_package_health(package_id: str) -> dict[str, Any]:
+    try:
+        return check_local_health(package_id).model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/online/{provider_id}/configuration", response_model=PublicOnlineProviderConfig)
+def get_online_provider_configuration(provider_id: str) -> PublicOnlineProviderConfig:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    from .provider_hub import _online_config
+
+    return _online_config()
+
+
+@app.put("/api/providers/hub/online/{provider_id}/configuration", response_model=PublicOnlineProviderConfig)
+def put_online_provider_configuration(provider_id: str, payload: OnlineProviderConfigRequest) -> PublicOnlineProviderConfig:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    try:
+        return save_online_config(payload)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.delete("/api/providers/hub/online/{provider_id}/configuration", response_model=PublicOnlineProviderConfig)
+def remove_online_provider_configuration(provider_id: str) -> PublicOnlineProviderConfig:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    return delete_online_config()
+
+
+@app.post("/api/providers/hub/online/{provider_id}/test")
+def test_online_provider(provider_id: str) -> dict[str, Any]:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    try:
+        return test_online_connection().model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/online/{provider_id}/disable")
+def disable_online_provider(provider_id: str) -> dict[str, Any]:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    return set_online_disabled(True).model_dump(mode="json")
+
+
+@app.post("/api/providers/hub/online/{provider_id}/enable")
+def enable_online_provider(provider_id: str) -> dict[str, Any]:
+    if provider_id != "openai_images":
+        raise HTTPException(status_code=404, detail={"code": "provider_not_found", "message": "Provider was not found"})
+    return set_online_disabled(False).model_dump(mode="json")
 
 
 # Frontend provider ids that are cloud-hosted (vs. local runtimes). Used to derive
