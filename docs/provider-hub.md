@@ -100,15 +100,26 @@ queued
 
 Task state is persisted and includes overall/file progress, actual copied byte
 counts, phase, teacher-facing message, stable error code, recoverable actions,
-timestamps, and cancellation state. Interrupted in-process tasks fail closed on
-recovery. UI polling has a bounded wait; backend runners also use bounded work.
+timestamps, and cancellation state. On the next catalog read, a queued or
+running task without a live in-process worker is converted to a retryable failed
+state. Phase 1 does not continue the original process, resume downloaded byte
+ranges, or provide download checkpoint recovery. UI polling has a bounded wait;
+backend runners also use bounded work.
 
 The fixture runner enforces a bundled `.json` artifact with a 64 KiB limit, a
 fixed SHA-256 and known identity, localhost runtime binding, a non-executable
-model declaration, a known workflow, path containment, isolated staging,
-atomic replacement, deterministic health/smoke tests, and failure cleanup.
+model declaration, a known workflow, containment of the fixed JSON target path,
+isolated staging, atomic replacement, deterministic health/smoke tests, and
+failure cleanup.
 A failure or cancellation never marks the package ready. Phase 1 intentionally
 does not download or execute third-party code.
+
+The fixture is a plain JSON file and Phase 1 does **not** implement ZIP or TAR
+extraction. Before any real archive is accepted, the installer must reject `..`
+traversal, absolute and Windows drive paths, symbolic- and hard-link escapes,
+declared/actual size mismatches, decompression bombs, excessive extracted bytes,
+and excessive file counts; it must also avoid check/use replacement races. The
+current path check must not be described as archive extraction protection.
 
 ## Online configuration and secrets
 
@@ -119,12 +130,21 @@ without deleting credentials; `DELETE` removes the key and capability binding.
 Authentication, rate-limit, network, and health failures have stable codes.
 
 API keys are write-only in public responses and never enter browser persistence,
-Hub snapshots, task messages, or logs. The current storage adapter uses the
+Hub snapshots, task messages, validation responses, or logs. Public 422 responses
+return only stable error codes and schema field paths, never rejected input. The
+current storage adapter uses the
 existing local backend settings file with atomic replacement and owner-only
 `0600` permissions on POSIX. It is **not encrypted and is not an OS keychain**;
 the UI and API report `local_file_write_only`. A production desktop distribution
 should replace this adapter with Keychain, Credential Manager, Secret Service,
 or equivalent while preserving the public contract.
+
+`0600` is a POSIX-only guarantee and the application does not claim equivalent
+Windows ACL protection. The settings path stays under the backend runtime config
+directory rather than project/export data, deletion rewrites the configuration
+without the key, and temporary JSON uses the same owner-only POSIX mode. Secure
+erasure and Windows credential protection remain release blockers for the
+file-backed adapter.
 
 The OpenAI endpoint is restricted to `https://api.openai.com` with no
 credentials, alternate port, query, or fragment. External links use `noopener
@@ -183,6 +203,7 @@ estimate is shown because phase 1 has no representative benchmark.
 - remote shell, Python, npm, Docker, Homebrew, or system-package commands;
 - installing FFmpeg, GPU drivers, CUDA, or DirectML;
 - real local model downloads or model execution;
+- ZIP/TAR extraction or archive traversal/link/bomb/inode defenses;
 - detached registry signatures, transparency logs, or multi-process locks;
 - encrypted/keychain secret storage or reliable performance estimates;
 - uninstall/update/log-view actions for the new capability fixture;

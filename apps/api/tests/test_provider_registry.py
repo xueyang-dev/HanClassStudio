@@ -319,6 +319,7 @@ def test_invalid_registry_refresh_keeps_previous_catalog(tmp_path, monkeypatch) 
 
 
 def test_registry_refresh_source_is_restricted_to_official_https_feed() -> None:
+    assert "/abd0baa05c13ddeebb6a0093bad69444f3122cb9/" in registry._DEFAULT_REGISTRY_URL
     assert registry._validate_registry_feed_url(registry._DEFAULT_REGISTRY_URL) == registry._DEFAULT_REGISTRY_URL
     for source in (
         "http://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
