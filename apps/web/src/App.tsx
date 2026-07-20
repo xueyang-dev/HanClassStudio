@@ -72,6 +72,7 @@ import {
   uploadProject,
   validateAgentOutput
 } from "./api";
+import { ApiError, localizedApiError } from "./api-errors";
 import type { BackendProviderSettings } from "./api";
 import { useI18n, UI_LANGUAGES, type UiLang } from "./i18n";
 import type {
@@ -244,6 +245,9 @@ function markPipelineStep(label: string, status: PipelineStepStatus = "running")
 }
 
 function readableError(err: unknown, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  if (err instanceof ApiError && err.code === "request_validation_failed") {
+    return localizedApiError(err, t, t("error.fallback"));
+  }
   const message = err instanceof Error ? err.message : t("error.fallback");
   if (message.toLowerCase().includes("failed to fetch")) {
     return t("error.fetch");

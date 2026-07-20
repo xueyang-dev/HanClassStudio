@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -49,6 +50,8 @@ from .models import (
     ProjectSummary,
     ProviderCapabilityDescriptor,
     ProviderSettings,
+    SafeValidationError,
+    SafeValidationErrorEnvelope,
     SourceMaterial,
     StateFirstTeacherSummary,
     VideoProviderSettings,
@@ -128,7 +131,16 @@ from .storage import (
 
 ensure_runtime()
 
-app = FastAPI(title="HanClassStudio API", version="0.1.0")
+app = FastAPI(
+    title="HanClassStudio API",
+    version="0.1.0",
+    responses={
+        422: {
+            "model": SafeValidationErrorEnvelope,
+            "description": "Safe request validation error without reflected input",
+        }
+    },
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -151,6 +163,25 @@ app.add_middleware(
 # the projects under ``runtime/config`` and must never be exposed by the static
 # file server.
 app.mount("/runtime/projects", StaticFiles(directory=PROJECTS_DIR), name="runtime-projects")
+
+
+def _safe_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    safe_schema = {"$ref": "#/components/schemas/SafeValidationErrorEnvelope"}
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            validation_response = operation.get("responses", {}).get("422")
+            if validation_response:
+                validation_response["content"] = {"application/json": {"schema": safe_schema}}
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _safe_openapi
 
 
 _VALIDATION_LOCATION_PREFIXES = {"body", "query", "path", "header", "cookie"}
@@ -197,13 +228,9 @@ async def request_validation_error_handler(_request: Request, error: RequestVali
     # original request input, including rejected credentials and endpoints.
     return JSONResponse(
         status_code=422,
-        content={
-            "error": {
-                "code": "request_validation_failed",
-                "message": "The submitted request is invalid.",
-                "fields": _safe_request_validation_fields(error.errors()),
-            }
-        },
+        content=SafeValidationErrorEnvelope(error=SafeValidationError(
+            fields=_safe_request_validation_fields(error.errors()),
+        )).model_dump(mode="json"),
     )
 
 
@@ -1100,8 +1127,8 @@ def get_provider_hub_install_task(task_id: str) -> ProviderInstallTask:
         raise _provider_hub_http_error(error) from error
 
 
-@app.post("/api/providers/hub/install-tasks/{task_id}/cancel", response_model=ProviderInstallTask)
-def cancel_provider_hub_install(task_id: str) -> ProviderInstallTask:
+@app.post("/api/providers/hub/install-tasks/{task_id}/cancel", response_model=ProviderInstallStartResponse)
+def cancel_provider_hub_install(task_id: str) -> ProviderInstallStartResponse:
     try:
         return cancel_fixture_install(task_id)
     except ProviderHubError as error:

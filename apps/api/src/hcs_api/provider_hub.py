@@ -296,10 +296,19 @@ class ProviderInstallStartResponse(BaseModel):
     provider: ProviderHubItem
 
 
+def _normalize_online_model(value: str) -> str:
+    normalized = value.strip() or "gpt-image-2"
+    if normalized == "placeholder-svg":
+        raise ValueError("placeholder model cannot be used by the online image Provider")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", normalized):
+        raise ValueError("model must be a plain model identifier")
+    return normalized
+
+
 class OnlineProviderConfigRequest(BaseModel):
     api_key: str | None = Field(default=None, max_length=4096)
     endpoint: str = "https://api.openai.com/v1"
-    model: str = Field(default="gpt-image-2", min_length=1, max_length=160)
+    model: str = Field(default="gpt-image-2", max_length=160)
 
     @field_validator("api_key")
     @classmethod
@@ -311,9 +320,7 @@ class OnlineProviderConfigRequest(BaseModel):
     @field_validator("model")
     @classmethod
     def _model_is_a_safe_identifier(cls, value: str) -> str:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", value):
-            raise ValueError("model must be a plain model identifier")
-        return value
+        return _normalize_online_model(value)
 
     @field_validator("endpoint")
     @classmethod
@@ -411,16 +418,27 @@ def _update_hub_state(key: str, value: Any) -> None:
 
 def _online_config() -> PublicOnlineProviderConfig:
     settings = storage.read_provider_settings()
+    if settings.image.provider != _ONLINE_PROVIDER_ID:
+        return PublicOnlineProviderConfig(
+            endpoint="https://api.openai.com/v1",
+            model="gpt-image-2",
+            api_key_present=False,
+        )
+    try:
+        model = _normalize_online_model(settings.image.model)
+    except ValueError:
+        model = "gpt-image-2"
     return PublicOnlineProviderConfig(
         endpoint=settings.image.endpoint_url or "https://api.openai.com/v1",
-        model=settings.image.model or "gpt-image-2",
+        model=model,
         api_key_present=bool(settings.image.api_key.strip()),
     )
 
 
 def save_online_config(request: OnlineProviderConfigRequest) -> PublicOnlineProviderConfig:
     settings = storage.read_provider_settings()
-    api_key = (request.api_key or "").strip() or settings.image.api_key
+    existing_key = settings.image.api_key if settings.image.provider == _ONLINE_PROVIDER_ID else ""
+    api_key = (request.api_key or "").strip() or existing_key
     if not api_key:
         raise ProviderHubError("authentication_error", "API Key is required before this Provider can be configured")
     settings.image = ImageProviderSettings(
@@ -483,9 +501,13 @@ def test_online_connection() -> ProviderHubItem:
     settings = storage.read_provider_settings()
     if settings.image.provider != _ONLINE_PROVIDER_ID or not settings.image.api_key.strip():
         raise ProviderHubError("authentication_error", "Configure an API Key before testing this Provider")
+    try:
+        model = _normalize_online_model(settings.image.model)
+    except ValueError as exc:
+        raise ProviderHubError("health_check_failed", "The configured image model is invalid") from exc
     _update_hub_state("online_health", {"status": "checking", "checked_at": _iso()})
     try:
-        CONNECTION_CHECKER(settings.image.endpoint_url, settings.image.api_key, settings.image.model)
+        CONNECTION_CHECKER(settings.image.endpoint_url, settings.image.api_key, model)
     except ProviderHubError as exc:
         _update_hub_state("online_health", {"status": "degraded", "checked_at": _iso(), "error": {"code": exc.code, "message": exc.message}})
         raise
@@ -932,17 +954,18 @@ def start_fixture_install(package_id: str) -> ProviderInstallStartResponse:
         return ProviderInstallStartResponse(task=task, provider=provider)
 
 
-def cancel_fixture_install(task_id: str) -> ProviderInstallTask:
+def cancel_fixture_install(task_id: str) -> ProviderInstallStartResponse:
     task = get_install_task(task_id)
     if task.state not in {"queued", "running"} or not task.cancellable:
         raise ProviderHubError("cancelled", "This installation task can no longer be cancelled")
     with _install_lock:
         _cancelled_tasks.add(task_id)
-    task.cancel_requested = True
-    task.message = "正在安全取消安装"
-    task.updated_at = _iso()
-    _save_install_task(task)
-    return task
+        task.cancel_requested = True
+        task.message = "正在安全取消安装"
+        task.updated_at = _iso()
+        _save_install_task(task)
+        provider = _local_package_item(detect_hardware())
+        return ProviderInstallStartResponse(task=task, provider=provider)
 
 
 def check_local_health(package_id: str) -> ProviderHubItem:

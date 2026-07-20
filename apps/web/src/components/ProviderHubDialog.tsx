@@ -15,6 +15,7 @@ import {
   startProviderHubRefresh,
   testOnlineProviderConnection,
 } from "../api";
+import { localizedApiError } from "../api-errors";
 import { useI18n } from "../i18n";
 import { applyProviderHubInstallStart, filterProviderHubItems, hasProviderHubAction, safeExternalProviderUrl, type ProviderHubFilter } from "../state";
 import type { ProviderHubCatalog, ProviderHubInstallTask, ProviderHubItem, ProviderRefreshTask, PublicOnlineProviderConfig } from "../types";
@@ -22,15 +23,39 @@ import type { ProviderHubCatalog, ProviderHubInstallTask, ProviderHubItem, Provi
 
 const FILTERS: ProviderHubFilter[] = ["all", "online", "offline", "image", "video", "free", "api", "verified", "unverified", "compatible"];
 const TERMINAL_TASKS = new Set(["completed", "failed", "cancelled", "partial"]);
+const ADVANCED_PROVIDER_COPY: Record<string, { name: string; description: string }> = {
+  "provider.llm.deterministic": { name: "offlineBlueprint", description: "offlineBlueprintDescription" },
+  "provider.llm.openai_compatible": { name: "compatibleChat", description: "compatibleChatDescription" },
+  "provider.llm.ollama": { name: "ollama", description: "ollamaDescription" },
+  "provider.llm.lm_studio": { name: "lmStudio", description: "lmStudioDescription" },
+  "provider.llm.custom": { name: "customOnline", description: "customOnlineDescription" },
+  "provider.llm.codex_chatgpt": { name: "codexLesson", description: "codexLessonDescription" },
+  "provider.image.placeholder": { name: "offlineIllustration", description: "offlineIllustrationDescription" },
+  "provider.image.experimental_openai_images": { name: "experimentalImages", description: "experimentalImagesDescription" },
+  "provider.image.codex_image": { name: "codexImages", description: "codexImagesDescription" },
+  "provider.tts.placeholder": { name: "offlineAudio", description: "offlineAudioDescription" },
+  "provider.tts.openai_tts": { name: "onlineSpeech", description: "onlineSpeechDescription" },
+  "provider.ocr.paddle_ocr": { name: "paddleOcr", description: "paddleOcrDescription" },
+  "provider.ocr.tesseract": { name: "tesseract", description: "tesseractDescription" },
+  "provider.video.runway": { name: "runway", description: "runwayDescription" },
+  "provider.ocr.hcs_mock_ocr": { name: "ocrSandbox", description: "ocrSandboxDescription" },
+  "provider.llm.hcs_mock_llm": { name: "llmSandbox", description: "llmSandboxDescription" },
+};
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function formatBytes(value: number): string {
-  if (!value) return "0 B";
-  if (value < 1024) return `${value} B`;
-  return `${(value / 1024).toFixed(1)} KB`;
+  if (!value) return "0 KB";
+  const units = ["KB", "MB", "GB"];
+  let amount = value / 1024;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  return `${amount.toFixed(1)} ${units[unit]}`;
 }
 
 function targetHost(value: string): string {
@@ -41,12 +66,12 @@ function targetHost(value: string): string {
   }
 }
 
-function errorText(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
+function errorText(error: unknown, t: (key: string) => string, fallback: string): string {
+  return localizedApiError(error, t, fallback);
 }
 
 export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => void; onOpenSettings: () => void }) {
-  const { t } = useI18n();
+  const { lang, t } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const mountedRef = useRef(true);
@@ -91,7 +116,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
     restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
-    void reload().catch((nextError) => setError(errorText(nextError, t("provider.hub.error")))).finally(() => setLoading(false));
+    void reload().catch((nextError) => setError(errorText(nextError, t, t("provider.hub.error")))).finally(() => setLoading(false));
     return () => {
       mountedRef.current = false;
       if (dialog?.open) dialog.close();
@@ -120,7 +145,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       }
       await reload();
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.refreshFailed")));
+      setError(errorText(nextError, t, t("provider.hub.refreshFailed")));
     }
   }
 
@@ -142,7 +167,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       }
       await reload();
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.installFailed")));
+      setError(errorText(nextError, t, t("provider.hub.installFailed")));
       try {
         await reload();
         endMutation(item.id);
@@ -158,9 +183,9 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
     if (!task) return;
     try {
       const next = await cancelProviderHubInstall(task.task_id);
-      setHubState((current) => ({ ...current, installTasks: { ...current.installTasks, [item.id]: next } }));
+      setHubState((current) => applyProviderHubInstallStart(current.catalog, current.installTasks, next));
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.cancelFailed")));
+      setError(errorText(nextError, t, t("provider.hub.cancelFailed")));
     }
   }
 
@@ -170,7 +195,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       await checkProviderHubHealth(item.id);
       await reload();
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.healthFailed")));
+      setError(errorText(nextError, t, t("provider.hub.healthFailed")));
       await reload().catch(() => undefined);
     }
   }
@@ -186,7 +211,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       setModel(current.model);
       setApiKey("");
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.configFailed")));
+      setError(errorText(nextError, t, t("provider.hub.configFailed")));
     } finally {
       setConfigBusy(false);
     }
@@ -202,7 +227,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       setApiKey("");
       await reload();
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.configFailed")));
+      setError(errorText(nextError, t, t("provider.hub.configFailed")));
     } finally {
       setConfigBusy(false);
     }
@@ -215,7 +240,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       await testOnlineProviderConnection("openai_images");
       await reload();
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.testFailed")));
+      setError(errorText(nextError, t, t("provider.hub.testFailed")));
       await reload().catch(() => undefined);
     } finally {
       setConfigBusy(false);
@@ -230,7 +255,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       setApiKey("");
       await reload();
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.deleteFailed")));
+      setError(errorText(nextError, t, t("provider.hub.deleteFailed")));
     } finally {
       setConfigBusy(false);
     }
@@ -241,7 +266,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       await setOnlineProviderEnabled(item.provider_id, enabled);
       await reload();
     } catch (nextError) {
-      setError(errorText(nextError, t("provider.hub.configFailed")));
+      setError(errorText(nextError, t, t("provider.hub.configFailed")));
     }
   }
 
@@ -261,13 +286,16 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
       { label: t("provider.hub.source.privacy"), url: safeExternalProviderUrl(item.source_links.privacy_url) },
       { label: t("provider.hub.source.model"), url: safeExternalProviderUrl(item.source_links.model_url) },
     ].filter((entry): entry is { label: string; url: string } => Boolean(entry.url));
+    const copy = lang === "zh" ? ADVANCED_PROVIDER_COPY[item.id] : undefined;
+    const displayName = copy ? t(`provider.hub.advancedProvider.${copy.name}`) : item.name;
+    const displayDescription = copy ? t(`provider.hub.advancedProvider.${copy.description}`) : item.description;
     return (
       <article className={`provider-hub-card status-${item.status}`} key={item.id}>
         <header>
           <div className="provider-hub-card-icon" aria-hidden="true">{item.runs_locally ? <HardDrive size={20} /> : <Cloud size={20} />}</div>
           <div>
-            <h4>{item.name}</h4>
-            <p>{item.description}</p>
+            <h4>{displayName}</h4>
+            <p>{displayDescription}</p>
           </div>
           <span className={`provider-hub-status status-${item.status}`}>{t(`provider.hub.status.${item.status}`)}</span>
         </header>
@@ -283,6 +311,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
             <div><strong>{t(`provider.hub.phase.${task.phase}`)}</strong><span>{task.progress}%</span></div>
             <progress max={100} value={task.progress}>{task.progress}%</progress>
             {task.total_bytes > 0 && <p>{formatBytes(task.downloaded_bytes)} / {formatBytes(task.total_bytes)}</p>}
+            {task.total_bytes > 0 && <details className="provider-hub-task-technical"><summary>{t("provider.hub.technicalProgress")}</summary><span>{task.downloaded_bytes} B / {task.total_bytes} B</span></details>}
             {task.error && <p className="provider-hub-error-detail">{localizedTaskError === taskErrorKey ? task.error.message : localizedTaskError}</p>}
           </section>
         )}
@@ -302,6 +331,8 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
         <details className="provider-hub-details">
           <summary>{t("provider.hub.advanced")}</summary>
           <dl>
+            {copy && <div><dt>{t("provider.hub.originalProvider")}</dt><dd>{item.name}</dd></div>}
+            {copy && <div><dt>{t("provider.hub.originalDescription")}</dt><dd>{item.description}</dd></div>}
             <div><dt>{t("provider.hub.type")}</dt><dd>{item.provider_type}</dd></div>
             <div><dt>{t("provider.hub.version")}</dt><dd>{item.version ?? "—"} · {item.update_channel}</dd></div>
             <div><dt>{t("provider.hub.capabilities")}</dt><dd>{item.capabilities.join(", ")}</dd></div>
@@ -372,10 +403,16 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
         {configOpen && (
           <form className="provider-hub-config" onSubmit={(event) => void saveConfig(event)} aria-labelledby="providerHubConfigTitle">
             <header><h3 id="providerHubConfigTitle">{t("provider.hub.onlineConfig")}</h3><button type="button" className="icon-button" aria-label={t("provider.hub.closeConfig")} onClick={() => setConfigOpen(false)}><X size={18} /></button></header>
-            <p>{t("provider.hub.secretStorageNotice")}</p>
             <label className="field"><span>{t("provider.hub.apiKey")}</span><input type="password" value={apiKey} placeholder={onlineConfig?.api_key_present ? t("provider.hub.secretStored") : ""} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" /></label>
-            <label className="field"><span>{t("provider.hub.endpoint")}</span><input type="url" required value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label>
-            <label className="field"><span>{t("provider.hub.model")}</span><input required value={model} onChange={(event) => setModel(event.target.value)} /></label>
+            <p className="provider-hub-recommended-model">{t("provider.hub.recommendedModel", { model: "gpt-image-2" })}</p>
+            <details className="provider-hub-config-advanced">
+              <summary>{t("provider.hub.advancedSettings")}</summary>
+              <div>
+                <label className="field"><span>{t("provider.hub.endpointFriendly")}</span><input type="url" required value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label>
+                <label className="field"><span>{t("provider.hub.customModel")}</span><input required value={model} onChange={(event) => setModel(event.target.value)} /></label>
+              </div>
+            </details>
+            <p className="provider-hub-secret-notice">{t("provider.hub.secretStorageNotice")}</p>
             <div className="action-row">
               <button type="submit" className="primary" disabled={configBusy}>{configBusy ? t("provider.hub.saving") : t("provider.hub.save")}</button>
               {onlineConfig?.api_key_present && <button type="button" className="secondary" disabled={configBusy} onClick={() => void testConnection()}>{t("provider.hub.test")}</button>}
@@ -387,8 +424,14 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
         {loading ? <div className="provider-hub-loading"><Loader2 className="spin" /><span>{t("provider.hub.loading")}</span></div> : (
           <div className="provider-hub-content">
             <section aria-labelledby="providerRecommendedTitle"><h3 id="providerRecommendedTitle">{t("provider.hub.recommended")}</h3><div className="provider-hub-grid">{recommended.map(renderCard)}</div></section>
-            {managed.length > 0 && <section aria-labelledby="providerManagedTitle"><h3 id="providerManagedTitle">{t("provider.hub.managed")}</h3><div className="provider-hub-grid">{managed.map(renderCard)}</div></section>}
-            {available.length > 0 && <section aria-labelledby="providerAvailableTitle"><h3 id="providerAvailableTitle">{t("provider.hub.available")}</h3><div className="provider-hub-grid">{available.map(renderCard)}</div></section>}
+            {(managed.length > 0 || available.length > 0) && (
+              <details className="provider-hub-advanced-services">
+                <summary>{t("provider.hub.advancedServices", { count: managed.length + available.length })}</summary>
+                <p>{t("provider.hub.advancedServicesDescription")}</p>
+                {managed.length > 0 && <section aria-labelledby="providerManagedTitle"><h3 id="providerManagedTitle">{t("provider.hub.managedAdvanced")}</h3><div className="provider-hub-grid">{managed.map(renderCard)}</div></section>}
+                {available.length > 0 && <section aria-labelledby="providerAvailableTitle"><h3 id="providerAvailableTitle">{t("provider.hub.availableAdvanced")}</h3><div className="provider-hub-grid">{available.map(renderCard)}</div></section>}
+              </details>
+            )}
             {providers.length === 0 && <p>{t("provider.hub.empty")}</p>}
           </div>
         )}

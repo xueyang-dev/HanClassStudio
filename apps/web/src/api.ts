@@ -28,13 +28,14 @@ import type {
   ProjectSummary,
   StateFirstTeacherSummary
 } from "./types";
+import { responseError } from "./api-errors";
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
-    throw new Error(await responseError(response));
+    throw await responseError(response);
   }
   return response.json() as Promise<T>;
 }
@@ -42,38 +43,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function download(path: string, init?: RequestInit): Promise<Blob> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
-    throw new Error(await responseError(response));
+    throw await responseError(response);
   }
   return response.blob();
-}
-
-async function responseError(response: Response): Promise<string> {
-  let message = response.statusText;
-  try {
-    const body = await response.json();
-    if (body.error && typeof body.error === "object" && typeof body.error.message === "string") {
-      message = body.error.message;
-    } else if (typeof body.detail === "string") {
-      message = body.detail;
-    } else if (body.detail && typeof body.detail === "object") {
-      const detail = body.detail as { message?: unknown; blocking_reasons?: unknown; blockers?: unknown };
-      const reasons = Array.isArray(detail.blocking_reasons)
-        ? detail.blocking_reasons.filter((item): item is string => typeof item === "string")
-        : [];
-      if (Array.isArray(detail.blockers)) {
-        reasons.push(...detail.blockers.map((item) => {
-          if (item && typeof item === "object" && "message" in item && typeof item.message === "string") return item.message;
-          return typeof item === "string" ? item : "";
-        }).filter(Boolean));
-      }
-      message = [typeof detail.message === "string" ? detail.message : "", ...reasons]
-        .filter(Boolean)
-        .join("\n") || message;
-    }
-  } catch {
-    message = response.statusText;
-  }
-  return message;
 }
 
 function withExpectedRevision(path: string, expectedRevision?: number | null): string {
@@ -395,8 +367,8 @@ export async function fetchProviderHubInstall(taskId: string): Promise<ProviderH
   return request<ProviderHubInstallTask>(`/api/providers/hub/install-tasks/${encodeURIComponent(taskId)}`);
 }
 
-export async function cancelProviderHubInstall(taskId: string): Promise<ProviderHubInstallTask> {
-  return request<ProviderHubInstallTask>(`/api/providers/hub/install-tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
+export async function cancelProviderHubInstall(taskId: string): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/install-tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
 }
 
 export async function checkProviderHubHealth(packageId: string): Promise<ProviderHubItem> {
