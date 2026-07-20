@@ -8,6 +8,8 @@ test.beforeEach(async ({ page }) => {
 
 test("Provider Hub does not refresh on entry and renders a checksum failure without false success", async ({ page }) => {
   let refreshPosts = 0;
+  const catalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/hub")).json();
+  const localProvider = catalog.providers.find((provider) => provider.id === "hcs.local-image-basic");
   page.on("request", (request) => {
     if (request.method() === "POST" && request.url().endsWith("/api/providers/hub/refresh")) refreshPosts += 1;
   });
@@ -16,10 +18,13 @@ test("Provider Hub does not refresh on entry and renders a checksum failure with
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        task_id: "checksum-e2e", package_id: "hcs.local-image-basic", state: "queued", phase: "preflight",
-        progress: 0, current_file_progress: 0, downloaded_bytes: 0, total_bytes: 512,
-        message: "queued", started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-        cancellable: true, cancel_requested: false, error: null, recoverable_actions: [], log_ref: "e2e",
+        task: {
+          task_id: "checksum-e2e", package_id: "hcs.local-image-basic", state: "queued", phase: "preflight",
+          progress: 0, current_file_progress: 0, downloaded_bytes: 0, total_bytes: 512,
+          message: "queued", started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          cancellable: true, cancel_requested: false, error: null, recoverable_actions: [], log_ref: "e2e",
+        },
+        provider: { ...localProvider, status: "installing", available_actions: ["view_details", "open_project", "cancel_install"] },
       }),
     });
   });
@@ -51,6 +56,58 @@ test("Provider Hub does not refresh on entry and renders a checksum failure with
   await localCard.getByRole("button", { name: "安装", exact: true }).click();
   await expect(localCard.getByText("文件校验失败，未保留安装结果。", { exact: true })).toBeVisible();
   await expect(localCard.getByText("当前可用", { exact: true })).toHaveCount(0);
+});
+
+
+test("install start applies authoritative cancel action, cancels, and blocks rapid duplicates", async ({ page }) => {
+  const catalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/hub")).json();
+  const localProvider = catalog.providers.find((provider) => provider.id === "hcs.local-image-basic");
+  let startPosts = 0;
+  let cancelled = false;
+  const startedAt = new Date().toISOString();
+  const task = (state, phase, cancelRequested = false) => ({
+    task_id: "cancel-e2e", package_id: "hcs.local-image-basic", state, phase,
+    progress: state === "cancelled" ? 10 : 5, current_file_progress: 0, downloaded_bytes: 0, total_bytes: 512,
+    message: state, started_at: startedAt, updated_at: new Date().toISOString(),
+    finished_at: state === "cancelled" ? new Date().toISOString() : null,
+    cancellable: state !== "cancelled", cancel_requested: cancelRequested,
+    error: state === "cancelled" ? { code: "cancelled", message: "cancelled" } : null,
+    recoverable_actions: [], log_ref: "e2e",
+  });
+
+  await page.route("**/api/providers/hub/packages/hcs.local-image-basic/install", async (route) => {
+    startPosts += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        task: task("queued", "preflight"),
+        provider: { ...localProvider, status: "installing", available_actions: ["view_details", "open_project", "cancel_install"] },
+      }),
+    });
+  });
+  await page.route("**/api/providers/hub/install-tasks/cancel-e2e", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(cancelled ? task("cancelled", "cancelled", true) : task("running", "downloading")) });
+  });
+  await page.route("**/api/providers/hub/install-tasks/cancel-e2e/cancel", async (route) => {
+    cancelled = true;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(task("running", "downloading", true)) });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Provider Hub", exact: true }).first().click();
+  const hub = page.locator("dialog.provider-hub-dialog[open]");
+  const localCard = hub.locator(".provider-hub-card").filter({ hasText: "本地基础生图" }).first();
+  const install = localCard.getByRole("button", { name: "安装", exact: true });
+  await install.evaluate((button) => { button.click(); button.click(); });
+  await expect.poll(() => startPosts).toBe(1);
+  await expect(localCard.getByRole("button", { name: "安装", exact: true })).toHaveCount(0);
+  const cancel = localCard.getByRole("button", { name: "取消安装", exact: true });
+  await expect(cancel).toBeVisible();
+  await cancel.click();
+  await expect.poll(() => cancelled).toBe(true);
+  await expect(localCard.getByRole("button", { name: "安装", exact: true })).toBeVisible();
+  await expect(localCard.getByRole("button", { name: "取消安装", exact: true })).toHaveCount(0);
 });
 
 
@@ -139,9 +196,28 @@ test("online Provider configuration is explicit and credentials never render", a
   const form = hub.locator(".provider-hub-config");
   await expect(form).toBeVisible();
   await expect.poll(() => configurationPuts).toBe(0);
+  await page.route("**/api/providers/hub/online/openai_images/configuration", async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    await route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: {
+          code: "request_validation_failed",
+          message: "The submitted request is invalid.",
+          fields: [{ path: "api_key", code: "value_error", message: "The submitted value is invalid." }],
+        },
+      }),
+    });
+  });
   await form.getByLabel("API Key", { exact: true }).fill(secret);
   await form.getByRole("button", { name: "保存配置", exact: true }).click();
   await expect.poll(() => configurationPuts).toBe(1);
+  await expect(hub.getByRole("alert")).toHaveText("The submitted request is invalid.");
+  await expect(hub.getByRole("alert")).not.toContainText(secret);
+  await page.unroute("**/api/providers/hub/online/openai_images/configuration");
+  await form.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect.poll(() => configurationPuts).toBe(2);
   await expect(form.getByLabel("API Key", { exact: true })).toHaveValue("");
   await expect(page.locator("body")).not.toContainText(secret);
 

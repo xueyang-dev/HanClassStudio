@@ -6,9 +6,10 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .agent import generate_agent_package, validate_agent_output
@@ -79,6 +80,7 @@ from .provider_hub import (
     OnlineProviderConfigRequest,
     ProviderHubCatalog,
     ProviderHubError,
+    ProviderInstallStartResponse,
     ProviderInstallTask,
     ProviderRefreshTask,
     PublicOnlineProviderConfig,
@@ -149,6 +151,60 @@ app.add_middleware(
 # the projects under ``runtime/config`` and must never be exposed by the static
 # file server.
 app.mount("/runtime/projects", StaticFiles(directory=PROJECTS_DIR), name="runtime-projects")
+
+
+_VALIDATION_LOCATION_PREFIXES = {"body", "query", "path", "header", "cookie"}
+_SAFE_VALIDATION_CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
+_SAFE_VALIDATION_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+
+
+def _safe_request_validation_fields(errors: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Keep schema locations and error types without reflecting request input."""
+    fields: list[dict[str, str]] = []
+    for error in errors:
+        code = str(error.get("type") or "validation_error")
+        if not _SAFE_VALIDATION_CODE.fullmatch(code):
+            code = "validation_error"
+        location: list[str] = []
+        for part in error.get("loc", ()):
+            if part in _VALIDATION_LOCATION_PREFIXES and not location:
+                continue
+            if isinstance(part, int):
+                location.append(str(part))
+            elif isinstance(part, str) and _SAFE_VALIDATION_FIELD.fullmatch(part):
+                location.append(part)
+            else:
+                location.append("field")
+        if code == "extra_forbidden" and location:
+            location[-1] = "unexpected_field"
+        message = {
+            "missing": "A required value is missing.",
+            "string_too_long": "The value is too long.",
+            "string_too_short": "The value is too short.",
+            "extra_forbidden": "An unexpected field was submitted.",
+        }.get(code, "The submitted value is invalid.")
+        fields.append({
+            "path": ".".join(location) or "request",
+            "code": code,
+            "message": message,
+        })
+    return fields
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(_request: Request, error: RequestValidationError) -> JSONResponse:
+    # Never serialize ``error`` itself: Pydantic validation errors contain the
+    # original request input, including rejected credentials and endpoints.
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "request_validation_failed",
+                "message": "The submitted request is invalid.",
+                "fields": _safe_request_validation_fields(error.errors()),
+            }
+        },
+    )
 
 
 @app.get("/api/health")
@@ -1028,8 +1084,8 @@ def get_provider_hub_refresh(task_id: str) -> ProviderRefreshTask:
         raise _provider_hub_http_error(error) from error
 
 
-@app.post("/api/providers/hub/packages/{package_id}/install", response_model=ProviderInstallTask)
-def install_provider_package(package_id: str) -> ProviderInstallTask:
+@app.post("/api/providers/hub/packages/{package_id}/install", response_model=ProviderInstallStartResponse)
+def install_provider_package(package_id: str) -> ProviderInstallStartResponse:
     try:
         return start_fixture_install(package_id)
     except ProviderHubError as error:

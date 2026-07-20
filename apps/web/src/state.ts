@@ -1,4 +1,4 @@
-import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, ProviderHubAction, ProviderHubItem, ProviderRegistryCatalog, ProviderRegistryStatus, StageState } from "./types";
+import type { CapabilityConfig, ProjectState, ProviderCapability, ProviderConfig, ProviderDefinition, ProviderHubAction, ProviderHubCatalog, ProviderHubInstallStartResponse, ProviderHubInstallTask, ProviderHubItem, ProviderRegistryCatalog, ProviderRegistryStatus, StageState } from "./types";
 
 export type PipelineStepStatus = "pending" | "running" | "done" | "error";
 
@@ -51,6 +51,23 @@ export function safeExternalProviderUrl(value: string | null | undefined): strin
 
 export function hasProviderHubAction(item: ProviderHubItem, action: ProviderHubAction): boolean {
   return item.available_actions.includes(action);
+}
+
+export function applyProviderHubInstallStart(
+  catalog: ProviderHubCatalog | null,
+  installTasks: Record<string, ProviderHubInstallTask>,
+  started: ProviderHubInstallStartResponse,
+): { catalog: ProviderHubCatalog | null; installTasks: Record<string, ProviderHubInstallTask> } {
+  const hasItem = catalog?.providers.some((item) => item.id === started.provider.id) ?? false;
+  return {
+    catalog: catalog ? {
+      ...catalog,
+      providers: hasItem
+        ? catalog.providers.map((item) => item.id === started.provider.id ? started.provider : item)
+        : [...catalog.providers, started.provider],
+    } : null,
+    installTasks: { ...installTasks, [started.provider.id]: started.task },
+  };
 }
 
 export type ProviderHubFilter = "all" | "online" | "offline" | "image" | "video" | "free" | "api" | "verified" | "unverified" | "compatible";

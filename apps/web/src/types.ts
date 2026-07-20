@@ -313,6 +313,11 @@ export interface ProviderHubInstallTask {
   log_ref: string;
 }
 
+export interface ProviderHubInstallStartResponse {
+  task: ProviderHubInstallTask;
+  provider: ProviderHubItem;
+}
+
 export interface PublicOnlineProviderConfig {
   provider_id: string;
   endpoint: string;

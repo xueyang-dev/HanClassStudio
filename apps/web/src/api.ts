@@ -14,6 +14,7 @@ import type {
   ProviderInstallPrepareResponse,
   ProviderInstallResult,
   ProviderHubCatalog,
+  ProviderHubInstallStartResponse,
   ProviderHubInstallTask,
   ProviderHubItem,
   ProviderRefreshTask,
@@ -50,7 +51,9 @@ async function responseError(response: Response): Promise<string> {
   let message = response.statusText;
   try {
     const body = await response.json();
-    if (typeof body.detail === "string") {
+    if (body.error && typeof body.error === "object" && typeof body.error.message === "string") {
+      message = body.error.message;
+    } else if (typeof body.detail === "string") {
       message = body.detail;
     } else if (body.detail && typeof body.detail === "object") {
       const detail = body.detail as { message?: unknown; blocking_reasons?: unknown; blockers?: unknown };
@@ -384,8 +387,8 @@ export async function fetchProviderHubRefresh(taskId: string): Promise<ProviderR
   return request<ProviderRefreshTask>(`/api/providers/hub/refresh/${encodeURIComponent(taskId)}`);
 }
 
-export async function startProviderHubInstall(packageId: string): Promise<ProviderHubInstallTask> {
-  return request<ProviderHubInstallTask>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install`, { method: "POST" });
+export async function startProviderHubInstall(packageId: string): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install`, { method: "POST" });
 }
 
 export async function fetchProviderHubInstall(taskId: string): Promise<ProviderHubInstallTask> {

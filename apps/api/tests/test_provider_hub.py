@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import stat
 import time
@@ -122,7 +123,7 @@ def test_fixture_install_reports_real_task_and_health_state(tmp_path, monkeypatc
     client = _isolate(tmp_path, monkeypatch)
     started = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
     assert started.status_code == 200
-    task = _wait_install(client, started.json()["task_id"])
+    task = _wait_install(client, started.json()["task"]["task_id"])
     assert task["state"] == "completed"
     assert task["phase"] == "completed"
     assert task["progress"] == 100
@@ -143,7 +144,7 @@ def test_checksum_mismatch_fails_and_leaves_no_installed_result(tmp_path, monkey
     client = _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(hub, "_FIXTURE_SHA256", "0" * 64)
     started = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
-    task = _wait_install(client, started.json()["task_id"])
+    task = _wait_install(client, started.json()["task"]["task_id"])
     assert task["state"] == "failed"
     assert task["error"]["code"] == "checksum_mismatch"
     assert "repair" in task["recoverable_actions"]
@@ -162,7 +163,7 @@ def test_unexpected_post_copy_failure_cleans_artifact_and_never_marks_ready(tmp_
 
     monkeypatch.setattr(hub, "_update_hub_state", fail_state_commit)
     started = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
-    task = _wait_install(client, started.json()["task_id"])
+    task = _wait_install(client, started.json()["task"]["task_id"])
     assert task["state"] == "failed"
     assert task["error"]["code"] == "internal_error"
     installed = storage.RUNTIME_DIR / "providers" / "hcs.local-image-basic" / "1.0.0" / "package.json"
@@ -174,13 +175,98 @@ def test_unexpected_post_copy_failure_cleans_artifact_and_never_marks_ready(tmp_
 def test_install_can_be_cancelled_and_cleans_temporary_files(tmp_path, monkeypatch) -> None:
     client = _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(hub, "_INSTALL_STEP_DELAY_SECONDS", 0.08)
-    started = client.post("/api/providers/hub/packages/hcs.local-image-basic/install").json()
+    response = client.post("/api/providers/hub/packages/hcs.local-image-basic/install").json()
+    started = response["task"]
     cancelled = client.post(f"/api/providers/hub/install-tasks/{started['task_id']}/cancel")
     assert cancelled.status_code == 200
     task = _wait_install(client, started["task_id"])
     assert task["state"] == "cancelled"
     assert task["error"]["code"] == "cancelled"
     assert not (storage.RUNTIME_DIR / "providers" / "hcs.local-image-basic" / "1.0.0" / "package.json").exists()
+
+
+def test_install_start_returns_authoritative_actions_and_rejects_duplicates(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "_INSTALL_STEP_DELAY_SECONDS", 0.08)
+
+    started = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
+    assert started.status_code == 200
+    body = started.json()
+    assert body["task"]["state"] == "queued"
+    assert body["provider"]["status"] == "installing"
+    assert "cancel_install" in body["provider"]["available_actions"]
+    assert "install" not in body["provider"]["available_actions"]
+    assert "repair" not in body["provider"]["available_actions"]
+
+    duplicate = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "task_conflict"
+
+    task_id = body["task"]["task_id"]
+    assert client.post(f"/api/providers/hub/install-tasks/{task_id}/cancel").status_code == 200
+    assert _wait_install(client, task_id)["state"] == "cancelled"
+    local = next(
+        item for item in client.get("/api/providers/hub").json()["providers"]
+        if item["id"] == "hcs.local-image-basic"
+    )
+    assert "install" in local["available_actions"]
+    assert "cancel_install" not in local["available_actions"]
+
+
+@pytest.mark.parametrize(
+    ("marker", "payload"),
+    [
+        (
+            "CONTROL_SECRET_MARKER",
+            {"api_key": "CONTROL_SECRET_MARKER\r\n", "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
+        ),
+        (
+            "OVERSIZED_SECRET_MARKER",
+            {"api_key": "OVERSIZED_SECRET_MARKER" + "x" * 4096, "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
+        ),
+        (
+            "ENDPOINT_SECRET_MARKER",
+            {"api_key": "valid-key", "endpoint": "https://api.openai.com/v1?token=ENDPOINT_SECRET_MARKER", "model": "gpt-image-2"},
+        ),
+    ],
+)
+def test_request_validation_never_echoes_sensitive_input_or_logs(
+    tmp_path, monkeypatch, caplog, marker: str, payload: dict[str, str]
+) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        response = client.put(
+            "/api/providers/hub/online/openai_images/configuration",
+            json=payload,
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "request_validation_failed"
+    assert response.json()["error"]["fields"]
+    assert marker not in response.text
+    assert '"input"' not in response.text
+    assert marker not in caplog.text
+
+
+def test_nested_validation_errors_drop_input_message_and_context() -> None:
+    marker = "NESTED_SECRET_MARKER"
+    fields = main._safe_request_validation_fields([
+        {
+            "loc": ("body", "credentials", "api_key"),
+            "type": "string_too_long",
+            "msg": marker,
+            "input": marker,
+            "ctx": {"secret": marker},
+        }
+    ])
+    serialized = json.dumps(fields)
+    assert fields == [{
+        "path": "credentials.api_key",
+        "code": "string_too_long",
+        "message": "The value is too long.",
+    }]
+    assert marker not in serialized
 
 
 def test_explicit_refresh_task_summarizes_success_and_retains_snapshot_on_failure(tmp_path, monkeypatch) -> None:

@@ -291,6 +291,11 @@ class ProviderInstallTask(BaseModel):
     log_ref: str
 
 
+class ProviderInstallStartResponse(BaseModel):
+    task: ProviderInstallTask
+    provider: ProviderHubItem
+
+
 class OnlineProviderConfigRequest(BaseModel):
     api_key: str | None = Field(default=None, max_length=4096)
     endpoint: str = "https://api.openai.com/v1"
@@ -906,13 +911,13 @@ def _run_fixture_install(task_id: str) -> None:
             _cancelled_tasks.discard(task_id)
 
 
-def start_fixture_install(package_id: str) -> ProviderInstallTask:
+def start_fixture_install(package_id: str) -> ProviderInstallStartResponse:
     if package_id != _LOCAL_PACKAGE_ID:
         raise ProviderHubError("installation_failed", "This capability package does not have an installer")
     with _install_lock:
         active = latest_install_task(package_id)
         if active and active.state in {"queued", "running"} and active.task_id in _install_threads:
-            raise ProviderHubError("installation_failed", "An installation task is already running")
+            raise ProviderHubError("task_conflict", "An installation task is already running")
         now = _iso()
         task = ProviderInstallTask(
             task_id=uuid.uuid4().hex, package_id=package_id, state="queued", phase="preflight",
@@ -922,8 +927,9 @@ def start_fixture_install(package_id: str) -> ProviderInstallTask:
         _save_install_task(task)
         thread = threading.Thread(target=_run_fixture_install, args=(task.task_id,), daemon=True, name=f"hcs-install-{task.task_id[:8]}")
         _install_threads[task.task_id] = thread
+        provider = _local_package_item(detect_hardware())
         thread.start()
-        return task
+        return ProviderInstallStartResponse(task=task, provider=provider)
 
 
 def cancel_fixture_install(task_id: str) -> ProviderInstallTask:

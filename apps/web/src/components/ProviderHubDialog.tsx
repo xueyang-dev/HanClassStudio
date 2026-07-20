@@ -16,7 +16,7 @@ import {
   testOnlineProviderConnection,
 } from "../api";
 import { useI18n } from "../i18n";
-import { filterProviderHubItems, hasProviderHubAction, safeExternalProviderUrl, type ProviderHubFilter } from "../state";
+import { applyProviderHubInstallStart, filterProviderHubItems, hasProviderHubAction, safeExternalProviderUrl, type ProviderHubFilter } from "../state";
 import type { ProviderHubCatalog, ProviderHubInstallTask, ProviderHubItem, ProviderRefreshTask, PublicOnlineProviderConfig } from "../types";
 
 
@@ -50,12 +50,14 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
   const dialogRef = useRef<HTMLDialogElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const mountedRef = useRef(true);
-  const [catalog, setCatalog] = useState<ProviderHubCatalog | null>(null);
+  const pendingMutationRef = useRef(new Set<string>());
+  const [hubState, setHubState] = useState<{ catalog: ProviderHubCatalog | null; installTasks: Record<string, ProviderHubInstallTask> }>({ catalog: null, installTasks: {} });
+  const { catalog, installTasks } = hubState;
   const [filter, setFilter] = useState<ProviderHubFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshTask, setRefreshTask] = useState<ProviderRefreshTask | null>(null);
-  const [installTasks, setInstallTasks] = useState<Record<string, ProviderHubInstallTask>>({});
+  const [pendingMutationIds, setPendingMutationIds] = useState<Set<string>>(new Set());
   const [configOpen, setConfigOpen] = useState(false);
   const [onlineConfig, setOnlineConfig] = useState<PublicOnlineProviderConfig | null>(null);
   const [apiKey, setApiKey] = useState("");
@@ -65,7 +67,23 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
 
   async function reload(): Promise<void> {
     const next = await fetchProviderHub();
-    if (mountedRef.current) setCatalog(next);
+    if (mountedRef.current) setHubState((current) => ({ ...current, catalog: next }));
+  }
+
+  function beginMutation(packageId: string): boolean {
+    if (pendingMutationRef.current.has(packageId)) return false;
+    pendingMutationRef.current.add(packageId);
+    setPendingMutationIds((current) => new Set(current).add(packageId));
+    return true;
+  }
+
+  function endMutation(packageId: string): void {
+    pendingMutationRef.current.delete(packageId);
+    setPendingMutationIds((current) => {
+      const next = new Set(current);
+      next.delete(packageId);
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -107,22 +125,31 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
   }
 
   async function install(item: ProviderHubItem): Promise<void> {
+    if (!beginMutation(item.id)) return;
     setError("");
     try {
-      let task = await startProviderHubInstall(item.id);
-      setInstallTasks((current) => ({ ...current, [item.id]: task }));
+      const started = await startProviderHubInstall(item.id);
+      let task = started.task;
+      setHubState((current) => applyProviderHubInstallStart(current.catalog, current.installTasks, started));
+      endMutation(item.id);
       const deadline = Date.now() + 60_000;
       while (!TERMINAL_TASKS.has(task.state)) {
         if (Date.now() >= deadline) throw new Error(t("provider.hub.installTimeout"));
         await wait(120);
         task = await fetchProviderHubInstall(task.task_id);
         if (!mountedRef.current) return;
-        setInstallTasks((current) => ({ ...current, [item.id]: task }));
+        setHubState((current) => ({ ...current, installTasks: { ...current.installTasks, [item.id]: task } }));
       }
       await reload();
     } catch (nextError) {
       setError(errorText(nextError, t("provider.hub.installFailed")));
-      await reload().catch(() => undefined);
+      try {
+        await reload();
+        endMutation(item.id);
+      } catch {
+        // Keep the old install/repair action disabled until an authoritative
+        // snapshot can resolve an ambiguous start response.
+      }
     }
   }
 
@@ -131,7 +158,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
     if (!task) return;
     try {
       const next = await cancelProviderHubInstall(task.task_id);
-      setInstallTasks((current) => ({ ...current, [item.id]: next }));
+      setHubState((current) => ({ ...current, installTasks: { ...current.installTasks, [item.id]: next } }));
     } catch (nextError) {
       setError(errorText(nextError, t("provider.hub.cancelFailed")));
     }
@@ -261,8 +288,8 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
         )}
         {!item.license.clear && <p className="provider-hub-warning"><AlertTriangle size={16} aria-hidden="true" />{t("provider.hub.licenseUnknown")}</p>}
         <div className="action-row provider-hub-actions">
-          {hasProviderHubAction(item, "install") && <button type="button" className="primary" disabled={Boolean(task && !TERMINAL_TASKS.has(task.state))} onClick={() => void install(item)}><Download size={16} />{t("provider.hub.install")}</button>}
-          {hasProviderHubAction(item, "repair") && <button type="button" className="primary" onClick={() => void install(item)}>{t("provider.hub.repair")}</button>}
+          {hasProviderHubAction(item, "install") && <button type="button" className="primary" disabled={pendingMutationIds.has(item.id) || Boolean(task && !TERMINAL_TASKS.has(task.state))} onClick={() => void install(item)}><Download size={16} />{t("provider.hub.install")}</button>}
+          {hasProviderHubAction(item, "repair") && <button type="button" className="primary" disabled={pendingMutationIds.has(item.id) || Boolean(task && !TERMINAL_TASKS.has(task.state))} onClick={() => void install(item)}>{t("provider.hub.repair")}</button>}
           {hasProviderHubAction(item, "cancel_install") && task && !TERMINAL_TASKS.has(task.state) && <button type="button" className="secondary" disabled={!task.cancellable || task.cancel_requested} onClick={() => void cancel(item)}>{t("provider.hub.cancel")}</button>}
           {hasProviderHubAction(item, "configure") && <button type="button" className="primary" onClick={() => item.id === "hcs.online-image-high-quality" ? void openOnlineConfig() : (onClose(), onOpenSettings())}>{t("provider.hub.configure")}</button>}
           {hasProviderHubAction(item, "test_connection") && item.id === "hcs.online-image-high-quality" && <button type="button" className="secondary" disabled={configBusy} onClick={() => void testConnection()}>{t("provider.hub.test")}</button>}

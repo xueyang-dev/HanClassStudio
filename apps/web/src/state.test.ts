@@ -1,4 +1,4 @@
-import { canUseStageAction, exportActionsFromProject, filterProviderHubItems, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, hasProviderHubAction, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
+import { applyProviderHubInstallStart, canUseStageAction, exportActionsFromProject, filterProviderHubItems, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, hasProviderHubAction, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig } from "./state";
 import type { ProjectState, ProviderHubItem, ProviderRegistryCatalog } from "./types";
 
 function equal(actual: unknown, expected: unknown): void {
@@ -252,5 +252,30 @@ equal(filterProviderHubItems([hubItem], "online").length, 0);
 equal(filterProviderHubItems([hubItem], "image").length, 1);
 equal(filterProviderHubItems([hubItem], "verified").length, 1);
 equal(filterProviderHubItems([{ ...hubItem, compatible: "unsupported" }], "compatible").length, 0);
+
+const startedInstall = applyProviderHubInstallStart({
+  schema: "hanclassstudio.provider_hub.v1",
+  providers: [hubItem],
+  hardware: {
+    operating_system: "test", architecture: "test", status: "compatible", reasons: [], checked_at: "2026-07-20T00:00:00Z",
+  },
+  isolated_errors: [],
+}, {}, {
+  task: {
+    task_id: "task-1", package_id: hubItem.id, state: "queued", phase: "preflight", progress: 0,
+    current_file_progress: 0, downloaded_bytes: 0, total_bytes: 1, message: "queued",
+    started_at: "2026-07-20T00:00:00Z", updated_at: "2026-07-20T00:00:00Z", cancellable: true,
+    cancel_requested: false, recoverable_actions: [], log_ref: "test",
+  },
+  provider: {
+    ...hubItem,
+    status: "installing",
+    available_actions: ["view_details", "cancel_install"],
+  },
+});
+equal(startedInstall.installTasks[hubItem.id].task_id, "task-1");
+equal(startedInstall.catalog?.providers[0].status, "installing");
+equal(hasProviderHubAction(startedInstall.catalog!.providers[0], "cancel_install"), true);
+equal(hasProviderHubAction(startedInstall.catalog!.providers[0], "install"), false);
 
 console.log("frontend state contract tests passed");
