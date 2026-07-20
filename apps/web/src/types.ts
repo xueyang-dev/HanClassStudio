@@ -30,6 +30,17 @@ export interface ProviderDefinition {
   available: boolean;
   experimental: boolean;
   unavailable_reason?: string | null;
+  official_homepage_url?: string | null;
+  api_signup_url?: string | null;
+  api_docs_url?: string | null;
+  repository_url?: string | null;
+  model_card_url?: string | null;
+  code_license_name?: string | null;
+  code_license_url?: string | null;
+  model_license_name?: string | null;
+  model_license_url?: string | null;
+  terms_url?: string | null;
+  privacy_url?: string | null;
   supported_operations: string[];
   install_state?: ProviderInstallState | null;
   installed_version?: string | null;
@@ -79,7 +90,10 @@ export interface ProviderRegistryEntry {
   repository: string;
   publisher: string;
   license: string;
+  license_status: "approved" | "review_required" | "gated";
   license_url: string;
+  model_license?: string | null;
+  model_license_url?: string | null;
   trust_level: "first_party" | "verified_maintainer";
   version: string;
   source_ref: string;
@@ -116,11 +130,25 @@ export interface ProviderRegistryStatus {
   entry: ProviderRegistryEntry;
   installation: ProviderInstallation;
   environment: ProviderEnvironmentReport;
+  policy_blockers: ProviderEnvironmentBlocker[];
   install_actions: ProviderInstallAction[];
 }
 
 export interface ProviderRegistryCatalog {
   providers: ProviderRegistryStatus[];
+  source: {
+    kind: "bundled" | "remote";
+    source_url?: string | null;
+    fetched_at?: string | null;
+    catalog_version: number;
+    source_revision: string;
+    content_digest: string;
+  };
+}
+
+export interface ProviderRegistryRefreshResponse {
+  catalog: ProviderRegistryCatalog;
+  changed_provider_ids: string[];
 }
 
 export interface ProviderInstallStep {

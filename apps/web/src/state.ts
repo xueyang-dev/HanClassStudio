@@ -24,15 +24,29 @@ export interface ProviderStatus {
   available: boolean;
 }
 
-/** Resolve a provider only within its backend-declared capability. The
- * capability catalog is expected to be unique by this key; callers must not
- * use ordering to resolve duplicate descriptors. */
+/** Resolve a Provider only within its backend-declared capability. The
+ * capability catalog is required to be unique by this key; callers must not
+ * use ordering or overwrite semantics to resolve duplicates. */
 export function getProviderById(
   id: string,
   capability: ProviderCapability,
   catalog: ProviderDefinition[],
 ): ProviderDefinition | undefined {
   return catalog.find((provider) => provider.id === id && provider.capability === capability);
+}
+
+/** Defense in depth for backend-supplied Provider links. The backend owns the
+ * host allowlist; the WebUI still refuses active, local, credentialed, or
+ * non-HTTPS URLs before creating an anchor. */
+export function safeExternalProviderUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
 }
 
 export function getCapabilityProviders(

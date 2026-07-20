@@ -46,6 +46,7 @@ import {
   fetchProviderInstallLogs,
   fetchProviderRegistry,
   fetchProviderSettings,
+  refreshProviderRegistry,
   forceExportProject,
   generateAgentPackage,
   generateBlueprint,
@@ -96,6 +97,7 @@ import type {
   ProviderInstallLog,
   ProviderInstallPrepareResponse,
   ProviderRegistryCatalog,
+  ProviderRegistryRefreshResponse,
   ProviderRegistryStatus,
   ProjectState,
   ProjectSummary,
@@ -105,7 +107,7 @@ import type {
   StateFirstTeacherSummary,
   StageStatus
 } from "./types";
-import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
+import { canUseStageAction, getAvailableCapabilityProviders, getCapabilityProviders, getCapabilityRegistryProviders, getConfigurableCapabilityProviders, getNextWorkflowAction, getProviderById, getStageAccess, PIPELINE_STEP_KEYS as pipelineStepKeys, isCurrentRequest, pipelineStepsFromProject, providerConfigSnapshot, providerStatus, safeExternalProviderUrl, sanitizeProviderConfig, shouldFetchDesignSummary, shouldPersistProviderConfig, type PipelineStepStatus, type StageAccess, type WorkflowStageId } from "./state";
 import { ProjectLoadingSkeleton } from "./components/ProjectLoadingSkeleton";
 
 const languages = ["English", "Arabic", "Russian", "Thai", "Korean", "Japanese", "Vietnamese", "Indonesian"];
@@ -485,7 +487,7 @@ export function App() {
       });
   }, []);
 
-  function refreshProviderSources() {
+  function reloadProviderContracts() {
     const sequence = ++providerRefreshSequenceRef.current;
     void Promise.allSettled([fetchProviderRegistry(), fetchProviderCapabilities()]).then(([registryResult, catalogResult]) => {
       if (sequence !== providerRefreshSequenceRef.current) return;
@@ -494,8 +496,20 @@ export function App() {
     });
   }
 
+  async function discoverProviderSources(): Promise<ProviderRegistryRefreshResponse> {
+    // Invalidate any local GET already in flight. The POST below is the only
+    // action that may contact the official Registry feed.
+    providerRefreshSequenceRef.current += 1;
+    const result = await refreshProviderRegistry();
+    const catalog = await fetchProviderCapabilities();
+    providerRefreshSequenceRef.current += 1;
+    setProviderRegistry(result.catalog);
+    setProviderCatalog(catalog);
+    return result;
+  }
+
   useEffect(() => {
-    refreshProviderSources();
+    reloadProviderContracts();
     return () => {
       providerRefreshSequenceRef.current += 1;
     };
@@ -506,8 +520,8 @@ export function App() {
   // connect/disconnect state changes without a manual browser reload.
   useEffect(() => {
     if (!codexBridgeSelected) return;
-    refreshProviderSources();
-    const timer = window.setInterval(refreshProviderSources, 15_000);
+    reloadProviderContracts();
+    const timer = window.setInterval(reloadProviderContracts, 15_000);
     return () => window.clearInterval(timer);
   }, [codexBridgeSelected]);
 
@@ -1316,7 +1330,8 @@ export function App() {
           config={providerConfig}
           catalog={providerCatalog}
           registry={providerRegistry}
-          onRegistryRefresh={refreshProviderSources}
+          onRegistryRefresh={reloadProviderContracts}
+          onRegistryDiscover={discoverProviderSources}
           synced={settingsSynced}
           error={providerSaveError}
           onChange={(next) => {
@@ -1352,7 +1367,8 @@ export function App() {
             setProviderConfig(next);
             writeStoredProviderConfig(next);
           }}
-          onRegistryRefresh={refreshProviderSources}
+          onRegistryRefresh={reloadProviderContracts}
+          onRegistryDiscover={discoverProviderSources}
           onThemeChange={handleThemeChange}
           onClose={() => {
             writeOnboardingSeen();
@@ -1584,6 +1600,7 @@ function CapabilityConfigPanel({
   onChange,
   registry,
   onRegistryRefresh,
+  onRegistryDiscover,
   showRegistryEntry = false,
 }: {
   capability: ProviderCapability;
@@ -1592,6 +1609,7 @@ function CapabilityConfigPanel({
   onChange: (next: ProviderConfig) => void;
   registry?: ProviderRegistryCatalog | null;
   onRegistryRefresh?: () => void;
+  onRegistryDiscover?: () => Promise<ProviderRegistryRefreshResponse>;
   showRegistryEntry?: boolean;
 }) {
   const { t } = useI18n();
@@ -1612,6 +1630,15 @@ function CapabilityConfigPanel({
   const providerSelectRef = useRef<HTMLSelectElement>(null);
   const hadAvailableProviderRef = useRef(availableProviders.length > 0);
   const previousCapabilityRef = useRef(capability);
+  const officialHomepageUrl = safeExternalProviderUrl(selectedProvider?.official_homepage_url);
+  const apiSignupUrl = safeExternalProviderUrl(selectedProvider?.api_signup_url);
+  const apiDocsUrl = safeExternalProviderUrl(selectedProvider?.api_docs_url);
+  const repositoryUrl = safeExternalProviderUrl(selectedProvider?.repository_url);
+  const modelCardUrl = safeExternalProviderUrl(selectedProvider?.model_card_url);
+  const codeLicenseUrl = safeExternalProviderUrl(selectedProvider?.code_license_url);
+  const modelLicenseUrl = safeExternalProviderUrl(selectedProvider?.model_license_url);
+  const termsUrl = safeExternalProviderUrl(selectedProvider?.terms_url);
+  const privacyUrl = safeExternalProviderUrl(selectedProvider?.privacy_url);
 
   useEffect(() => {
     if (previousCapabilityRef.current === capability) return;
@@ -1728,11 +1755,15 @@ function CapabilityConfigPanel({
             capability={capability}
             compact
             onRefresh={onRegistryRefresh ?? (() => undefined)}
+            onDiscover={onRegistryDiscover ?? (() => Promise.reject(new Error(t("provider.registry.refreshUnavailable"))))}
           />
         </section>
       )}
 
-      {availableProviders.length > 0 && showRegistryEntry && registryProviders.some((status) => status.installation.install_state === "available") && (
+      {availableProviders.length > 0 && showRegistryEntry && registryProviders.some((status) => (
+        status.installation.install_state === "available"
+          && availableProviders.some((provider) => provider.id === status.entry.provider_id)
+      )) && (
         <div className="notice success" role="status">
           {t("provider.registry.onboarding.availableNotice")}
         </div>
@@ -1745,7 +1776,22 @@ function CapabilityConfigPanel({
       )}
 
       {selectedProvider && selectedProvider.category === mode && (
-        <div className="provider-fields">
+        <>
+          {(officialHomepageUrl || apiSignupUrl || apiDocsUrl || repositoryUrl || modelCardUrl || codeLicenseUrl || modelLicenseUrl || termsUrl || privacyUrl) && (
+            <div className="provider-official-links" aria-label={t("provider.sourceLinks")}>
+              {officialHomepageUrl && <a href={officialHomepageUrl} target="_blank" rel="noopener noreferrer">{t("provider.officialWebsite")}</a>}
+              {repositoryUrl && <a href={repositoryUrl} target="_blank" rel="noopener noreferrer">{t("provider.officialProject")}</a>}
+              {apiSignupUrl && <a href={apiSignupUrl} target="_blank" rel="noopener noreferrer">{t("provider.applyApi")}</a>}
+              {apiDocsUrl && <a href={apiDocsUrl} target="_blank" rel="noopener noreferrer">{t("provider.apiDocs")}</a>}
+              {modelCardUrl && <a href={modelCardUrl} target="_blank" rel="noopener noreferrer">{t("provider.modelCard")}</a>}
+              {codeLicenseUrl && <a href={codeLicenseUrl} target="_blank" rel="noopener noreferrer">{t("provider.codeLicense", { license: selectedProvider.code_license_name ?? "—" })}</a>}
+              {!codeLicenseUrl && selectedProvider.code_license_name && <span>{t("provider.codeLicense", { license: selectedProvider.code_license_name })}</span>}
+              {modelLicenseUrl && <a href={modelLicenseUrl} target="_blank" rel="noopener noreferrer">{t("provider.modelLicense", { license: selectedProvider.model_license_name ?? "—" })}</a>}
+              {termsUrl && <a href={termsUrl} target="_blank" rel="noopener noreferrer">{t("provider.terms")}</a>}
+              {privacyUrl && <a href={privacyUrl} target="_blank" rel="noopener noreferrer">{t("provider.privacy")}</a>}
+            </div>
+          )}
+          <div className="provider-fields">
           {selectedProvider.fields.map((field) => (
             <label className="field" key={field.key}>
               <span>
@@ -1773,7 +1819,8 @@ function CapabilityConfigPanel({
               )}
             </label>
           ))}
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -1785,16 +1832,19 @@ function registryBlockerLabel(code: string, t: (key: string) => string): string 
   if (code === "python_unsupported") return t("provider.registry.blocker.python");
   if (code === "memory_insufficient") return t("provider.registry.blocker.memory");
   if (code === "gpu_unavailable") return t("provider.registry.blocker.gpu");
+  if (code === "provider_license_review_required" || code === "provider_license_gated") return t("provider.registry.blocker.license");
   if (code === "configuration_required" || code === "provider_configuration_missing") return t("provider.registry.blocker.configuration");
   return t("provider.registry.blocker.generic");
 }
 
 function RegistryInstallConfirmDialog({
   prepared,
+  sandbox,
   onCancel,
   onConfirm,
 }: {
   prepared: ProviderInstallPrepareResponse;
+  sandbox: boolean;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -1815,8 +1865,8 @@ function RegistryInstallConfirmDialog({
   return (
     <dialog ref={dialogRef} className="confirm-dialog" aria-labelledby="registryInstallTitle" aria-describedby="registryInstallDescription" aria-modal="true">
       <section className="confirm-modal">
-        <h2 id="registryInstallTitle">{t("provider.registry.confirmTitle")}</h2>
-        <p id="registryInstallDescription">{t("provider.registry.confirmBody")}</p>
+        <h2 id="registryInstallTitle">{t(sandbox ? "provider.registry.sandboxConfirmTitle" : "provider.registry.confirmTitle")}</h2>
+        <p id="registryInstallDescription">{t(sandbox ? "provider.registry.sandboxConfirmBody" : "provider.registry.confirmBody")}</p>
         <dl className="provider-registry-plan">
           <div><dt>{t("provider.registry.version")}</dt><dd>{prepared.plan.version}</dd></div>
           <div><dt>{t("provider.registry.source")}</dt><dd>{prepared.plan.source_ref}</dd></div>
@@ -1828,7 +1878,9 @@ function RegistryInstallConfirmDialog({
         <div className="action-row">
           <button type="button" className="secondary" onClick={onCancel} disabled={busy}>{t("provider.registry.cancel")}</button>
           <button type="button" className="primary" onClick={() => void confirm()} disabled={busy}>
-            {busy ? t("provider.registry.installing") : t("provider.registry.confirm")}
+            {busy
+              ? t(sandbox ? "provider.registry.sandboxRunning" : "provider.registry.installing")
+              : t(sandbox ? "provider.registry.sandboxConfirm" : "provider.registry.confirm")}
           </button>
         </div>
       </section>
@@ -1841,25 +1893,43 @@ function ProviderRegistryPanel({
   capability,
   compact = false,
   onRefresh,
+  onDiscover,
 }: {
   registry: ProviderRegistryCatalog | null;
   capability?: ProviderCapability;
   compact?: boolean;
   onRefresh: () => void;
+  onDiscover: () => Promise<ProviderRegistryRefreshResponse>;
 }) {
   const { t } = useI18n();
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState("");
+  const [refreshNotice, setRefreshNotice] = useState("");
   const [prepared, setPrepared] = useState<ProviderInstallPrepareResponse | null>(null);
   const [configValues, setConfigValues] = useState<Record<string, Record<string, string>>>({});
   const [logs, setLogs] = useState<Record<string, ProviderInstallLog[]>>({});
   const pendingTriggerRef = useRef<HTMLElement | null>(null);
 
-  if (!registry) return null;
   const statuses = capability
-    ? registry.providers.filter((status) => status.entry.capability === capability)
-    : registry.providers;
+    ? (registry?.providers ?? []).filter((status) => status.entry.capability === capability)
+    : (registry?.providers ?? []);
   const titleId = capability ? `providerRegistryTitle-${capability}` : "providerRegistryTitle";
+  const registrySourceUrl = safeExternalProviderUrl(registry?.source.source_url);
+
+  async function discover() {
+    setDiscovering(true);
+    setError("");
+    setRefreshNotice("");
+    try {
+      const result = await onDiscover();
+      setRefreshNotice(t("provider.registry.refreshed", { n: result.changed_provider_ids.length }));
+    } catch (err) {
+      setError(readableError(err, t));
+    } finally {
+      setDiscovering(false);
+    }
+  }
 
   async function prepare(status: ProviderRegistryStatus, retry = false, trigger?: HTMLElement) {
     pendingTriggerRef.current = trigger ?? null;
@@ -1942,9 +2012,25 @@ function ProviderRegistryPanel({
           <h3 id={titleId}>{capability ? t("provider.registry.onboarding.title", { capability: t(CAPABILITY_META[capability].labelKey) }) : t("provider.registry.title")}</h3>
           <p>{capability ? t("provider.registry.onboarding.subtitle") : t("provider.registry.subtitle")}</p>
         </div>
-        <ShieldCheck size={20} aria-hidden="true" />
+        <div className="provider-registry-header-actions">
+          <ShieldCheck size={20} aria-hidden="true" />
+          <button type="button" className="secondary provider-registry-refresh" disabled={discovering} onClick={() => void discover()}>
+            <RefreshCw size={15} className={discovering ? "spin" : ""} aria-hidden="true" />
+            {discovering ? t("provider.registry.refreshing") : t("provider.registry.refresh")}
+          </button>
+        </div>
       </header>
+      <div className="provider-registry-source-status">
+        <span>
+          {registry?.source.kind === "remote" && registry.source.fetched_at
+            ? t("provider.registry.lastRefreshed", { time: new Date(registry.source.fetched_at).toLocaleString() })
+            : t("provider.registry.bundledSource")}
+        </span>
+        {registrySourceUrl && <a href={registrySourceUrl} target="_blank" rel="noopener noreferrer">{t("provider.registry.catalogSource")}</a>}
+      </div>
+      <p className="provider-registry-rights">{t("provider.registry.rightsNotice")}</p>
       {error && <div className="notice error" role="alert">{error}</div>}
+      {refreshNotice && <div className="notice success" role="status">{refreshNotice}</div>}
       <div className="provider-registry-list">
         {statuses.map((status) => {
           const entry = status.entry;
@@ -1955,6 +2041,10 @@ function ProviderRegistryPanel({
           const modelFiles = Array.isArray(entry.requirements.model_files) && entry.requirements.model_files.length
             ? entry.requirements.model_files.join(", ")
             : "—";
+          const sourceUrl = safeExternalProviderUrl(entry.source_url);
+          const licenseUrl = safeExternalProviderUrl(entry.license_url);
+          const modelLicenseUrl = safeExternalProviderUrl(entry.model_license_url);
+          const visibleBlockers = [...status.environment.blockers, ...status.policy_blockers, ...installation.blockers];
           return (
             <article className="provider-registry-card" key={entry.provider_id}>
               <div className="provider-registry-card-heading">
@@ -1963,23 +2053,26 @@ function ProviderRegistryPanel({
                   <p>{entry.description}</p>
                 </div>
                 <span className={`provider-registry-state ${installation.install_state}`}>
-                  {t(`provider.registry.state.${installation.install_state}`)}
+                  {entry.mock_only && installation.install_state === "available"
+                    ? t("provider.registry.state.sandboxVerified")
+                    : t(`provider.registry.state.${installation.install_state}`)}
                 </span>
               </div>
               <dl className="provider-registry-meta">
-                <div><dt>{t("provider.registry.source")}</dt><dd><a href={entry.source_url} target="_blank" rel="noopener noreferrer">{t("provider.registry.viewSource")}</a></dd></div>
+                <div><dt>{t("provider.registry.source")}</dt><dd>{sourceUrl ? <a href={sourceUrl} target="_blank" rel="noopener noreferrer">{entry.repository}</a> : entry.repository}</dd></div>
                 <div><dt>{t("provider.registry.publisher")}</dt><dd>{entry.publisher}</dd></div>
-                <div><dt>{t("provider.registry.license")}</dt><dd>{entry.license} · <a href={entry.license_url} target="_blank" rel="noopener noreferrer">{t("provider.registry.viewLicense")}</a></dd></div>
+                <div><dt>{t("provider.registry.license")}</dt><dd>{licenseUrl ? <a href={licenseUrl} target="_blank" rel="noopener noreferrer">{entry.license}</a> : entry.license} · {t(`provider.registry.licenseStatus.${entry.license_status}`)}</dd></div>
+                {entry.model_license && <div><dt>{t("provider.modelLicenseLabel")}</dt><dd>{modelLicenseUrl ? <a href={modelLicenseUrl} target="_blank" rel="noopener noreferrer">{entry.model_license}</a> : entry.model_license}</dd></div>}
                 <div><dt>{t("provider.registry.available")}</dt><dd>{installation.available_version ?? entry.version}</dd></div>
-                <div><dt>{t("provider.registry.installed")}</dt><dd>{installation.installed_version ?? "—"}</dd></div>
+                <div><dt>{t(entry.mock_only ? "provider.registry.sandboxVersion" : "provider.registry.installed")}</dt><dd>{installation.installed_version ?? "—"}</dd></div>
               </dl>
               <p className="provider-registry-requirements">
                 <strong>{t("provider.registry.requirements")}:</strong> {String(entry.requirements.runtime ?? "isolated environment")} · {t("provider.registry.platform")}: {platforms} · {t("provider.registry.memory")}: {String(entry.requirements.min_memory_mb ?? 0)} MB · {t("provider.registry.disk")}: {String(entry.requirements.min_disk_mb ?? 0)} MB · {t("provider.registry.modelFiles")}: {modelFiles}{Boolean(entry.requirements.api_key_required) && <> · {t("provider.registry.credential")}</>}
               </p>
-              {entry.mock_only && <p className="provider-registry-mock-note">{t("provider.registry.mockOnly")}</p>}
-              {(status.environment.blockers.length > 0 || installation.blockers.length > 0) && (
+              {entry.mock_only && <p className="provider-registry-mock-note"><strong>{t("provider.registry.sandboxBadge")}</strong> · {t("provider.registry.mockOnly")}</p>}
+              {visibleBlockers.length > 0 && (
                 <ul className="provider-registry-blockers">
-                  {[...status.environment.blockers, ...installation.blockers].map((blocker, index) => (
+                  {visibleBlockers.map((blocker, index) => (
                     <li key={`${blocker.code}-${index}`}>{registryBlockerLabel(blocker.code, t)}{blocker.requirement ? ` (${blocker.requirement})` : ""}</li>
                   ))}
                 </ul>
@@ -2001,7 +2094,7 @@ function ProviderRegistryPanel({
                 </div>
               )}
               <div className="action-row provider-registry-actions">
-                {status.install_actions.includes("prepare_install") && <button type="button" className="primary" disabled={providerBusy} onClick={(event) => void prepare(status, false, event.currentTarget)}>{t("provider.registry.prepare")}</button>}
+                {status.install_actions.includes("prepare_install") && <button type="button" className="primary" disabled={providerBusy} onClick={(event) => void prepare(status, false, event.currentTarget)}>{t(entry.mock_only ? "provider.registry.sandboxPrepare" : "provider.registry.prepare")}</button>}
                 {status.install_actions.includes("retry_install") && <button type="button" className="secondary" disabled={providerBusy} onClick={(event) => void prepare(status, true, event.currentTarget)}>{t("provider.registry.retry")}</button>}
                 {status.install_actions.includes("configure") && <button type="button" className="primary" disabled={providerBusy} onClick={() => void configure(status)}>{t("provider.registry.configure")}</button>}
                 {status.install_actions.includes("rollback") && <button type="button" className="secondary" disabled={providerBusy} onClick={() => void rollback(status)}>{t("provider.registry.rollback")}</button>}
@@ -2019,7 +2112,7 @@ function ProviderRegistryPanel({
         })}
       </div>
       {statuses.length === 0 && <p className="muted-text">{t("provider.registry.onboarding.noProviders")}</p>}
-      {prepared && <RegistryInstallConfirmDialog prepared={prepared} onCancel={closePrepared} onConfirm={confirm} />}
+      {prepared && <RegistryInstallConfirmDialog prepared={prepared} sandbox={Boolean(statuses.find((status) => status.entry.provider_id === prepared.plan.provider_id)?.entry.mock_only)} onCancel={closePrepared} onConfirm={confirm} />}
     </section>
   );
 }
@@ -2029,6 +2122,7 @@ function ModelSettingsModal({
   catalog,
   registry,
   onRegistryRefresh,
+  onRegistryDiscover,
   onChange,
   onClose,
   synced,
@@ -2038,6 +2132,7 @@ function ModelSettingsModal({
   catalog: ProviderDefinition[];
   registry: ProviderRegistryCatalog | null;
   onRegistryRefresh: () => void;
+  onRegistryDiscover: () => Promise<ProviderRegistryRefreshResponse>;
   onChange: (next: ProviderConfig) => void;
   onClose: () => void;
   synced?: boolean;
@@ -2102,7 +2197,7 @@ function ModelSettingsModal({
           </div>
         </div>
 
-        <ProviderRegistryPanel registry={registry} onRefresh={onRegistryRefresh} />
+        <ProviderRegistryPanel registry={registry} onRefresh={onRegistryRefresh} onDiscover={onRegistryDiscover} />
 
         <p className={`settings-saved-note ${synced ? "ok" : ""}`}>
           {synced ? t("settings.savedToServer") : t("settings.autoSaveNote")}
@@ -2163,6 +2258,7 @@ function OnboardingWizard({
   theme,
   onChange,
   onRegistryRefresh,
+  onRegistryDiscover,
   onThemeChange,
   onClose,
 }: {
@@ -2172,6 +2268,7 @@ function OnboardingWizard({
   theme: ThemeMode;
   onChange: (next: ProviderConfig) => void;
   onRegistryRefresh: () => void;
+  onRegistryDiscover: () => Promise<ProviderRegistryRefreshResponse>;
   onThemeChange: (theme: ThemeMode) => void;
   onClose: () => void;
 }) {
@@ -2295,6 +2392,7 @@ function OnboardingWizard({
                     onChange={onChange}
                     registry={registry}
                     onRegistryRefresh={onRegistryRefresh}
+                    onRegistryDiscover={onRegistryDiscover}
                     showRegistryEntry
                   />
                 </div>
@@ -3032,6 +3130,11 @@ function arrayLength(value: unknown): number {
 }
 
 const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
+  [/official Provider Registry could not be reached/i, "provider.registry.refreshFetchError"],
+  [/Provider Registry response (?:failed schema validation|was not valid JSON|had an invalid shape|exceeded the size limit)/i, "provider.registry.refreshInvalidError"],
+  [/Provider Registry (?:refresh was older|reused an active catalog version|cache could not be committed)/i, "provider.registry.refreshInvalidError"],
+  [/Provider Registry refresh is already in progress/i, "provider.registry.refreshInProgress"],
+  [/Provider Registry refresh source is not an approved/i, "provider.registry.refreshSourceError"],
   [/blueprint artifact is missing/i, "status.blocker.blueprintMissing"],
   [/generate a lesson blueprint first|blueprint.*missing/i, "status.blocker.blueprintMissing"],
   [/render artifact is missing/i, "status.blocker.renderMissing"],
@@ -3044,7 +3147,6 @@ const BACKEND_MESSAGE_KEYS: Array<[RegExp, string]> = [
   [/quality gate/i, "status.blocker.quality"],
   [/credentials or required configuration are missing|configure a bridge token/i, "status.blocker.providerConfig"],
   [/codex agent bridge.*no live agent heartbeat/i, "status.blocker.codexBridgeDisconnected"],
-  [/sandbox fixture.*no real provider executor|no third-party tool will be downloaded/i, "provider.registry.mockUnavailable"],
   [/not implemented.*capability|not implemented in the production media pipeline/i, "status.blocker.providerUnavailable"],
   [/ocr engine is not available/i, "status.blocker.ocrUnavailable"],
   [/profile changed|lineage is unknown|upstream stale/i, "status.blocker.stale"],

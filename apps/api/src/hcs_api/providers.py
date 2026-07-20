@@ -35,11 +35,18 @@ def _field(key: str, label: str, field_type: str = "text", *, required: bool = F
 
 def _provider_definitions() -> list[dict[str, Any]]:
     """Canonical provider list. UI clients must render this list, not copy it."""
+    hcs_repository = "https://github.com/xueyang-dev/HanClassStudio"
+    hcs_license = f"{hcs_repository}/blob/main/LICENSE"
+    openai_docs = "https://platform.openai.com/docs/"
+    openai_signup = "https://platform.openai.com/api-keys"
+    openai_terms = "https://openai.com/policies/service-terms/"
+    openai_privacy = "https://openai.com/policies/privacy-policy/"
     return [
         {
             "capability": "llm", "provider_id": "deterministic", "display_name": "Deterministic offline",
             "category": "local", "description": "Offline-safe deterministic Blueprint generator",
             "fields": [], "operations": ["blueprint"],
+            "repository_url": hcs_repository, "code_license_name": "MIT", "code_license_url": hcs_license,
         },
         {
             "capability": "llm", "provider_id": "openai_compatible", "display_name": "OpenAI-compatible",
@@ -48,6 +55,8 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("api_key", "API key", "password", required=True),
                        _field("model", "Model", required=True)],
             "operations": ["blueprint", "illustration"],
+            "official_homepage_url": "https://openai.com/api/", "api_docs_url": openai_docs,
+            "api_signup_url": openai_signup, "terms_url": openai_terms, "privacy_url": openai_privacy,
         },
         {
             "capability": "llm", "provider_id": "ollama", "display_name": "Ollama",
@@ -55,6 +64,8 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("base_url", "Base URL", "url", placeholder="http://127.0.0.1:11434"),
                        _field("model", "Model", required=True)],
             "operations": ["blueprint", "illustration"],
+            "repository_url": "https://github.com/ollama/ollama", "code_license_name": "MIT",
+            "code_license_url": "https://github.com/ollama/ollama/blob/main/LICENSE",
         },
         {
             "capability": "llm", "provider_id": "lm_studio", "display_name": "LM Studio",
@@ -62,6 +73,8 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("base_url", "Base URL", "url", placeholder="http://127.0.0.1:1234/v1"),
                        _field("model", "Model", required=True)],
             "operations": ["blueprint", "illustration"],
+            "official_homepage_url": "https://lmstudio.ai/", "terms_url": "https://lmstudio.ai/app-terms",
+            "privacy_url": "https://lmstudio.ai/app-privacy",
         },
         {
             "capability": "llm", "provider_id": "custom", "display_name": "Custom endpoint",
@@ -77,11 +90,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "Bridge token", "password", required=True),
                        _field("model", "Model label", placeholder="codex-chatgpt")],
             "operations": ["blueprint", "illustration"],
+            "repository_url": hcs_repository, "code_license_name": "MIT", "code_license_url": hcs_license,
         },
         {
             "capability": "image", "provider_id": "placeholder", "display_name": "Deterministic SVG",
             "category": "local", "description": "Offline-safe deterministic illustration fallback",
             "fields": [], "operations": ["placeholder"],
+            "repository_url": hcs_repository, "code_license_name": "MIT", "code_license_url": hcs_license,
         },
         {
             "capability": "image", "provider_id": "openai_images", "display_name": "OpenAI Images",
@@ -90,6 +105,8 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
             "operations": ["image"],
+            "official_homepage_url": "https://openai.com/api/", "api_docs_url": openai_docs,
+            "api_signup_url": openai_signup, "terms_url": openai_terms, "privacy_url": openai_privacy,
         },
         {
             "capability": "image", "provider_id": "experimental_openai_images", "display_name": "OpenAI Images (experimental)",
@@ -98,6 +115,8 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("base_url", "Base URL", "url", placeholder="https://api.openai.com/v1"),
                        _field("model", "Model", placeholder="gpt-image-1")],
             "operations": ["image"], "experimental": True,
+            "official_homepage_url": "https://openai.com/api/", "api_docs_url": openai_docs,
+            "api_signup_url": openai_signup, "terms_url": openai_terms, "privacy_url": openai_privacy,
         },
         {
             "capability": "image", "provider_id": "codex_image", "display_name": "Codex Image Bridge",
@@ -105,11 +124,13 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "Bridge token", "password", required=True),
                        _field("model", "Model label", placeholder="codex-image")],
             "operations": ["image"],
+            "repository_url": hcs_repository, "code_license_name": "MIT", "code_license_url": hcs_license,
         },
         {
             "capability": "tts", "provider_id": "placeholder", "display_name": "Deterministic tone",
             "category": "local", "description": "Offline-safe placeholder audio",
             "fields": [], "operations": ["placeholder"],
+            "repository_url": hcs_repository, "code_license_name": "MIT", "code_license_url": hcs_license,
         },
         {
             "capability": "tts", "provider_id": "openai_tts", "display_name": "OpenAI TTS",
@@ -119,18 +140,24 @@ def _provider_definitions() -> list[dict[str, Any]]:
                        _field("model", "Model", required=True, options=[{"value": "tts-1", "label": "TTS-1"}, {"value": "tts-1-hd", "label": "TTS-1 HD"}]),
                        _field("voice", "Voice", required=True, options=[{"value": v, "label": v.title()} for v in ("alloy", "echo", "fable", "onyx", "nova", "shimmer")])],
             "operations": ["tts"],
+            "official_homepage_url": "https://openai.com/api/", "api_docs_url": openai_docs,
+            "api_signup_url": openai_signup, "terms_url": openai_terms, "privacy_url": openai_privacy,
         },
         {
             "capability": "ocr", "provider_id": "paddle_ocr", "display_name": "PaddleOCR",
             "category": "local", "description": "Local PaddleOCR engine",
             "fields": [_field("use_gpu", "Use GPU", "select", options=[{"value": "false", "label": "CPU"}, {"value": "true", "label": "GPU"}])],
             "operations": ["source_intake", "ocr"],
+            "repository_url": "https://github.com/PaddlePaddle/PaddleOCR", "code_license_name": "Apache-2.0",
+            "code_license_url": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
         },
         {
             "capability": "ocr", "provider_id": "tesseract", "display_name": "Tesseract",
             "category": "local", "description": "Local Tesseract fallback engine",
             "fields": [_field("langs", "Languages", placeholder="chi_sim+eng")],
             "operations": ["source_intake", "ocr"],
+            "repository_url": "https://github.com/tesseract-ocr/tesseract", "code_license_name": "Apache-2.0",
+            "code_license_url": "https://github.com/tesseract-ocr/tesseract/blob/main/LICENSE",
         },
         {
             "capability": "video", "provider_id": "runway", "display_name": "Runway",
@@ -138,6 +165,9 @@ def _provider_definitions() -> list[dict[str, Any]]:
             "fields": [_field("api_key", "API key", "password", required=True)],
             "operations": [], "implemented": False, "configurable": False,
             "unavailable_reason": "Video generation is not implemented in the production media pipeline.",
+            "official_homepage_url": "https://dev.runwayml.com/", "api_docs_url": "https://docs.dev.runwayml.com/",
+            "api_signup_url": "https://dev.runwayml.com/settings/api-keys", "terms_url": "https://runwayml.com/terms-of-use/",
+            "privacy_url": "https://runwayml.com/privacy-policy/",
         },
     ]
 
@@ -217,6 +247,12 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             category=item["category"], description=item["description"], implemented=implemented,
             configurable=item.get("configurable", implemented), configured=configured, available=available,
             experimental=item.get("experimental", False), unavailable_reason=reason,
+            official_homepage_url=item.get("official_homepage_url"),
+            api_signup_url=item.get("api_signup_url"), api_docs_url=item.get("api_docs_url"),
+            repository_url=item.get("repository_url"), model_card_url=item.get("model_card_url"),
+            code_license_name=item.get("code_license_name"), code_license_url=item.get("code_license_url"),
+            model_license_name=item.get("model_license_name"), model_license_url=item.get("model_license_url"),
+            terms_url=item.get("terms_url"), privacy_url=item.get("privacy_url"),
             configuration_schema=item["fields"], supported_operations=item["operations"],
         ))
 
@@ -241,11 +277,9 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
         if key in definition_keys:
             continue
         installation = status.installation
-        blockers = [*status.environment.blockers, *installation.blockers]
+        blockers = [*status.environment.blockers, *getattr(status, "policy_blockers", []), *installation.blockers]
         selected = _selected_provider(settings, entry.capability)[0] == entry.provider_id
         if entry.mock_only:
-            # Installation lifecycle state is useful evidence in the registry,
-            # but a mock executor never provides a production capability.
             implemented = False
             configurable = False
             configured = False
@@ -281,6 +315,11 @@ def provider_capability_catalog(settings: ProviderSettings) -> list[ProviderCapa
             available=available,
             experimental=entry.experimental,
             unavailable_reason=unavailable_reason,
+            repository_url=entry.source_url,
+            code_license_name=entry.license,
+            code_license_url=entry.license_url,
+            model_license_name=entry.model_license,
+            model_license_url=entry.model_license_url,
             configuration_schema=[field.model_dump(mode="json") for field in entry.configuration_schema],
             supported_operations=entry.supported_operations,
             install_state=installation.install_state,

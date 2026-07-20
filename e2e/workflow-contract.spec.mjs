@@ -166,16 +166,8 @@ test("trusted provider registry requires explicit confirmation and keeps dialog 
   await expect(registry.locator(".provider-registry-card")).toHaveCount(2);
   await expect(registry).toContainText("HanClassStudio OCR Sandbox");
   await expect(registry).toContainText("HanClassStudio first-party");
-  const sourceLink = registry.getByRole("link", { name: "查看官方项目", exact: true }).first();
-  const licenseLink = registry.getByRole("link", { name: "查看许可证", exact: true }).first();
-  await expect(sourceLink).toHaveAttribute("href", /github\.com\/xueyang-dev\/HanClassStudio\/tree\/[0-9a-f]{40}\/providers/);
-  await expect(sourceLink).toHaveAttribute("target", "_blank");
-  await expect(sourceLink).toHaveAttribute("rel", /noopener/);
-  await expect(licenseLink).toHaveAttribute("href", /github\.com\/xueyang-dev\/HanClassStudio\/blob\/[0-9a-f]{40}\/LICENSE/);
-  await expect(licenseLink).toHaveAttribute("target", "_blank");
-  await expect(licenseLink).toHaveAttribute("rel", /noopener/);
 
-  const prepare = registry.getByRole("button", { name: "生成安装计划" }).first();
+  const prepare = registry.getByRole("button", { name: "生成沙盒演练计划" }).first();
   await prepare.click();
   const confirmDialog = page.locator("dialog.confirm-dialog[open]");
   await expect(confirmDialog).toBeVisible();
@@ -190,14 +182,70 @@ test("trusted provider registry requires explicit confirmation and keeps dialog 
     (response) => response.request().method() === "POST" && response.url().includes("/install/confirm") && response.ok(),
   );
   await prepare.click();
-  await page.getByRole("button", { name: "确认安装", exact: true }).click();
+  await page.getByRole("button", { name: "开始沙盒演练", exact: true }).click();
   await installResponse;
-  await expect(registry.locator(".provider-registry-state.available").first()).toBeVisible();
+  await expect(registry.getByText("沙盒生命周期已验证", { exact: true }).first()).toBeVisible();
+  await expect(registry).toContainText("不会下载或执行第三方项目");
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 });
 
-test("first-use provider selection installs a capability-scoped local provider", async ({ page }) => {
+test("provider catalog refresh is explicit and official source links come from the backend", async ({ page }) => {
+  let refreshPosts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/providers/registry/refresh")) refreshPosts += 1;
+  });
+
+  await page.goto("/");
+  await expect.poll(() => refreshPosts).toBe(0);
+  const onboarding = page.locator("dialog.onboarding-dialog[open]");
+  if (await onboarding.count()) await onboarding.getByRole("button", { name: "跳过", exact: true }).click();
+  const trigger = page.getByRole("button", { name: "模型设置", exact: true });
+  await trigger.click();
+  const settings = page.locator("dialog.settings-dialog[open]");
+  const registry = settings.locator(".provider-registry");
+  const projectLink = registry.getByRole("link", { name: "xueyang-dev/HanClassStudio" }).first();
+  await expect(projectLink).toHaveAttribute("href", /github\.com\/xueyang-dev\/HanClassStudio/);
+  await expect(projectLink).toHaveAttribute("target", "_blank");
+  await expect(projectLink).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(registry).toContainText("权利归各自权利人所有");
+
+  const catalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/registry")).json();
+  await page.route("**/api/providers/registry/refresh", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ catalog, changed_provider_ids: [] }) });
+  });
+  await registry.getByRole("button", { name: "检查目录更新", exact: true }).click();
+  await expect.poll(() => refreshPosts).toBe(1);
+  await expect(registry.getByText("目录已更新，发现 0 项变化", { exact: true })).toBeVisible();
+
+  await page.unroute("**/api/providers/registry/refresh");
+  await page.route("**/api/providers/registry/refresh", async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: { code: "provider_registry_fetch_failed", message: "The official Provider Registry could not be reached", blockers: [] } }),
+    });
+  });
+  await registry.getByRole("button", { name: "检查目录更新", exact: true }).click();
+  await expect.poll(() => refreshPosts).toBe(2);
+  await expect(registry.getByRole("alert")).toContainText("已保留上次可信目录");
+
+  const savedSettings = await (await page.request.get("http://127.0.0.1:8012/api/settings/providers")).json();
+  await page.route("**/api/settings/providers", async (route) => {
+    if (route.request().method() === "PUT") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(savedSettings) });
+      return;
+    }
+    await route.continue();
+  });
+  await settings.getByRole("button", { name: "LLM 语言模型", exact: true }).click();
+  await settings.getByRole("button", { name: "在线 API", exact: true }).click();
+  const apiLink = settings.getByRole("link", { name: "申请 API / 获取密钥", exact: true });
+  await expect(apiLink).toHaveAttribute("href", "https://platform.openai.com/api-keys");
+  await expect(apiLink).toHaveAttribute("rel", "noopener noreferrer");
+});
+
+test("first-use provider selection exposes a capability-scoped sandbox without claiming a real provider", async ({ page }) => {
   let blockCapabilities = new Set(["ocr"]);
   await page.addInitScript(() => {
     window.localStorage.removeItem("hcs_onboarding_seen");
@@ -223,22 +271,21 @@ test("first-use provider selection installs a capability-scoped local provider",
   await expect(registry).toContainText("HanClassStudio OCR Sandbox");
   await expect(registry).not.toContainText("HanClassStudio LLM Sandbox");
 
-  const prepare = registry.getByRole("button", { name: "生成安装计划", exact: true });
+  const prepare = registry.getByRole("button", { name: "生成沙盒演练计划", exact: true });
   await expect(prepare).toHaveCount(1);
   await prepare.click();
   const confirmDialog = page.locator("dialog.confirm-dialog[open]");
   await expect(confirmDialog).toBeVisible();
-  await expect(confirmDialog).toContainText("固定版本");
-  await confirmDialog.getByRole("button", { name: "确认安装", exact: true }).click();
-  blockCapabilities = new Set();
+  await expect(confirmDialog).toContainText("版本");
+  await expect(confirmDialog).toContainText("不会下载、安装或执行任何第三方项目");
+  await confirmDialog.getByRole("button", { name: "开始沙盒演练", exact: true }).click();
 
-  await expect(registry.locator(".provider-registry-state.available")).toBeVisible();
-  await expect(registry).toContainText("仅用于安全演示");
-  await expect(onboarding.locator('option[value="hcs_mock_ocr"]')).toHaveCount(0);
-  await expect(onboarding).not.toContainText("新的服务商已经可用，请在上方下拉菜单中选择。");
+  await expect(registry.getByText("沙盒生命周期已验证", { exact: true })).toBeVisible();
+  await expect(onboarding.getByRole("combobox", { name: "选择服务商", exact: true })).toHaveCount(0);
+  await expect(onboarding.getByText("新的服务商已经可用，请在上方下拉菜单中选择。", { exact: true })).toHaveCount(0);
 });
 
-test("first-use registry keeps a configured sandbox blocked without a real executor", async ({ page }) => {
+test("first-use registry keeps an installed provider blocked until configuration", async ({ page }) => {
   let blockCapabilities = new Set(["llm"]);
   await page.addInitScript(() => {
     window.localStorage.removeItem("hcs_onboarding_seen");
@@ -261,10 +308,10 @@ test("first-use registry keeps a configured sandbox blocked without a real execu
   const registry = onboarding.locator(".provider-registry");
   await expect(registry.locator(".provider-registry-card")).toHaveCount(1);
   await expect(registry).toContainText("HanClassStudio LLM Sandbox");
-  const prepare = registry.getByRole("button", { name: "生成安装计划", exact: true });
+  const prepare = registry.getByRole("button", { name: "生成沙盒演练计划", exact: true });
   await prepare.click();
   const confirmDialog = page.locator("dialog.confirm-dialog[open]");
-  await confirmDialog.getByRole("button", { name: "确认安装", exact: true }).click();
+  await confirmDialog.getByRole("button", { name: "开始沙盒演练", exact: true }).click();
 
   await expect(registry).toContainText("已安装，待配置");
   await expect(registry.getByRole("button", { name: "配置并启用", exact: true })).toHaveCount(1);
@@ -272,10 +319,8 @@ test("first-use registry keeps a configured sandbox blocked without a real execu
   await expect(secretField).toHaveCount(1);
   await secretField.fill("onboarding-test-secret");
   await registry.getByRole("button", { name: "配置并启用", exact: true }).click();
-  await expect(registry.locator(".provider-registry-state.available")).toBeVisible();
-  await expect(registry).toContainText("仅用于安全演示");
-  await expect(onboarding.locator('option[value="hcs_mock_llm"]')).toHaveCount(0);
-  await expect(onboarding).not.toContainText("新的服务商已经可用，请在上方下拉菜单中选择。");
+  await expect(registry.getByText("沙盒生命周期已验证", { exact: true })).toBeVisible();
+  await expect(onboarding.getByRole("combobox", { name: "选择服务商", exact: true })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("onboarding-test-secret");
 });
 
@@ -311,7 +356,7 @@ test("first-use capability registry remains readable on a 390px viewport", async
   }));
   expect(cardOverflow.scrollWidth).toBeLessThanOrEqual(cardOverflow.clientWidth);
 
-  const prepare = registry.getByRole("button", { name: "生成安装计划", exact: true });
+  const prepare = registry.getByRole("button", { name: "生成沙盒演练计划", exact: true });
   await prepare.click();
   const confirmDialog = page.locator("dialog.confirm-dialog[open]");
   await expect(confirmDialog).toBeVisible();

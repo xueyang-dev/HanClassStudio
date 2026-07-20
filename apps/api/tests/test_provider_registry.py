@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import errno
 import json
+import os
+import socket
+import subprocess
+import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -27,19 +35,39 @@ def _isolate(tmp_path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
+def _catalog(
+    entries: list[registry.ProviderRegistryEntry] | None = None,
+    *,
+    catalog_version: int = 1,
+    source_revision: str = "registry-v1.0.0",
+) -> registry.ProviderRegistryIndex:
+    return registry._build_registry_index(
+        entries or registry._bundled_registry_entries(),
+        catalog_version=catalog_version,
+        generated_at="2026-07-17T00:00:00+00:00",
+        source_revision=source_revision,
+    )
+
+
 def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
     entries = registry.validate_registry()
     assert {entry.provider_id for entry in entries} == {"hcs_mock_ocr", "hcs_mock_llm"}
+    keys = [(entry.capability, entry.provider_id) for entry in entries]
+    assert len(keys) == len(set(keys))
     for entry in entries:
         assert entry.trust_level == "first_party"
         assert entry.source_ref not in {"main", "latest"}
-        assert entry.source_ref == entry.manifest.source_ref
-        assert entry.source_url.endswith(f"/tree/{entry.source_ref}/providers")
-        assert entry.license_url.endswith(f"/blob/{entry.source_ref}/LICENSE")
         assert len(entry.checksum_sha256) == 64
         assert entry.manifest_digest == registry._digest(entry.manifest.model_dump(mode="json", by_alias=True))
         assert entry.executor == "mock"
         assert entry.mock_only is True
+
+    index = registry.ProviderRegistryIndex.model_validate_json(
+        (Path(__file__).parents[3] / "providers" / "registry.v1.json").read_text(encoding="utf-8")
+    )
+    assert [entry.model_dump(mode="json") for entry in index.providers] == [
+        entry.model_dump(mode="json") for entry in entries
+    ]
 
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry(
@@ -61,22 +89,6 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
 
     payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
     payload["source_url"] = "http://github.com/xueyang-dev/HanClassStudio/tree/v0.1.0/providers"
-    with pytest.raises((ValidationError, ValueError)):
-        registry.ProviderRegistryEntry.model_validate(payload)
-    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
-    payload["license_url"] = payload["license_url"].replace("/LICENSE", "/NOTICE")
-    with pytest.raises((ValidationError, ValueError)):
-        registry.ProviderRegistryEntry.model_validate(payload)
-    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
-    payload["license_url"] = payload["license_url"].replace("https://", "https://user:pass@")
-    with pytest.raises((ValidationError, ValueError)):
-        registry.ProviderRegistryEntry.model_validate(payload)
-    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
-    payload["source_url"] += "?download=1"
-    with pytest.raises((ValidationError, ValueError)):
-        registry.ProviderRegistryEntry.model_validate(payload)
-    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
-    payload["manifest"]["source_ref"] = "0" * 40
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
     payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
@@ -109,6 +121,617 @@ def test_registry_fixture_has_trusted_fixed_and_verifiable_metadata() -> None:
     payload["manifest"]["unexpected_step_metadata"] = True
     with pytest.raises((ValidationError, ValueError)):
         registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["source_url"] = payload["source_url"].replace(payload["source_ref"], "0" * 40)
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["license_url"] = "https://github.com/another/project/blob/main/LICENSE"
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["manifest"]["source_ref"] = "0" * 40
+    payload["manifest_digest"] = registry._digest(payload["manifest"])
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+    payload = registry.registry_entries()[0].model_dump(mode="json", by_alias=True)
+    payload["license_url"] = payload["license_url"].replace(payload["source_ref"], "0" * 40)
+    with pytest.raises((ValidationError, ValueError)):
+        registry.ProviderRegistryEntry.model_validate(payload)
+
+
+def test_registry_index_rejects_unknown_schema_oversized_or_tampered_catalogs() -> None:
+    valid = _catalog().model_dump(mode="json", by_alias=True)
+    for mutate in (
+        lambda payload: payload.update(schema="hanclassstudio.provider_registry.v999"),
+        lambda payload: payload.update(content_digest="0" * 64),
+        lambda payload: payload.update(source_revision="latest"),
+        lambda payload: payload.update(unexpected=True),
+        lambda payload: payload.update(providers=payload["providers"] * 101),
+    ):
+        payload = json.loads(json.dumps(valid))
+        mutate(payload)
+        with pytest.raises((ValidationError, ValueError)):
+            registry.ProviderRegistryIndex.model_validate(payload)
+
+
+def test_registry_license_policy_controls_install_actions(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    entry = registry._bundled_registry_entries()[0].model_copy(deep=True)
+    entry.license_status = "review_required"
+    entry.license = "Custom terms"
+    index = _catalog([entry], catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (index.model_dump(mode="json", by_alias=True), source_url),
+    )
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    status = refreshed.json()["catalog"]["providers"][0]
+    assert status["install_actions"] == []
+    assert status["policy_blockers"][0]["code"] == "provider_license_review_required"
+    prepared = client.post(f"/api/providers/registry/{entry.provider_id}/install/prepare")
+    assert prepared.status_code == 400
+    assert prepared.json()["detail"]["code"] == "provider_license_not_approved"
+
+
+@pytest.mark.parametrize("cache_state", ["missing", "stale", "corrupt", "empty_object"])
+def test_registry_read_paths_are_zero_network(tmp_path, monkeypatch, cache_state) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    cache_path = storage.CONFIG_DIR / "provider_registry_cache.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    if cache_state == "stale":
+        index = _catalog()
+        cache = registry.ProviderRegistryCache(
+            **index.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2020-01-01T00:00:00+00:00",
+        )
+        cache_path.write_text(cache.model_dump_json(by_alias=True), encoding="utf-8")
+    elif cache_state == "corrupt":
+        cache_path.write_text("{not-json", encoding="utf-8")
+    elif cache_state == "empty_object":
+        cache_path.write_text("{}", encoding="utf-8")
+
+    network_calls: list[str] = []
+
+    def fail_network(*_args, **_kwargs):
+        network_calls.append("network")
+        raise AssertionError("ordinary Provider reads must not touch the network")
+
+    monkeypatch.setattr(socket, "create_connection", fail_network)
+    monkeypatch.setattr(socket, "getaddrinfo", fail_network)
+
+    registry_response = client.get("/api/providers/registry")
+    capability_response = client.get("/api/settings/providers/capabilities")
+    expected = 503 if cache_state in {"corrupt", "empty_object"} else 200
+    assert registry_response.status_code == expected
+    assert capability_response.status_code == expected
+    assert network_calls == []
+
+
+def test_api_module_initialization_is_zero_network() -> None:
+    repository = Path(__file__).parents[3]
+    script = """
+import socket
+def blocked(*args, **kwargs):
+    raise AssertionError('network access during API import')
+socket.create_connection = blocked
+socket.getaddrinfo = blocked
+from hcs_api.main import app
+assert app is not None
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repository,
+        env={**os.environ, "PYTHONPATH": str(repository / "apps" / "api" / "src")},
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_registry_refresh_is_explicit_validated_and_persisted(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    calls: list[str] = []
+    entries = registry._bundled_registry_entries()
+    upgraded = entries[0].model_copy(deep=True)
+    upgraded.version = "0.2.0"
+    upgraded.source_ref = "v0.2.0"
+    upgraded.source_url = "https://github.com/xueyang-dev/HanClassStudio/tree/v0.2.0/providers"
+    upgraded.license_url = "https://github.com/xueyang-dev/HanClassStudio/blob/v0.2.0/LICENSE"
+    upgraded.manifest.version = upgraded.version
+    upgraded.manifest.source_ref = upgraded.source_ref
+    upgraded.manifest_digest = registry._digest(upgraded.manifest.model_dump(mode="json", by_alias=True))
+    upgraded.checksum_sha256 = registry._artifact_checksum(
+        upgraded.provider_id,
+        upgraded.version,
+        upgraded.source_ref,
+    )
+    payload = _catalog(
+        [upgraded, entries[1]],
+        catalog_version=2,
+        source_revision="registry-v2.0.0",
+    ).model_dump(mode="json", by_alias=True)
+
+    def fetch(source_url: str) -> tuple[dict, str]:
+        calls.append(source_url)
+        return payload, source_url
+
+    monkeypatch.setattr(registry, "_download_registry_index", fetch)
+
+    initial = client.get("/api/providers/registry")
+    assert initial.status_code == 200
+    assert initial.json()["source"]["kind"] == "bundled"
+    assert calls == []
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert len(calls) == 1
+    body = refreshed.json()
+    assert body["changed_provider_ids"] == ["hcs_mock_ocr"]
+    assert body["catalog"]["source"]["kind"] == "remote"
+    assert next(
+        item for item in body["catalog"]["providers"]
+        if item["entry"]["provider_id"] == "hcs_mock_ocr"
+    )["entry"]["version"] == "0.2.0"
+
+    cache_path = storage.CONFIG_DIR / "provider_registry_cache.json"
+    assert cache_path.exists()
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert len(calls) == 1
+    assert after.json()["source"]["fetched_at"]
+
+
+def test_invalid_registry_refresh_keeps_previous_catalog(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    original = client.get("/api/providers/registry").json()
+
+    def fetch(_source_url: str) -> tuple[dict, str]:
+        payload = registry._bundled_registry_entries()[0].model_dump(mode="json", by_alias=True)
+        payload["source_url"] = "https://github.com/evil/provider/tree/v1.0.0"
+        return {
+            "schema": "hanclassstudio.provider_registry.v1",
+            "catalog_version": 2,
+            "generated_at": "2026-07-17T00:00:00+00:00",
+            "source_revision": "registry-v2.0.0",
+            "content_digest": "0" * 64,
+            "providers": [payload],
+        }, registry._DEFAULT_REGISTRY_URL
+
+    monkeypatch.setattr(registry, "_download_registry_index", fetch)
+    response = client.post("/api/providers/registry/refresh")
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "provider_registry_invalid"
+    assert not (storage.CONFIG_DIR / "provider_registry_cache.json").exists()
+    current = client.get("/api/providers/registry").json()
+    assert [item["entry"]["provider_id"] for item in current["providers"]] == [
+        item["entry"]["provider_id"] for item in original["providers"]
+    ]
+    assert [item["entry"]["version"] for item in current["providers"]] == [
+        item["entry"]["version"] for item in original["providers"]
+    ]
+
+
+def test_registry_refresh_source_is_restricted_to_official_https_feed() -> None:
+    assert registry._validate_registry_feed_url(registry._DEFAULT_REGISTRY_URL) == registry._DEFAULT_REGISTRY_URL
+    for source in (
+        "http://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
+        "https://evil.example/xueyang-dev/HanClassStudio/main/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/evil/HanClassStudio/main/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/main/providers/registry.v1.json?redirect=1",
+        "https://user:secret@raw.githubusercontent.com/xueyang-dev/HanClassStudio/e289417dbc640b0734d997352a60ee89b6a50e24/providers/registry.v1.json",
+        "https://raw.githubusercontent.com/xueyang-dev/HanClassStudio/e289417dbc640b0734d997352a60ee89b6a50e24/extra/providers/registry.v1.json",
+    ):
+        with pytest.raises(registry.ProviderRegistryError) as error:
+            registry._validate_registry_feed_url(source)
+        assert error.value.code == "provider_registry_source_untrusted"
+
+
+class _FakeSocket:
+    def settimeout(self, _timeout: float) -> None:
+        return None
+
+
+class _FakeRegistryResponse:
+    def __init__(self, body: bytes, *, status: int = 200, headers: dict[str, str] | None = None) -> None:
+        self.status = status
+        self._body = body
+        self._offset = 0
+        self.headers = headers or {}
+
+    def read(self, amount: int) -> bytes:
+        chunk = self._body[self._offset:self._offset + amount]
+        self._offset += len(chunk)
+        return chunk
+
+
+class _FakeHttpsConnection:
+    response: _FakeRegistryResponse
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.sock = _FakeSocket()
+
+    def request(self, *_args, **_kwargs) -> None:
+        return None
+
+    def getresponse(self) -> _FakeRegistryResponse:
+        return self.response
+
+    def close(self) -> None:
+        return None
+
+
+def test_registry_transport_rejects_redirects_and_actual_oversized_bodies(monkeypatch) -> None:
+    monkeypatch.setattr(registry.socket, "getaddrinfo", lambda *_args, **_kwargs: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("185.199.108.133", 443)),
+    ])
+    monkeypatch.setattr(registry.http.client, "HTTPSConnection", _FakeHttpsConnection)
+
+    _FakeHttpsConnection.response = _FakeRegistryResponse(b"", status=302, headers={"Location": "http://127.0.0.1/steal"})
+    with pytest.raises(registry.ProviderRegistryError) as redirected:
+        registry._download_registry_index(registry._DEFAULT_REGISTRY_URL)
+    assert redirected.value.code == "provider_registry_source_untrusted"
+    assert "127.0.0.1" not in redirected.value.message
+
+    _FakeHttpsConnection.response = _FakeRegistryResponse(b"x" * (registry._MAX_REGISTRY_BYTES + 1))
+    with pytest.raises(registry.ProviderRegistryError) as oversized:
+        registry._download_registry_index(registry._DEFAULT_REGISTRY_URL)
+    assert oversized.value.code == "provider_registry_too_large"
+
+
+def test_registry_transport_enforces_total_timeout_and_redacts_failures(monkeypatch) -> None:
+    monkeypatch.setattr(registry.socket, "getaddrinfo", lambda *_args, **_kwargs: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("185.199.108.133", 443)),
+    ])
+    monkeypatch.setattr(registry.http.client, "HTTPSConnection", _FakeHttpsConnection)
+    _FakeHttpsConnection.response = _FakeRegistryResponse(b"{}")
+    moments = iter([0.0, registry._REGISTRY_TOTAL_TIMEOUT_SECONDS + 1.0])
+    monkeypatch.setattr(registry.time, "monotonic", lambda: next(moments))
+    with pytest.raises(registry.ProviderRegistryError) as timeout:
+        registry._download_registry_index(registry._DEFAULT_REGISTRY_URL)
+    assert timeout.value.code == "provider_registry_fetch_failed"
+    assert registry._DEFAULT_REGISTRY_URL not in timeout.value.message
+
+    monkeypatch.setattr(registry.time, "monotonic", lambda: 0.0)
+    _FakeHttpsConnection.response = _FakeRegistryResponse(b"not-json Authorization: Bearer secret-value")
+    with pytest.raises(registry.ProviderRegistryError) as invalid:
+        registry._download_registry_index(registry._DEFAULT_REGISTRY_URL)
+    assert invalid.value.code == "provider_registry_invalid"
+    assert "secret-value" not in invalid.value.message
+
+
+def test_registry_transport_rejects_private_dns_resolution(monkeypatch) -> None:
+    monkeypatch.setattr(registry.socket, "getaddrinfo", lambda *_args, **_kwargs: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443)),
+    ])
+    with pytest.raises(registry.ProviderRegistryError) as error:
+        registry._download_registry_index(registry._DEFAULT_REGISTRY_URL)
+    assert error.value.code == "provider_registry_source_untrusted"
+
+
+def test_refresh_is_single_flight_and_second_request_cannot_overwrite(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    started = threading.Event()
+    release = threading.Event()
+    index = _catalog()
+
+    def fetch(source_url: str) -> tuple[dict, str]:
+        started.set()
+        assert release.wait(timeout=5)
+        return index.model_dump(mode="json", by_alias=True), source_url
+
+    monkeypatch.setattr(registry, "_download_registry_index", fetch)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(registry.refresh_registry)
+        assert started.wait(timeout=5)
+        second = pool.submit(registry.refresh_registry)
+        with pytest.raises(registry.ProviderRegistryError) as concurrent:
+            second.result(timeout=5)
+        assert concurrent.value.code == "provider_registry_refresh_in_progress"
+        release.set()
+        first.result(timeout=5)
+
+
+def test_older_or_equivocating_catalog_cannot_replace_trusted_cache(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    current = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    original = (storage.CONFIG_DIR / registry._REGISTRY_CACHE_FILE).read_bytes()
+
+    for incoming in (
+        _catalog(catalog_version=1, source_revision="registry-v1.0.0"),
+        _catalog(
+            [registry._bundled_registry_entries()[0]],
+            catalog_version=2,
+            source_revision="registry-v2.0.0",
+        ),
+    ):
+        monkeypatch.setattr(
+            registry,
+            "_download_registry_index",
+            lambda source_url, incoming=incoming: (incoming.model_dump(mode="json", by_alias=True), source_url),
+        )
+        with pytest.raises(registry.ProviderRegistryError) as error:
+            registry.refresh_registry()
+        assert error.value.code in {"provider_registry_rollback_rejected", "provider_registry_revision_conflict"}
+        assert (storage.CONFIG_DIR / registry._REGISTRY_CACHE_FILE).read_bytes() == original
+
+
+def test_atomic_cache_replace_failure_preserves_previous_catalog(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    current = _catalog()
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    cache_path = storage.CONFIG_DIR / registry._REGISTRY_CACHE_FILE
+    original = cache_path.read_bytes()
+    upgraded = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (upgraded.model_dump(mode="json", by_alias=True), source_url),
+    )
+    monkeypatch.setattr(registry.os, "replace", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk failed with token=secret-value")))
+
+    with pytest.raises(registry.ProviderRegistryError) as error:
+        registry.refresh_registry()
+    assert error.value.code == "provider_registry_cache_write_failed"
+    assert cache_path.read_bytes() == original
+    assert "secret-value" not in error.value.message
+    assert not list(cache_path.parent.glob(f".{cache_path.name}.*"))
+
+
+def test_atomic_cache_temp_creation_failure_is_structured_and_preserves_previous_catalog(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    cache_path = storage.CONFIG_DIR / registry._REGISTRY_CACHE_FILE
+    registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"sentinel": True})
+    original = cache_path.read_bytes()
+    monkeypatch.setattr(
+        registry.tempfile,
+        "mkstemp",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("secret=do-not-return")),
+    )
+
+    with pytest.raises(registry.ProviderRegistryError) as error:
+        registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"replacement": True})
+    assert error.value.code == "provider_registry_cache_write_failed"
+    assert "do-not-return" not in error.value.message
+    assert cache_path.read_bytes() == original
+
+
+def test_atomic_cache_commit_orders_file_fsync_replace_then_directory_fsync(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    real_fsync = registry.os.fsync
+    real_replace = registry.os.replace
+    events: list[str] = []
+
+    def tracking_fsync(fd: int) -> None:
+        events.append("fsync")
+        real_fsync(fd)
+
+    def tracking_replace(src, dst) -> None:
+        events.append("replace")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(registry.os, "fsync", tracking_fsync)
+    monkeypatch.setattr(registry.os, "replace", tracking_replace)
+
+    registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"sentinel": True})
+
+    # The file fsync must happen before the commit (os.replace), and the
+    # directory fsync must happen after the commit on platforms that support
+    # it. This ordering is the commit-point contract: a crash before replace
+    # preserves the old cache; a crash after replace leaves the new cache.
+    assert events == ["fsync", "replace", "fsync"]
+
+
+def test_atomic_cache_file_fsync_failure_skips_replace_and_preserves_previous_catalog(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    cache_path = storage.CONFIG_DIR / registry._REGISTRY_CACHE_FILE
+    registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"sentinel": True})
+    original = cache_path.read_bytes()
+
+    replace_calls: list[int] = []
+    monkeypatch.setattr(registry.os, "replace", lambda src, dst: replace_calls.append(1))
+
+    def failing_file_fsync(_fd: int) -> None:
+        raise OSError(errno.EIO, "disk write failed with token=secret-value")
+
+    monkeypatch.setattr(registry.os, "fsync", failing_file_fsync)
+
+    with pytest.raises(registry.ProviderRegistryError) as error:
+        registry._write_mapping(registry._REGISTRY_CACHE_FILE, {"replacement": True})
+
+    assert error.value.code == "provider_registry_cache_write_failed"
+    assert "secret-value" not in error.value.message
+    # os.replace() must not have executed: the commit point was never reached.
+    assert replace_calls == []
+    # The previous cache is untouched.
+    assert cache_path.read_bytes() == original
+    # The temp file was cleaned up by the finally block.
+    assert not list(cache_path.parent.glob(f".{cache_path.name}.*"))
+
+
+def test_post_commit_directory_fsync_unsupported_keeps_new_cache_active(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    current = _catalog()
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    upgraded = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (upgraded.model_dump(mode="json", by_alias=True), source_url),
+    )
+
+    # The pre-commit file fsync succeeds; the post-commit directory fsync
+    # raises a platform/filesystem "not supported" error. os.replace() has
+    # already committed the new cache, so the refresh must succeed and the
+    # API must not claim the old cache is still in use.
+    real_fsync = registry.os.fsync
+    call_count = {"n": 0}
+
+    def selective_fsync(fd: int) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise OSError(errno.EINVAL, "fsync not supported on this filesystem token=secret-value")
+        real_fsync(fd)
+
+    monkeypatch.setattr(registry.os, "fsync", selective_fsync)
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["catalog"]["source"]["kind"] == "remote"
+    assert refreshed.json()["catalog"]["source"]["catalog_version"] == 2
+
+    # The refresh response and subsequent reads must both observe the new
+    # cache; the interface state must match the on-disk active cache.
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert after.json()["source"]["catalog_version"] == 2
+    assert after.json()["source"]["kind"] == "remote"
+
+    # The raw OSError message must not leak through the API surface.
+    assert "secret-value" not in refreshed.text
+    assert "secret-value" not in after.text
+
+    # The unsupported directory fsync was recorded as a durability warning,
+    # not silently ignored. Only the stable errno is persisted.
+    warning_path = storage.CONFIG_DIR / "provider_registry_durability_warnings.jsonl"
+    assert warning_path.exists()
+    warnings = [json.loads(line) for line in warning_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(w["category"] == "unsupported" and w["file"] == registry._REGISTRY_CACHE_FILE for w in warnings)
+    assert all("secret-value" not in line for line in warning_path.read_text(encoding="utf-8").splitlines())
+
+
+def test_post_commit_directory_fsync_io_error_keeps_new_cache_active_with_warning(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    current = _catalog()
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    upgraded = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (upgraded.model_dump(mode="json", by_alias=True), source_url),
+    )
+
+    # A non-"not supported" OSError on the post-commit directory fsync must
+    # still not turn the committed refresh into a failure. The contract is:
+    # the new cache is active, the refresh succeeds, and the exception is
+    # recorded as a durability warning with a distinct category.
+    real_fsync = registry.os.fsync
+    call_count = {"n": 0}
+
+    def selective_fsync(fd: int) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise OSError(errno.EIO, "block device io error token=secret-value")
+        real_fsync(fd)
+
+    monkeypatch.setattr(registry.os, "fsync", selective_fsync)
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["catalog"]["source"]["catalog_version"] == 2
+
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert after.json()["source"]["catalog_version"] == 2
+
+    assert "secret-value" not in refreshed.text
+    assert "secret-value" not in after.text
+
+    warning_path = storage.CONFIG_DIR / "provider_registry_durability_warnings.jsonl"
+    assert warning_path.exists()
+    warnings = [json.loads(line) for line in warning_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(w["category"] == "io_error" and w["file"] == registry._REGISTRY_CACHE_FILE for w in warnings)
+    assert all("secret-value" not in line for line in warning_path.read_text(encoding="utf-8").splitlines())
+
+
+def test_post_commit_directory_close_error_keeps_new_cache_active_with_warning(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    current = _catalog()
+    registry._write_mapping(
+        registry._REGISTRY_CACHE_FILE,
+        registry.ProviderRegistryCache(
+            **current.model_dump(mode="json", by_alias=True),
+            source_url=registry._DEFAULT_REGISTRY_URL,
+            fetched_at="2026-07-17T00:00:00+00:00",
+        ).model_dump(mode="json", by_alias=True),
+    )
+    upgraded = _catalog(catalog_version=2, source_revision="registry-v2.0.0")
+    monkeypatch.setattr(
+        registry,
+        "_download_registry_index",
+        lambda source_url: (upgraded.model_dump(mode="json", by_alias=True), source_url),
+    )
+
+    real_open = registry.os.open
+    real_close = registry.os.close
+    directory_fd: dict[str, int] = {}
+
+    def tracking_open(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if Path(path) == storage.CONFIG_DIR:
+            directory_fd["value"] = fd
+        return fd
+
+    def failing_directory_close(fd: int) -> None:
+        if fd == directory_fd.get("value"):
+            real_close(fd)
+            raise OSError(errno.EIO, "directory close failed with token=secret-value")
+        real_close(fd)
+
+    monkeypatch.setattr(registry.os, "open", tracking_open)
+    monkeypatch.setattr(registry.os, "close", failing_directory_close)
+
+    refreshed = client.post("/api/providers/registry/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["catalog"]["source"]["catalog_version"] == 2
+
+    after = client.get("/api/providers/registry")
+    assert after.status_code == 200
+    assert after.json()["source"]["catalog_version"] == 2
+    assert "secret-value" not in refreshed.text
+    assert "secret-value" not in after.text
+
+    warning_path = storage.CONFIG_DIR / "provider_registry_durability_warnings.jsonl"
+    assert warning_path.exists()
+    warnings = [json.loads(line) for line in warning_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(w["category"] == "io_error" and w["file"] == registry._REGISTRY_CACHE_FILE for w in warnings)
+    assert all("secret-value" not in line for line in warning_path.read_text(encoding="utf-8").splitlines())
 
 
 def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monkeypatch) -> None:
@@ -124,6 +747,8 @@ def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monk
     plan = prepared.json()["plan"]
     assert plan["provider_id"] == "hcs_mock_ocr"
     assert all("shell" not in step for step in plan["steps"])
+    assert all(step["label"].startswith("Sandbox:") for step in plan["steps"])
+    assert any("no download" in step["label"] for step in plan["steps"])
 
     not_confirmed = client.get("/api/providers/registry/hcs_mock_ocr")
     assert not_confirmed.json()["installation"]["install_state"] == "ready"
@@ -141,6 +766,7 @@ def test_registry_install_is_two_phase_and_persists_backend_state(tmp_path, monk
     assert logs.status_code == 200
     assert logs.json()
     assert all("api_key" not in json.dumps(item) for item in logs.json())
+    assert all("Sandbox:" in item["message"] for item in logs.json() if item["operation"] == "execute")
 
 
 def test_registry_install_state_flows_into_capability_contract(tmp_path, monkeypatch) -> None:
@@ -163,10 +789,10 @@ def test_registry_install_state_flows_into_capability_contract(tmp_path, monkeyp
     after = client.get("/api/settings/providers/capabilities")
     assert after.status_code == 200
     ocr_after = next(item for item in after.json() if item["provider_id"] == "hcs_mock_ocr")
-    assert ocr_after["implemented"] is False
-    assert ocr_after["configurable"] is False
     assert ocr_after["available"] is False
     assert ocr_after["configured"] is False
+    assert ocr_after["implemented"] is False
+    assert ocr_after["configurable"] is False
     assert ocr_after["install_state"] == "available"
     assert ocr_after["configuration_status"] == "configured"
     assert "sandbox" in ocr_after["unavailable_reason"].lower()
@@ -190,12 +816,13 @@ def test_registry_configuration_state_flows_into_capability_contract_without_sec
     secret = "capability-contract-secret"
     assert client.post("/api/providers/registry/hcs_mock_llm/configure", json={"values": {"api_key": secret}}).status_code == 200
     available = next(item for item in client.get("/api/settings/providers/capabilities").json() if item["provider_id"] == "hcs_mock_llm")
-    assert available["implemented"] is False
-    assert available["configurable"] is False
     assert available["available"] is False
     assert available["configured"] is False
+    assert available["implemented"] is False
+    assert available["configurable"] is False
     assert available["configuration_status"] == "configured"
     assert "sandbox" in available["unavailable_reason"].lower()
+    assert "executor" in available["unavailable_reason"].lower()
     assert secret not in json.dumps(available)
 
 
@@ -224,7 +851,6 @@ def test_capability_catalog_merges_registry_keys_once_and_preserves_unknown_fall
     descriptors = client.get("/api/settings/providers/capabilities").json()
     keys = [(item["capability"], item["provider_id"]) for item in descriptors]
     assert len(keys) == len(set(keys))
-
     sandbox = [item for item in descriptors if item["provider_id"] == "hcs_mock_llm"]
     assert len(sandbox) == 1
     assert sandbox[0]["implemented"] is False
@@ -234,7 +860,6 @@ def test_capability_catalog_merges_registry_keys_once_and_preserves_unknown_fall
     assert sandbox[0]["install_state"] == "available"
     assert "sandbox" in sandbox[0]["unavailable_reason"].lower()
     assert "executor" in sandbox[0]["unavailable_reason"].lower()
-
     unknown = [item for item in descriptors if item["capability"] == "ocr" and item["provider_id"] == "legacy_ocr"]
     assert len(unknown) == 1
     assert unknown[0]["implemented"] is False
