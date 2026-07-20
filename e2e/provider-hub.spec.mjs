@@ -44,10 +44,10 @@ test("Provider Hub does not refresh on entry and renders a checksum failure with
 
   await page.goto("/");
   await expect.poll(() => refreshPosts).toBe(0);
-  await page.getByRole("button", { name: "Provider Hub", exact: true }).first().click();
+  await page.getByRole("button", { name: "教学能力中心", exact: true }).first().click();
   const hub = page.locator("dialog.provider-hub-dialog[open]");
   await expect(hub).toBeVisible();
-  await expect(hub.getByRole("heading", { level: 2, name: "HanClass Provider Hub" })).toBeVisible();
+  await expect(hub.getByRole("heading", { level: 2, name: "教学能力中心" })).toBeVisible();
   await expect(hub.getByRole("heading", { level: 3, name: "推荐能力" })).toBeVisible();
   await expect(hub.locator(".provider-hub-card").filter({ hasText: "本地基础生图" }).first()).toBeVisible();
   await expect.poll(() => refreshPosts).toBe(0);
@@ -91,11 +91,18 @@ test("install start applies authoritative cancel action, cancels, and blocks rap
   });
   await page.route("**/api/providers/hub/install-tasks/cancel-e2e/cancel", async (route) => {
     cancelled = true;
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(task("running", "downloading", true)) });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        task: task("running", "downloading", true),
+        provider: { ...localProvider, status: "installing", available_actions: ["view_details", "open_project", "cancel_install"] },
+      }),
+    });
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Provider Hub", exact: true }).first().click();
+  await page.getByRole("button", { name: "教学能力中心", exact: true }).first().click();
   const hub = page.locator("dialog.provider-hub-dialog[open]");
   const localCard = hub.locator(".provider-hub-card").filter({ hasText: "本地基础生图" }).first();
   const install = localCard.getByRole("button", { name: "安装", exact: true });
@@ -147,7 +154,7 @@ test("Provider Hub refresh summary, source details, real fixture install, and na
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  const trigger = page.getByRole("button", { name: "Provider Hub", exact: true }).first();
+  const trigger = page.getByRole("button", { name: "教学能力中心", exact: true }).first();
   await trigger.click();
   const hub = page.locator("dialog.provider-hub-dialog[open]");
   await expect.poll(() => hub.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth }))).toEqual({ scroll: 390, client: 390 });
@@ -161,7 +168,7 @@ test("Provider Hub refresh summary, source details, real fixture install, and na
   await expect(source).toHaveAttribute("target", "_blank");
   await expect(source).toHaveAttribute("rel", "noopener noreferrer");
 
-  await hub.getByRole("button", { name: "刷新 Provider", exact: true }).click();
+  await hub.getByRole("button", { name: "刷新能力列表", exact: true }).click();
   await expect.poll(() => refreshPosts).toBe(1);
   await expect(hub.getByText("刷新未完全完成", { exact: true })).toBeVisible();
   await expect(hub).toContainText("新增 2 · 更新 1 · 未变化 8 · 失败来源 1");
@@ -182,6 +189,7 @@ test("Provider Hub refresh summary, source details, real fixture install, and na
 test("online Provider configuration is explicit and credentials never render", async ({ page }) => {
   const secret = "provider-hub-browser-secret";
   let configurationPuts = 0;
+  let submittedModel = "";
   let testPosts = 0;
   page.on("request", (request) => {
     if (request.method() === "PUT" && request.url().includes("/api/providers/hub/online/openai_images/configuration")) configurationPuts += 1;
@@ -189,15 +197,20 @@ test("online Provider configuration is explicit and credentials never render", a
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Provider Hub", exact: true }).first().click();
+  await page.getByRole("button", { name: "教学能力中心", exact: true }).first().click();
   const hub = page.locator("dialog.provider-hub-dialog[open]");
   const online = hub.locator(".provider-hub-card").filter({ hasText: "在线高质量生图" }).first();
   await online.getByRole("button", { name: "配置", exact: true }).click();
   const form = hub.locator(".provider-hub-config");
   await expect(form).toBeVisible();
+  await expect(form.getByLabel("自定义服务地址（Endpoint）", { exact: true })).toBeHidden();
+  await form.getByText("高级设置", { exact: true }).click();
+  await expect(form.getByLabel("自定义模型名称", { exact: true })).toHaveValue("gpt-image-2");
+  await expect(form.getByLabel("自定义模型名称", { exact: true })).not.toHaveValue("placeholder-svg");
   await expect.poll(() => configurationPuts).toBe(0);
   await page.route("**/api/providers/hub/online/openai_images/configuration", async (route) => {
     if (route.request().method() !== "PUT") return route.continue();
+    submittedModel = route.request().postDataJSON().model;
     await route.fulfill({
       status: 422,
       contentType: "application/json",
@@ -213,7 +226,8 @@ test("online Provider configuration is explicit and credentials never render", a
   await form.getByLabel("API Key", { exact: true }).fill(secret);
   await form.getByRole("button", { name: "保存配置", exact: true }).click();
   await expect.poll(() => configurationPuts).toBe(1);
-  await expect(hub.getByRole("alert")).toHaveText("The submitted request is invalid.");
+  await expect.poll(() => submittedModel).toBe("gpt-image-2");
+  await expect(hub.getByRole("alert")).toHaveText("提交的信息格式不正确，请检查标记的字段。 有一项内容格式不正确。");
   await expect(hub.getByRole("alert")).not.toContainText(secret);
   await page.unroute("**/api/providers/hub/online/openai_images/configuration");
   await form.getByRole("button", { name: "保存配置", exact: true }).click();

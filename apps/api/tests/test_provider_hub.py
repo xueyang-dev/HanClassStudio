@@ -16,6 +16,7 @@ import hcs_api.provider_hub as hub
 import hcs_api.provider_registry as registry
 import hcs_api.storage as storage
 from hcs_api.main import app
+from hcs_api.models import ImageProviderSettings, ProviderSettings, SafeValidationErrorEnvelope
 
 
 def _isolate(tmp_path: Path, monkeypatch) -> TestClient:
@@ -180,6 +181,8 @@ def test_install_can_be_cancelled_and_cleans_temporary_files(tmp_path, monkeypat
     started = response["task"]
     cancelled = client.post(f"/api/providers/hub/install-tasks/{started['task_id']}/cancel")
     assert cancelled.status_code == 200
+    assert cancelled.json()["task"]["cancel_requested"] is True
+    assert "cancel_install" in cancelled.json()["provider"]["available_actions"]
     task = _wait_install(client, started["task_id"])
     assert task["state"] == "cancelled"
     assert task["error"]["code"] == "cancelled"
@@ -292,6 +295,33 @@ def test_request_validation_never_echoes_sensitive_input_or_logs(
     assert marker not in caplog.text
 
 
+def test_openapi_declares_and_runtime_returns_safe_validation_envelope(tmp_path, monkeypatch, caplog) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    spec = client.get("/openapi.json").json()
+    expected_ref = "#/components/schemas/SafeValidationErrorEnvelope"
+    declared_422 = []
+    for path, methods in spec["paths"].items():
+        for method, operation in methods.items():
+            response = operation.get("responses", {}).get("422")
+            if response:
+                declared_422.append((method.upper(), path))
+                assert response["content"]["application/json"]["schema"]["$ref"] == expected_ref
+    assert ("PUT", "/api/providers/hub/online/{provider_id}/configuration") in declared_422
+
+    marker = "OPENAPI_VALIDATION_SECRET_MARKER"
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):
+        response = client.put(
+            "/api/providers/hub/online/openai_images/configuration",
+            json={"api_key": marker + "\n", "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
+        )
+    assert response.status_code == 422
+    SafeValidationErrorEnvelope.model_validate(response.json())
+    assert response.json()["error"]["code"] == "request_validation_failed"
+    assert marker not in response.text
+    assert marker not in caplog.text
+
+
 def test_nested_validation_errors_drop_input_message_and_context() -> None:
     marker = "NESTED_SECRET_MARKER"
     fields = main._safe_request_validation_fields([
@@ -391,6 +421,71 @@ def test_online_configuration_is_explicit_redacted_testable_and_deletable(tmp_pa
     settings = storage.read_provider_settings()
     assert settings.image.api_key == ""
     assert secret not in client.get("/api/providers/hub/online/openai_images/configuration").text
+
+
+@pytest.mark.parametrize(
+    ("image", "expected_endpoint", "expected_model", "key_present"),
+    [
+        (ImageProviderSettings(), "https://api.openai.com/v1", "gpt-image-2", False),
+        (ImageProviderSettings(provider="placeholder", model="placeholder-svg", api_key="old-placeholder-key"), "https://api.openai.com/v1", "gpt-image-2", False),
+        (ImageProviderSettings(provider="other_online", endpoint_url="https://api.openai.com/v1/custom", model="other-model", api_key="other-key"), "https://api.openai.com/v1", "gpt-image-2", False),
+        (ImageProviderSettings(provider="openai_images", endpoint_url="https://api.openai.com/v1/custom", model="gpt-image-2", api_key="saved-key"), "https://api.openai.com/v1/custom", "gpt-image-2", True),
+        (ImageProviderSettings(provider="openai_images", endpoint_url="https://api.openai.com/v1/custom", model="teacher-image-v2", api_key="saved-key"), "https://api.openai.com/v1/custom", "teacher-image-v2", True),
+    ],
+)
+def test_online_config_only_inherits_matching_provider(
+    tmp_path, monkeypatch, image: ImageProviderSettings, expected_endpoint: str, expected_model: str, key_present: bool
+) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    storage.write_provider_settings(ProviderSettings(image=image))
+    config = client.get("/api/providers/hub/online/openai_images/configuration")
+    assert config.status_code == 200
+    assert config.json()["endpoint"] == expected_endpoint
+    assert config.json()["model"] == expected_model
+    assert config.json()["api_key_present"] is key_present
+
+
+def test_online_config_with_missing_provider_type_uses_real_defaults(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    storage.ensure_runtime()
+    storage.PROVIDER_SETTINGS_PATH.write_text(json.dumps({"image": {"model": "placeholder-svg"}}), encoding="utf-8")
+    config = client.get("/api/providers/hub/online/openai_images/configuration")
+    assert config.json()["model"] == "gpt-image-2"
+    assert config.json()["endpoint"] == "https://api.openai.com/v1"
+    assert config.json()["api_key_present"] is False
+
+
+def test_online_config_normalizes_empty_model_and_rejects_placeholder(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    empty = client.put(
+        "/api/providers/hub/online/openai_images/configuration",
+        json={"api_key": "valid-key", "endpoint": "https://api.openai.com/v1", "model": "  "},
+    )
+    assert empty.status_code == 200
+    assert empty.json()["model"] == "gpt-image-2"
+
+    rejected = client.put(
+        "/api/providers/hub/online/openai_images/configuration",
+        json={"api_key": "valid-key", "endpoint": "https://api.openai.com/v1", "model": "placeholder-svg"},
+    )
+    assert rejected.status_code == 422
+    assert storage.read_provider_settings().image.model == "gpt-image-2"
+
+
+def test_connection_never_uses_placeholder_model(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    storage.write_provider_settings(ProviderSettings(image=ImageProviderSettings(
+        provider="openai_images",
+        endpoint_url="https://api.openai.com/v1",
+        api_key="valid-key",
+        model="placeholder-svg",
+    )))
+    checked: list[str] = []
+    monkeypatch.setattr(hub, "CONNECTION_CHECKER", lambda _endpoint, _api_key, model: checked.append(model))
+    response = client.post("/api/providers/hub/online/openai_images/test")
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "health_check_failed"
+    assert checked == []
 
 
 def test_connection_failure_is_classified_and_never_marks_ready(tmp_path, monkeypatch) -> None:
