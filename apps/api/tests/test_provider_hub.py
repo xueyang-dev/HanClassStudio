@@ -138,6 +138,7 @@ def test_fixture_install_reports_real_task_and_health_state(tmp_path, monkeypatc
     assert local["installed"] is True
     assert local["ready"] is True
     assert "check_health" in local["available_actions"]
+    assert "cancel_install" not in local["available_actions"]
 
 
 def test_checksum_mismatch_fails_and_leaves_no_installed_result(tmp_path, monkeypatch) -> None:
@@ -213,6 +214,36 @@ def test_install_start_returns_authoritative_actions_and_rejects_duplicates(tmp_
     assert "cancel_install" not in local["available_actions"]
 
 
+def test_repair_start_replaces_repair_action_and_rejects_duplicates(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "_INSTALL_STEP_DELAY_SECONDS", 0.08)
+    hub._update_hub_state("local_image", {"installed": True, "ready": False})
+    before = next(
+        item for item in client.get("/api/providers/hub").json()["providers"]
+        if item["id"] == "hcs.local-image-basic"
+    )
+    assert "repair" in before["available_actions"]
+
+    started = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
+    assert started.status_code == 200
+    body = started.json()
+    assert "cancel_install" in body["provider"]["available_actions"]
+    assert "repair" not in body["provider"]["available_actions"]
+    duplicate = client.post("/api/providers/hub/packages/hcs.local-image-basic/install")
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "task_conflict"
+
+    task_id = body["task"]["task_id"]
+    assert client.post(f"/api/providers/hub/install-tasks/{task_id}/cancel").status_code == 200
+    assert _wait_install(client, task_id)["state"] == "cancelled"
+    after = next(
+        item for item in client.get("/api/providers/hub").json()["providers"]
+        if item["id"] == "hcs.local-image-basic"
+    )
+    assert "repair" in after["available_actions"]
+    assert "cancel_install" not in after["available_actions"]
+
+
 @pytest.mark.parametrize(
     ("marker", "payload"),
     [
@@ -221,12 +252,24 @@ def test_install_start_returns_authoritative_actions_and_rejects_duplicates(tmp_
             {"api_key": "CONTROL_SECRET_MARKER\r\n", "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
         ),
         (
+            "NUL_SECRET_MARKER",
+            {"api_key": "NUL_SECRET_MARKER\x00", "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
+        ),
+        (
             "OVERSIZED_SECRET_MARKER",
             {"api_key": "OVERSIZED_SECRET_MARKER" + "x" * 4096, "endpoint": "https://api.openai.com/v1", "model": "gpt-image-2"},
         ),
         (
             "ENDPOINT_SECRET_MARKER",
             {"api_key": "valid-key", "endpoint": "https://api.openai.com/v1?token=ENDPOINT_SECRET_MARKER", "model": "gpt-image-2"},
+        ),
+        (
+            "API_KEY_QUERY_MARKER",
+            {"api_key": "valid-key", "endpoint": "https://api.openai.com/v1?api_key=API_KEY_QUERY_MARKER", "model": "gpt-image-2"},
+        ),
+        (
+            "ENDPOINT_USERINFO_MARKER",
+            {"api_key": "valid-key", "endpoint": "https://user:ENDPOINT_USERINFO_MARKER@api.openai.com/v1", "model": "gpt-image-2"},
         ),
     ],
 )
@@ -267,6 +310,15 @@ def test_nested_validation_errors_drop_input_message_and_context() -> None:
         "message": "The value is too long.",
     }]
     assert marker not in serialized
+
+    authorization_marker = "AUTHORIZATION_HEADER_MARKER"
+    header_fields = main._safe_request_validation_fields([{
+        "loc": ("header", "authorization"),
+        "type": "value_error",
+        "msg": authorization_marker,
+        "input": f"Bearer {authorization_marker}",
+    }])
+    assert authorization_marker not in json.dumps(header_fields)
 
 
 def test_explicit_refresh_task_summarizes_success_and_retains_snapshot_on_failure(tmp_path, monkeypatch) -> None:
