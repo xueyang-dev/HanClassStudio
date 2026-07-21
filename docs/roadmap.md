@@ -60,6 +60,17 @@ Raster illustration status:
 - opt-in raster assets survive the local HTML, editable PPTX, and ZIP export paths without retaining provider URLs;
 - raster remains disabled by default and still requires teacher review and a real lesson pilot before any cutover decision.
 
+Provider Hub media capability status:
+
+- Phase 2A now has a backend-only `TeachingVideoPlan` → controlled compiled
+  execution plan → `VerifiedVideoArtifact` contract;
+- a deterministic six-segment café-dialogue fixture validates multiple visuals,
+  independent audio, bilingual WebVTT and burn-in subtitles through real local
+  FFmpeg/ffprobe execution;
+- the capability does not connect video request planning to automatic execution,
+  mutate asset manifests, add UI, install FFmpeg, or claim classroom readiness;
+- see [Controlled FFmpeg Teaching Video](ffmpeg-teaching-video-phase-2a.md).
+
 ## Artifact Ownership
 
 ### Pedagogical authoritative
