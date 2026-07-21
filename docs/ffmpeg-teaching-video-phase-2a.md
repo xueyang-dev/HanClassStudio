@@ -139,6 +139,7 @@ Subtitle safety is deliberately narrow:
 
 - CRLF and CR are normalized to LF;
 - invalid control characters and excessive line/text sizes are rejected;
+- blank cue lines and the WebVTT timing delimiter are rejected inside text;
 - cue ranges must be positive, ordered, and non-overlapping;
 - WebVTT text is HTML-escaped;
 - output size is capped at 128 KiB;

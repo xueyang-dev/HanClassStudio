@@ -19,7 +19,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
 
 RECIPE_ID = "hcs_teaching_video_720p_v1"
@@ -120,12 +120,18 @@ class TeachingVideoSegment(BaseModel):
 
     @field_validator("chinese", "translation")
     @classmethod
-    def _safe_subtitle_text(cls, value: str | None) -> str | None:
+    def _safe_subtitle_text(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
             return None
         normalized = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not normalized:
+            if info.field_name == "translation":
+                return None
+            raise ValueError("Chinese subtitle text cannot be blank")
         if _contains_forbidden_control(normalized):
             raise ValueError("subtitle text contains a forbidden control character")
+        if _contains_webvtt_structure(normalized):
+            raise ValueError("subtitle text contains forbidden WebVTT structure")
         if len(normalized.splitlines()) > 8:
             raise ValueError("subtitle text has too many lines")
         return normalized
@@ -763,6 +769,8 @@ def _webvtt_bytes(cues: list[CompiledSubtitleCue]) -> bytes:
             raise FfmpegVideoError("subtitle_validation_failed", "subtitle cue timing is invalid")
         if any(_contains_forbidden_control(value) for value in (cue.speaker_id, cue.chinese, cue.translation or "")):
             raise FfmpegVideoError("subtitle_validation_failed", "subtitle text contains a forbidden control character")
+        if any(_contains_webvtt_structure(value) for value in (cue.chinese, cue.translation or "")):
+            raise FfmpegVideoError("subtitle_validation_failed", "subtitle text contains forbidden WebVTT structure")
         text_lines = [f"{html.escape(cue.speaker_id)}：{html.escape(cue.chinese)}"]
         if cue.translation:
             text_lines.append(html.escape(cue.translation))
@@ -802,6 +810,10 @@ def _contains_forbidden_control(value: str) -> bool:
         unicodedata.category(character) in {"Cc", "Cs"} and character not in {"\n", "\t"}
         for character in value
     )
+
+
+def _contains_webvtt_structure(value: str) -> bool:
+    return "-->" in value or any(not line.strip() for line in value.splitlines())
 
 
 def _compiled_plan_hash(plan: CompiledVideoExecutionPlan) -> str:

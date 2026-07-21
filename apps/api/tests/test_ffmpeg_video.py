@@ -192,6 +192,9 @@ def test_subtitle_text_normalizes_newlines_and_rejects_control_characters() -> N
     payload["translation"] = "unsafe\u0085text"
     with pytest.raises(ValidationError, match="control character"):
         TeachingVideoSegment.model_validate(payload)
+    payload["translation"] = "unsafe\n\n00:00:00.000 --> 00:00:01.000"
+    with pytest.raises(ValidationError, match="WebVTT structure"):
+        TeachingVideoSegment.model_validate(payload)
 
 
 def test_compiler_calculates_timeline_subtitles_fit_and_stable_hash(
