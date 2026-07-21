@@ -39,6 +39,8 @@ _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _CONTROL_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 _AUDIO_SUFFIXES = {".aac", ".m4a", ".mp3", ".ogg", ".wav"}
+_REQUIRED_DECODERS = ("png", "mjpeg", "webp", "aac", "mp3", "vorbis", "opus", "pcm_s16le")
+_SAFE_FONT_FAMILY = re.compile(r"^[\w .-]{1,100}$", re.UNICODE)
 
 VideoErrorCode = Literal[
     "invalid_video_plan",
@@ -66,6 +68,17 @@ class FfmpegVideoError(RuntimeError):
         self.code = code
 
 
+class SubtitleFontCapability(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    family: str
+    file: str
+    file_name: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selection: Literal["configured", "fontconfig"]
+    redistribution_status: Literal["not_bundled_license_review_required"] = "not_bundled_license_review_required"
+
+
 class FfmpegCapability(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -76,6 +89,8 @@ class FfmpegCapability(BaseModel):
     probe_executable: str | None = None
     supported_operations: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
+    verified_decoders: list[str] = Field(default_factory=list)
+    subtitle_font: SubtitleFontCapability | None = None
 
 
 class TeachingSubtitleSpec(BaseModel):
@@ -258,6 +273,7 @@ class VideoArtifactProvenance(BaseModel):
     actual_duration_seconds: float
     canvas: dict[str, int]
     encoder_verification: dict[str, str | int]
+    subtitle_font: SubtitleFontCapability
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -295,10 +311,11 @@ def probe_ffmpeg() -> FfmpegCapability:
         version_result = _run([ffmpeg, "-hide_banner", "-version"], timeout=5)
         probe_version_result = _run([ffprobe, "-hide_banner", "-version"], timeout=5)
         encoder_result = _run([ffmpeg, "-hide_banner", "-encoders"], timeout=5)
+        decoder_result = _run([ffmpeg, "-hide_banner", "-decoders"], timeout=5)
         filter_result = _run([ffmpeg, "-hide_banner", "-filters"], timeout=5)
     except (OSError, subprocess.SubprocessError):
         return FfmpegCapability(available=False, executable=ffmpeg, probe_executable=ffprobe, blockers=["ffmpeg_probe_failed"])
-    if any(result.returncode != 0 for result in (version_result, probe_version_result, encoder_result, filter_result)):
+    if any(result.returncode != 0 for result in (version_result, probe_version_result, encoder_result, decoder_result, filter_result)):
         return FfmpegCapability(available=False, executable=ffmpeg, probe_executable=ffprobe, blockers=["ffmpeg_probe_failed"])
     if "libx264" not in encoder_result.stdout:
         blockers.append("h264_encoder_missing")
@@ -306,6 +323,11 @@ def probe_ffmpeg() -> FfmpegCapability:
         blockers.append("aac_encoder_missing")
     if not re.search(r"^\s*\.\.\.\s+subtitles\s", filter_result.stdout, re.MULTILINE):
         blockers.append("subtitles_filter_missing")
+    verified_decoders = [name for name in _REQUIRED_DECODERS if _has_codec(decoder_result.stdout, name)]
+    blockers.extend(f"decoder_missing:{name}" for name in _REQUIRED_DECODERS if name not in verified_decoders)
+    subtitle_font, font_blocker = _probe_subtitle_font()
+    if font_blocker:
+        blockers.append(font_blocker)
     return FfmpegCapability(
         available=not blockers,
         ffmpeg_version=_version(version_result.stdout, "ffmpeg"),
@@ -314,6 +336,8 @@ def probe_ffmpeg() -> FfmpegCapability:
         probe_executable=ffprobe,
         supported_operations=["teaching_dialogue_video_720p_v1"] if not blockers else [],
         blockers=blockers,
+        verified_decoders=verified_decoders,
+        subtitle_font=subtitle_font,
     )
 
 
@@ -440,6 +464,7 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
         or not capability.probe_executable
         or not capability.ffmpeg_version
         or not capability.ffprobe_version
+        or not capability.subtitle_font
     ):
         raise FfmpegVideoError("ffmpeg_failed", ", ".join(capability.blockers) or "FFmpeg is unavailable")
 
@@ -460,6 +485,7 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
     try:
         with tempfile.TemporaryDirectory(prefix=f".{plan.video_id}-", dir=output_dir) as temp_name:
             workdir = Path(temp_name)
+            _stage_subtitle_font(workdir, capability.subtitle_font)
             copied = _copy_verified_inputs(project_root, workdir, plan)
             segment_files: list[str] = []
             for index, segment in enumerate(plan.segments):
@@ -477,7 +503,10 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
             _verify_webvtt(subtitle_stage, len(plan.subtitle_cues))
             _run_ffmpeg_checked(capability.executable, [
                 "-i", "joined.mp4", "-map", "0:v:0", "-map", "0:a:0",
-                "-vf", "subtitles=filename=dialogue.vtt:charenc=UTF-8",
+                "-vf", (
+                    "subtitles=filename=dialogue.vtt:fontsdir=fonts:charenc=UTF-8:"
+                    f"force_style='FontName={capability.subtitle_font.family}'"
+                ),
                 "-r", str(FRAME_RATE), "-c:v", "libx264", "-preset", "medium", "-crf", "20",
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-ar", str(AUDIO_SAMPLE_RATE),
                 "-ac", "2", "-map_metadata", "-1", "-movflags", "+faststart", "verified.mp4",
@@ -510,6 +539,7 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
                 "pixel_format": metadata["pixel_format"],
                 "audio_sample_rate": metadata["audio_sample_rate"],
             },
+            subtitle_font=capability.subtitle_font,
         )
         return VerifiedVideoArtifact(
             artifact_id=plan.video_id,
@@ -637,6 +667,22 @@ def _copy_verified_inputs(
             raise FfmpegVideoError("unsafe_path", f"source asset changed after compilation for segment {segment.segment_id}")
         copied.append((visual_name, audio_name))
     return copied
+
+
+def _stage_subtitle_font(workdir: Path, font: SubtitleFontCapability) -> None:
+    source = Path(font.file)
+    suffix = source.suffix.lower()
+    if suffix not in {".otf", ".ttf", ".ttc"}:
+        raise FfmpegVideoError("ffmpeg_failed", "selected CJK subtitle font has an unsupported file type")
+    font_dir = workdir / "fonts"
+    font_dir.mkdir()
+    staged = font_dir / f"subtitle-font{suffix}"
+    try:
+        shutil.copyfile(source, staged)
+    except OSError as exc:
+        raise FfmpegVideoError("ffmpeg_failed", "selected CJK subtitle font cannot be staged") from exc
+    if _sha256(staged) != font.sha256:
+        raise FfmpegVideoError("ffmpeg_failed", "selected CJK subtitle font changed after capability probing")
 
 
 def _validate_compiled_plan(plan: CompiledVideoExecutionPlan) -> None:
@@ -829,6 +875,50 @@ def _version(output: str, executable: str) -> str:
     first_line = output.splitlines()[0] if output else ""
     match = re.search(rf"{executable} version\s+([^\s]+)", first_line)
     return match.group(1) if match else "unknown"
+
+
+def _has_codec(output: str, codec: str) -> bool:
+    return bool(re.search(rf"^\s*\S{{6}}\s+{re.escape(codec)}\s", output, re.MULTILINE))
+
+
+def _probe_subtitle_font() -> tuple[SubtitleFontCapability | None, str | None]:
+    configured_path = os.environ.get("HCS_CJK_FONT_PATH", "").strip()
+    configured_family = os.environ.get("HCS_CJK_FONT_FAMILY", "").strip()
+    if configured_path:
+        font_path = Path(configured_path).expanduser()
+        family = configured_family or font_path.stem
+        selection: Literal["configured", "fontconfig"] = "configured"
+    else:
+        fontconfig = shutil.which("fc-match")
+        if not fontconfig:
+            return None, "cjk_font_probe_unavailable"
+        try:
+            result = _run(
+                [fontconfig, "--format", "%{family[0]}|%{file}\n", ":charset=4e2d"],
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None, "cjk_font_probe_failed"
+        if result.returncode != 0 or not result.stdout.strip() or "|" not in result.stdout:
+            return None, "cjk_font_not_found"
+        family, raw_path = result.stdout.splitlines()[0].split("|", 1)
+        font_path = Path(raw_path)
+        selection = "fontconfig"
+    if not family or not _SAFE_FONT_FAMILY.fullmatch(family):
+        return None, "cjk_font_family_unsupported"
+    try:
+        resolved = font_path.resolve(strict=True)
+    except (OSError, FileNotFoundError):
+        return None, "cjk_font_not_found"
+    if not resolved.is_file() or resolved.stat().st_size <= 0:
+        return None, "cjk_font_not_found"
+    return SubtitleFontCapability(
+        family=family,
+        file=str(resolved),
+        file_name=resolved.name,
+        sha256=_sha256(resolved),
+        selection=selection,
+    ), None
 
 
 def _safe_process_detail(stderr: str, workdir: Path) -> str:

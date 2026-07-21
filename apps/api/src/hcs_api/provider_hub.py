@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import storage
+from .ffmpeg_video import probe_ffmpeg
 from .models import ImageProviderSettings
 from .provider_registry import (
     ProviderRegistryError,
@@ -574,17 +575,19 @@ def _local_package_item(hardware: HardwareCapability) -> ProviderHubItem:
 
 
 def _video_package_item(hardware: HardwareCapability) -> ProviderHubItem:
-    ffmpeg = shutil.which("ffmpeg")
-    ready = bool(ffmpeg)
+    capability = probe_ffmpeg()
+    installed = bool(capability.executable and capability.probe_executable)
+    ready = capability.available
     return ProviderHubItem(
         id=_VIDEO_PACKAGE_ID, provider_id="ffmpeg_basic", name="教学视频基础版",
         description="使用图片、字幕、TTS 时间轴、简单转场与 FFmpeg 合成教学视频。",
         provider_type="offline", capabilities=["teaching_video", "subtitle_timeline", "ffmpeg_composition"],
-        trust_level="official_verified", registry_source="builtin", status="ready" if ready else "unavailable",
-        installed=ready, configured=ready, ready=ready, compatible=hardware.status,
-        available_actions=["view_details", "open_project", "check_health"] if ready else ["view_details", "open_project"],
+        trust_level="official_verified", registry_source="builtin",
+        status="ready" if ready else ("degraded" if installed else "unavailable"),
+        installed=installed, configured=installed, ready=ready, compatible=hardware.status,
+        available_actions=["view_details", "open_project", "check_health"] if installed else ["view_details", "open_project"],
         recommended=True, requires_download=False, runs_locally=True, uploads_data=False,
-        publisher="FFmpeg contributors", source_links=SourceLinks(
+        version=capability.ffmpeg_version, publisher="FFmpeg contributors", source_links=SourceLinks(
             official_website_url="https://ffmpeg.org/", project_url="https://github.com/FFmpeg/FFmpeg",
             license_url="https://ffmpeg.org/legal.html",
         ),
@@ -593,8 +596,9 @@ def _video_package_item(hardware: HardwareCapability) -> ProviderHubItem:
             id=_VIDEO_PACKAGE_ID, name="教学视频基础版", description="非生成式视频合成能力。",
             runtime=RuntimeSpec(id="ffmpeg", name="FFmpeg", version="system", execution="local_process"),
             workflow_packs=[WorkflowPackSpec(id="teaching-video-basic-v1", name="基础教学视频合成", version="1.0.0", capabilities=["subtitle_timeline", "simple_transitions"])],
-            healthcheck="ffmpeg executable availability",
+            healthcheck="real FFmpeg/ffprobe encoder, decoder, subtitle-filter, and CJK-font capability probe",
         ),
+        technical_error=None if ready else {"code": "capability_probe_failed", "blockers": capability.blockers},
     )
 
 

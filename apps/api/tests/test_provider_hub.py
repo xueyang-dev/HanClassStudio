@@ -15,6 +15,7 @@ import hcs_api.main as main
 import hcs_api.provider_hub as hub
 import hcs_api.provider_registry as registry
 import hcs_api.storage as storage
+from hcs_api.ffmpeg_video import FfmpegCapability
 from hcs_api.main import app
 from hcs_api.models import ImageProviderSettings, ProviderSettings, SafeValidationErrorEnvelope
 
@@ -78,6 +79,25 @@ def test_hub_catalog_separates_domain_layers_and_actions(tmp_path, monkeypatch) 
     assert online["status"] == "not_configured"
     assert "test_connection" not in online["available_actions"]
     assert online["source_links"]["api_application_url"].startswith("https://")
+
+
+def test_video_package_uses_full_capability_probe_not_executable_presence(monkeypatch) -> None:
+    monkeypatch.setattr(hub, "probe_ffmpeg", lambda: FfmpegCapability(
+        available=False,
+        executable="/usr/local/bin/ffmpeg",
+        probe_executable="/usr/local/bin/ffprobe",
+        blockers=["subtitles_filter_missing", "decoder_missing:webp", "cjk_font_not_found"],
+    ))
+
+    item = hub._video_package_item(hub.detect_hardware())
+
+    assert item.installed is True
+    assert item.ready is False
+    assert item.status == "degraded"
+    assert item.technical_error == {
+        "code": "capability_probe_failed",
+        "blockers": ["subtitles_filter_missing", "decoder_missing:webp", "cjk_font_not_found"],
+    }
 
 
 def test_hub_read_is_zero_network_and_hardware_failure_degrades(tmp_path, monkeypatch) -> None:

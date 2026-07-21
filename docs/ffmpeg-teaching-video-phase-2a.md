@@ -5,15 +5,21 @@ assets into a small dialogue video. It is a media compiler, not a video editor
 and not a pedagogical decision maker.
 
 ```text
-TeachingVideoPlan
-→ validate asset references and probe real media
-→ CompiledVideoExecutionPlan
+TeachingVideoPlan draft
+→ TeachingVideoProposal
+→ TeacherMediaApproval(plan_sha256)
+→ VideoGenerationRequest
+→ recompile and compare plan_sha256
 → fixed FFmpeg execution and ffprobe verification
 → VerifiedVideoArtifact + WebVTT
+→ GeneratedVideoAssetRecord in Asset Manifest
 ```
 
 The existing provider-neutral `video_generation_requests.json` remains a
-planning artifact. It is not automatically executed by this capability.
+planning artifact. It is not automatically executed by this capability. There
+is deliberately no Lesson Plan → automatic video edge. The project-facing
+entry point is `execute_video_generation_request`; the lower-level compiler and
+executor do not register project assets by themselves.
 
 ## Domain contracts
 
@@ -80,6 +86,27 @@ The compiled plan has stable input ordering and two hashes:
 The executor rechecks the plan hash, timeline, provenance ordering, asset paths,
 and source hashes before running.
 
+### Proposal, approval, and request
+
+`TeachingVideoProposal` stores the reviewable `TeachingVideoPlan`, both plan
+hashes, and at least one teaching-unit, activity, or media-requirement ID.
+`TeacherMediaApproval` records teacher identity, time, notes, proposal ID, and
+the exact approved `plan_sha256`. `VideoGenerationRequest` is an explicit
+request object; creating it neither grants approval nor starts generation.
+
+Immediately before execution the workflow recompiles the proposal from current
+files. It runs only when all of these remain true:
+
+- approval status is `approved`;
+- approval and request identify the same proposal;
+- proposal `plan_sha256`, approved `plan_sha256`, and newly compiled
+  `plan_sha256` are identical.
+
+Changing a line, translation, subtitle option, image, audio file, input path,
+or recipe changes the compiled hash. The returned approval evidence is marked
+`approval_status=stale`, a `VideoGenerationFailureRecord` is persisted, and
+FFmpeg is not started. The teacher must approve the new proposal hash.
+
 ### VerifiedVideoArtifact
 
 Successful execution returns the video and subtitle paths, recipe, actual
@@ -94,8 +121,31 @@ duration, canvas, codecs, output hashes, plan hash, warnings, and full
 - output MP4 and WebVTT SHA-256;
 - actual duration and 1280×720 canvas;
 - verified video codec, audio codec, pixel format, and audio sample rate.
+- selected Chinese subtitle font family, source filename, selection method,
+  redistribution status, and font-file SHA-256.
 
 Stable provenance never uses an absolute machine path as an asset identity.
+
+### Asset Manifest registration and deduplication
+
+After verification, the workflow writes a provenance JSON file and appends one
+video `AssetFile` with a nested `GeneratedVideoAssetRecord`. The record includes
+the stable video asset ID, MP4 and WebVTT relative paths, plan/artifact/subtitle
+hashes, every input image/audio asset ID and hash, recipe ID/version, duration,
+dimensions, codecs, subtitle font identity, provenance reference/hash, teacher
+approval, generation status, deduplication key, and teaching context IDs.
+
+The deduplication key covers the compiled plan hash, ordered input asset
+IDs/hashes, and recipe ID/version. An exact valid match returns
+`generation_status=reused` without adding another manifest entry. Reuse checks
+the MP4, WebVTT, and provenance file hashes. A missing or corrupt match returns
+`regeneration_required`; it is never silently replaced or copied under a new
+name. A stable asset-ID collision also fails closed.
+
+The provenance file is written first and the Asset Manifest is replaced
+atomically. If registration fails after generation, the new MP4, WebVTT, and
+provenance file are removed. Structured failures are retained in
+`assets/data/video_generation_failures.json` on a best-effort basis.
 
 ## Duration and timeline
 
@@ -217,6 +267,17 @@ injected command, or unnecessary absolute path.
 - Executables are resolved locally with `shutil.which`; callers cannot select
   them.
 - FFmpeg must expose `libx264`, AAC, and the libass-backed `subtitles` filter.
+- Availability probing also requires `ffprobe` and the PNG, MJPEG, WebP, AAC,
+  MP3, Vorbis, Opus, and PCM decoders used by the accepted input extensions.
+- Chinese subtitle burn-in requires either `HCS_CJK_FONT_PATH` (optionally with
+  `HCS_CJK_FONT_FAMILY`) or a CJK-capable font selected by `fontconfig`. Missing
+  font discovery, file, or safe family name produces a stable capability
+  blocker instead of tofu glyphs.
+- The selected font is hashed, copied into the private work directory, supplied
+  to libass through `fontsdir`, and recorded in provenance. It is not bundled
+  into the project; its status is recorded as
+  `not_bundled_license_review_required`. Distributing a font file in a future
+  capability package requires an explicit license review.
 - Images are limited to 25 MiB each, audio to 50 MiB each, all unique inputs to
   200 MiB, subtitles to 128 KiB, and plans to 24 segments / 300 seconds.
 - Inputs must resolve inside `assets/images/` or `assets/audio/`; absolute paths,
@@ -251,17 +312,19 @@ Run the focused and complete backend checks from the repository root:
 
 ```bash
 uv run --project apps/api pytest apps/api/tests/test_ffmpeg_video.py -q
+uv run --project apps/api pytest apps/api/tests/test_video_generation.py -q
 uv run --project apps/api pytest apps/api/tests -q
 ```
 
-If FFmpeg, ffprobe, required encoders, or the subtitle filter is unavailable,
-real integration cases skip with the blocker named. A skip is not a successful
-execution claim.
+If FFmpeg, ffprobe, a required encoder/decoder/filter, or a usable CJK font is
+unavailable, real integration cases skip with the blocker named. A skip is not
+a successful execution claim. Provider Hub must use this full capability probe;
+`ffmpeg -version` alone does not satisfy availability.
 
 ## Not implemented
 
-Phase 2A does not implement UI, Provider Hub UI changes, asset-manifest
-integration, lesson-plan automatic execution, external TTS, AI image generation,
-lip synchronization, a multitrack editor, arbitrary filters, custom resolution,
-real Provider installation, FFmpeg installation, ZIP/TAR input, ComfyUI, or
-cross-platform byte-identical MP4 output.
+Phase 2A does not implement UI, Provider Hub UI changes, lesson-plan automatic
+execution, an explicit destructive regeneration action, external TTS, AI image
+generation, lip synchronization, a multitrack editor, arbitrary filters, custom
+resolution, real Provider installation, FFmpeg installation, ZIP/TAR input,
+ComfyUI, or cross-platform byte-identical MP4 output.

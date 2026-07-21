@@ -561,6 +561,93 @@ class AssetReviewEvent(BaseModel):
     occurred_at: str = Field(default_factory=utc_now_iso)
 
 
+VideoApprovalStatus = Literal["approved", "stale", "revoked"]
+
+
+class TeacherMediaApproval(BaseModel):
+    """Teacher evidence bound to one immutable compiled video plan hash."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approval_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    proposal_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    approved_plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    teacher_id: str = Field(min_length=1, max_length=200)
+    approval_status: VideoApprovalStatus = "approved"
+    approved_at: str = Field(default_factory=utc_now_iso)
+    notes: str = Field(default="", max_length=2000)
+    stale_reason: str | None = Field(default=None, max_length=500)
+
+
+class VideoInputAssetRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    segment_id: str
+    asset_id: str
+    kind: Literal["image", "audio"]
+    path: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class GeneratedVideoAssetRecord(BaseModel):
+    """Manifest-owned record for one verified teaching-video artifact."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generation_status: Literal["generated", "reused"]
+    asset_id: str
+    video_path: str
+    subtitle_path: str
+    plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    subtitle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    input_assets: list[VideoInputAssetRecord] = Field(min_length=2)
+    recipe_id: str
+    recipe_version: int = Field(ge=1)
+    duration_seconds: float = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    video_codec: str
+    audio_codec: str
+    subtitle_font_family: str
+    subtitle_font_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    provenance_ref: str
+    provenance_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    teacher_approval: TeacherMediaApproval
+    deduplication_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    teaching_unit_id: str | None = None
+    activity_id: str | None = None
+    media_requirement_id: str | None = None
+    registered_at: str = Field(default_factory=utc_now_iso)
+
+
+VideoGenerationFailureCode = Literal[
+    "approval_required",
+    "approval_stale",
+    "invalid_plan",
+    "capability_unavailable",
+    "generation_failed",
+    "registration_failed",
+    "regeneration_required",
+    "asset_id_conflict",
+]
+
+
+class VideoGenerationFailureRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generation_status: Literal["failed"] = "failed"
+    request_id: str
+    proposal_id: str
+    plan_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    code: VideoGenerationFailureCode
+    stage: Literal["approval", "preflight", "generation", "registration"]
+    message: str
+    recoverable: bool = True
+    teacher_approval: TeacherMediaApproval | None = None
+    failed_at: str = Field(default_factory=utc_now_iso)
+
+
 class AssetFile(BaseModel):
     id: str
     kind: Literal["image", "audio", "video", "font", "data"]
@@ -584,6 +671,7 @@ class AssetFile(BaseModel):
     request_fingerprint: str | None = None
     presentation_theme_id: str | None = None
     presentation_theme_version: str | None = None
+    video_generation: GeneratedVideoAssetRecord | None = None
 
 
 class MediaReviewAction(BaseModel):

@@ -53,7 +53,7 @@ The first featured entries are:
 
 | ID | Type | Phase-1 behavior |
 | --- | --- | --- |
-| `hcs.teaching-video-basic` | local | Detects an existing system FFmpeg and exposes health/source facts. It does not install FFmpeg. |
+| `hcs.teaching-video-basic` | local | Probes system FFmpeg/ffprobe, required encoders/decoders, subtitle filter, and a usable CJK font. It does not install FFmpeg. |
 | `hcs.local-image-basic` | local | Installs a bundled, checksum-pinned JSON fixture through the real asynchronous task pipeline. It is a safe lifecycle proof, not a generative model. |
 | `hcs.online-image-high-quality` | online | Configures and tests the user's OpenAI image API credentials. The default is `gpt-image-2`; generation/editing still uses the existing media pipeline adapter. |
 
