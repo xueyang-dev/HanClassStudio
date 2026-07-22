@@ -85,6 +85,7 @@ def _runtime_snapshot(status: str, *, installed: bool) -> RuntimeSnapshot:
 
 def test_hub_catalog_separates_domain_layers_and_actions(tmp_path, monkeypatch) -> None:
     client = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "runtime_snapshot", lambda **_kwargs: _runtime_snapshot("not_installed", installed=False))
     response = client.get("/api/providers/hub")
     assert response.status_code == 200
     body = response.json()
