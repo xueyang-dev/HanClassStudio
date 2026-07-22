@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
 from urllib.parse import urlparse
@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import storage
-from .ffmpeg_video import probe_ffmpeg
+from .ffmpeg_video import FfmpegCapability, probe_ffmpeg
 from .models import ImageProviderSettings
 from .provider_registry import (
     ProviderRegistryError,
@@ -80,6 +80,7 @@ _ONLINE_PROVIDER_ID = "openai_images"
 _ONLINE_PACKAGE_ID = "hcs.online-image-high-quality"
 _LOCAL_PACKAGE_ID = "hcs.local-image-basic"
 _VIDEO_PACKAGE_ID = "hcs.teaching-video-basic"
+_VIDEO_PROBE_TTL_SECONDS = 15 * 60
 _ONLINE_HOSTS = {"api.openai.com"}
 
 
@@ -88,6 +89,21 @@ class ProviderHubError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class VideoCapabilityProbeCache(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    result: FfmpegCapability
+    probed_at: str
+    expires_at: str
+    probe_version: Literal[1] = 1
+    environment_fingerprint: str
+    failure_summary: list[str] = Field(default_factory=list)
+
+
+_video_probe_lock = threading.Lock()
+_video_probe_cache: VideoCapabilityProbeCache | None = None
 
 
 def _iso() -> str:
@@ -574,8 +590,77 @@ def _local_package_item(hardware: HardwareCapability) -> ProviderHubItem:
     )
 
 
-def _video_package_item(hardware: HardwareCapability) -> ProviderHubItem:
-    capability = probe_ffmpeg()
+def _video_probe_environment_fingerprint() -> str:
+    def executable_identity(name: str) -> dict[str, str | int | None]:
+        path = shutil.which(name)
+        try:
+            stat = Path(path).stat() if path else None
+        except OSError:
+            stat = None
+        return {
+            "path": path,
+            "size": stat.st_size if stat else None,
+            "mtime_ns": stat.st_mtime_ns if stat else None,
+        }
+
+    configured_font = os.environ.get("HCS_CJK_FONT_PATH", "").strip()
+    try:
+        font_stat = Path(configured_font).expanduser().stat() if configured_font else None
+    except OSError:
+        font_stat = None
+    payload = {
+        "ffmpeg": executable_identity("ffmpeg"),
+        "ffprobe": executable_identity("ffprobe"),
+        "font": {
+            "path": configured_font,
+            "family": os.environ.get("HCS_CJK_FONT_FAMILY", ""),
+            "size": font_stat.st_size if font_stat else None,
+            "mtime_ns": font_stat.st_mtime_ns if font_stat else None,
+        },
+        "fontconfig_file": os.environ.get("FONTCONFIG_FILE", ""),
+        "fontconfig_path": os.environ.get("FONTCONFIG_PATH", ""),
+        "probe_version": 1,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _video_capability(*, force_refresh: bool = False) -> VideoCapabilityProbeCache:
+    global _video_probe_cache
+
+    fingerprint = _video_probe_environment_fingerprint()
+    now = datetime.now(timezone.utc)
+    with _video_probe_lock:
+        cached = _video_probe_cache
+        if (
+            not force_refresh
+            and cached is not None
+            and cached.environment_fingerprint == fingerprint
+            and datetime.fromisoformat(cached.expires_at) > now
+        ):
+            return cached
+        try:
+            result = probe_ffmpeg()
+        except Exception:
+            result = FfmpegCapability(available=False, blockers=["video_capability_probe_failed"])
+        _video_probe_cache = VideoCapabilityProbeCache(
+            result=result,
+            probed_at=now.isoformat(),
+            expires_at=(now + timedelta(seconds=_VIDEO_PROBE_TTL_SECONDS)).isoformat(),
+            environment_fingerprint=fingerprint,
+            failure_summary=list(result.blockers),
+        )
+        return _video_probe_cache
+
+
+def _reset_video_probe_cache() -> None:
+    global _video_probe_cache
+    with _video_probe_lock:
+        _video_probe_cache = None
+
+
+def _video_package_item(hardware: HardwareCapability, *, force_refresh: bool = False) -> ProviderHubItem:
+    probe = _video_capability(force_refresh=force_refresh)
+    capability = probe.result
     installed = bool(capability.executable and capability.probe_executable)
     ready = capability.available
     return ProviderHubItem(
@@ -599,6 +684,7 @@ def _video_package_item(hardware: HardwareCapability) -> ProviderHubItem:
             healthcheck="real FFmpeg/ffprobe encoder, decoder, subtitle-filter, and CJK-font capability probe",
         ),
         technical_error=None if ready else {"code": "capability_probe_failed", "blockers": capability.blockers},
+        last_health_check_at=probe.probed_at,
     )
 
 
@@ -974,7 +1060,7 @@ def cancel_fixture_install(task_id: str) -> ProviderInstallStartResponse:
 
 def check_local_health(package_id: str) -> ProviderHubItem:
     if package_id == _VIDEO_PACKAGE_ID:
-        return _video_package_item(detect_hardware())
+        return _video_package_item(detect_hardware(), force_refresh=True)
     if package_id != _LOCAL_PACKAGE_ID:
         raise ProviderHubError("health_check_failed", "Health check is unavailable for this Provider")
     target = storage.RUNTIME_DIR / "providers" / _LOCAL_PACKAGE_ID / "1.0.0" / "package.json"
