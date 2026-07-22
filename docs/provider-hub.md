@@ -63,8 +63,9 @@ The layers are intentionally separate:
 
 The first featured entries are:
 
-| ID | Type | Phase-1 behavior |
+| ID | Type | Current behavior |
 | --- | --- | --- |
+| `hcs.comfyui-runtime` | local Runtime | Installs and supervises a fixed official ComfyUI Runtime on the reviewed macOS Apple Silicon adapter. It contains no model or workflow and never becomes image-generation ready in Phase 2B. |
 | `hcs.teaching-video-basic` | local | Probes system FFmpeg/ffprobe, required encoders/decoders, subtitle filter, and a usable CJK font. It does not install FFmpeg. |
 | `hcs.local-image-basic` | local | Installs a bundled, checksum-pinned JSON fixture through the real asynchronous task pipeline. It is a safe lifecycle proof, not a generative model. |
 | `hcs.online-image-high-quality` | online | Configures and tests the user's OpenAI image API credentials. The default is `gpt-image-2`; generation/editing still uses the existing media pipeline adapter. |
@@ -150,11 +151,46 @@ and health checks return their updated resource directly and do not invent a
 task.
 
 The fixture is a plain JSON file and Phase 1 does **not** implement ZIP or TAR
-extraction. Before any real archive is accepted, the installer must reject `..`
-traversal, absolute and Windows drive paths, symbolic- and hard-link escapes,
-declared/actual size mismatches, decompression bombs, excessive extracted bytes,
-and excessive file counts; it must also avoid check/use replacement races. The
-current path check must not be described as archive extraction protection.
+extraction. Its path check must not be described as archive extraction
+protection. Phase 2B's separate code-owned ComfyUI Runtime installer now accepts
+one exact official `tar.gz` and implements the complete archive boundary,
+including `..`/absolute/drive/UNC rejection, links and special files, declared
+and actual limits, duplicate/case/Unicode collisions, compression/entry/depth/
+size budgets, private exclusive extraction, post-walk verification, atomic
+publish, and a durable recovery journal. These protections do not broaden the
+fixture installer or authorize registry-provided archives.
+
+## Phase 2B controlled ComfyUI Runtime
+
+The ComfyUI card is a Runtime package, not a local-image Provider. Its backend
+projection adds `runtime_ready`, `generation_ready`, and `runtime_details` while
+keeping the legacy `ready` field false. In Phase 2B, `generation_ready` is
+always false, Model Package and Workflow Pack arrays are empty, and the card
+exposes no image-generation action.
+
+Backend actions are specific to the lifecycle:
+
+```text
+install_runtime / cancel_install
+start_runtime / stop_runtime / force_stop_runtime
+check_runtime / repair_runtime / uninstall_runtime
+view_runtime_logs / open_runtime_directory
+```
+
+Install, repair, and uninstall return the common asynchronous `{task,
+provider}` shape. Start, stop, and health return a current Provider snapshot.
+The directory endpoint returns an opaque desktop action rather than a machine
+path. A normal catalog read uses persisted Runtime/process state and the
+manifest-bound source-tree identity; it does not start the Runtime, make a
+health HTTP call, or run the full dependency probe. Start and explicit health
+perform the deep source/Python/lock/custom-node and ComfyUI API checks.
+
+The only enabled adapter is macOS Apple Silicon and remains `experimental`.
+Windows/Linux adapters are `contract_only`; unsupported platforms receive no
+install action. Source, dependencies, archive policy, process ownership,
+loopback networking, recovery, repair/uninstall, test evidence, attribution,
+and limits are documented in
+[Controlled ComfyUI Runtime — Phase 2B](comfyui-runtime-phase-2b.md).
 
 ## Online configuration and secrets
 
@@ -243,8 +279,10 @@ estimate is shown because phase 1 has no representative benchmark.
 - Frontend state: exact action gating, teacher-facing filters, and direct safe/
   legacy error-envelope parsing tests.
 - Playwright: no startup refresh, explicit refresh, failed install never ready,
-  real fixture install, mobile overflow, Escape/focus restoration, and explicit
-  configuration without secret rendering or placeholder-model inheritance.
+  real fixture install, complete fake ComfyUI Runtime lifecycle, unsafe archive
+  never ready, no image-generation action, mobile overflow, Escape/focus
+  restoration, and explicit configuration without secret rendering or
+  placeholder-model inheritance.
 - Repository gate: full `npm test` plus full Playwright E2E.
 
 ## Explicitly unsupported in phase 1
@@ -253,19 +291,14 @@ estimate is shown because phase 1 has no representative benchmark.
 - remote shell, Python, npm, Docker, Homebrew, or system-package commands;
 - installing FFmpeg, GPU drivers, CUDA, or DirectML;
 - real local model downloads or model execution;
-- ZIP/TAR extraction or archive traversal/link/bomb/inode defenses;
 - detached registry signatures, transparency logs, or multi-process locks;
 - encrypted/keychain secret storage or reliable performance estimates;
-- uninstall/update/log-view actions for the new capability fixture;
+- uninstall/update/log-view actions for the phase-1 JSON capability fixture;
 - automatic refresh, implicit credential writes, or quality-gate bypasses.
 
-## ComfyUI follow-up
+## Phase 2C follow-up
 
-ComfyUI remains a planned adapter, not a phase-1 claim. The next slice should
-first define a version-pinned local Runtime contract and localhost-only API
-health check, then model/workflow compatibility metadata. Installation should
-use reviewed platform-specific runners, safe model formats, checksums, size and
-disk budgets, source/license evidence, resumable/cancellable tasks, and cleanup/
-rollback. Workflow JSON must be validated against a HanClassStudio allowlist
-before activation; custom nodes and arbitrary Python are out of scope until a
-separate sandbox and supply-chain review exist.
+The next ComfyUI slice is a separately pinned Model Package, not another
+Runtime installer. It needs its own source/license/hash/size/hardware policy and
+must preserve the Phase 2B Runtime, custom-node, process, and loopback boundary.
+No model, workflow execution, or generation action is implemented here.

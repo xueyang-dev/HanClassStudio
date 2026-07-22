@@ -80,6 +80,25 @@ Provider Hub media capability status:
   add UI, install FFmpeg, or claim classroom readiness;
 - see [Controlled FFmpeg Teaching Video](ffmpeg-teaching-video-phase-2a.md).
 
+Provider Hub local Runtime status:
+
+- Phase 2B adds a commit- and SHA-256-pinned official ComfyUI `v0.28.0`
+  Runtime with a strict data-only manifest, safe tar boundary, uv-managed
+  CPython 3.11.13 environment, generated hash lock, durable install/repair/
+  uninstall journal, and idempotent crash recovery;
+- the managed process binds only `127.0.0.1`, selects a port in a fixed range,
+  persists PID/start-token/executable/argv/nonce ownership, refuses PID-reuse
+  mismatches, captures bounded redacted logs, and validates `/system_stats`,
+  API-reported identity, reviewed core nodes, and the official custom-node
+  baseline;
+- macOS Apple Silicon is the only enabled and still `experimental` adapter;
+  Windows/Linux declarations are contract-only and are not presented as
+  verified;
+- Provider Hub keeps Runtime readiness separate from generation readiness:
+  no model, workflow, image generation, custom node, ComfyUI Manager, LAN
+  binding, arbitrary repository, or system-driver installation is enabled;
+- see [Controlled ComfyUI Runtime — Phase 2B](comfyui-runtime-phase-2b.md).
+
 ## Artifact Ownership
 
 ### Pedagogical authoritative
