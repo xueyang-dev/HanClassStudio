@@ -1,0 +1,110 @@
+{
+  "schema": "hanclassstudio.comfyui_runtime_manifest.v1",
+  "package_id": "hcs.comfyui-runtime",
+  "runtime_id": "comfyui",
+  "version": "0.28.0",
+  "release_tag": "v0.28.0",
+  "source_commit": "700821e1364eaab0e8f21c538a2131719fec57bf",
+  "publisher": "Comfy Org",
+  "source": {
+    "project_url": "https://github.com/Comfy-Org/ComfyUI",
+    "release_url": "https://github.com/Comfy-Org/ComfyUI/releases/tag/v0.28.0",
+    "archive_url": "https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/700821e1364eaab0e8f21c538a2131719fec57bf",
+    "archive_sha256": "326eb47c6f8f2bdd61a87095238250953f0e5bae61fbae13b68a8eec00e45c7a",
+    "source_tree_sha256": "9a0930b7b26cf02e9a6392d340309f35ce88f4506d365374c95cd1f98caaa5a6",
+    "archive_size": 11611291,
+    "archive_type": "tar.gz",
+    "archive_root": "ComfyUI-700821e1364eaab0e8f21c538a2131719fec57bf"
+  },
+  "license": {
+    "spdx": "GPL-3.0-only",
+    "name": "GNU General Public License v3.0",
+    "url": "https://github.com/Comfy-Org/ComfyUI/blob/700821e1364eaab0e8f21c538a2131719fec57bf/LICENSE",
+    "bundled_file": "LICENSE",
+    "bundled_file_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "redistribution_review": "approved_with_gpl_obligations"
+  },
+  "archive_policy": {
+    "max_compressed_bytes": 16777216,
+    "max_entries": 5000,
+    "max_total_file_bytes": 268435456,
+    "max_file_bytes": 67108864,
+    "max_path_bytes": 512,
+    "max_depth": 12,
+    "max_compression_ratio": 100,
+    "reject_links": true,
+    "reject_special_files": true,
+    "reject_nested_archives": true,
+    "require_nfc_names": true,
+    "reject_casefold_collisions": true
+  },
+  "critical_files": {
+    "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "requirements.txt": "9b70c3536a599720335e1c175f4f02fe819781d209cc504525bfe4322e7f746b",
+    "pyproject.toml": "5041c36309166798ad5cd071ec9ac30e2d9ec1b35a526868eddc1eda5a35cb9c",
+    "main.py": "0ef328f3a6694d800789200e64c3852f38e1a7318bd02588fbf718431905f02c",
+    "comfy/cli_args.py": "720b4773a3de843ff18383a45b9d580dc87474e6f71af4070f70af620fd28d81",
+    "comfyui_version.py": "c1b9262c85717d019e3e6f1a08a59a199dcd1ebf16912bb29307b3dbc1088d80"
+  },
+  "custom_node_baseline": {
+    "custom_nodes/example_node.py.example": "e8058ca7a48710f3973fcfb6815607262100e7e94a00240244ebbaafc875c7e6",
+    "custom_nodes/websocket_image_save.py": "3727e903705dba69924c390775a0d6aedfeb717400800e08793fcb77a8c331da"
+  },
+  "python": {
+    "implementation": "cpython",
+    "version": "3.11.13",
+    "environment_manager": "uv",
+    "environment_manager_min_version": "0.11.0",
+    "dependency_index_url": "https://pypi.org/simple",
+    "lock_file": "providers/comfyui/locks/comfyui-macos-arm64-py311.lock",
+    "lock_sha256": "926e90e5a1cb0bd81c783061880fd74ff35ded94c3132bda9862fd9e3fb61df0",
+    "requirements_sha256": "9b70c3536a599720335e1c175f4f02fe819781d209cc504525bfe4322e7f746b"
+  },
+  "launch": {
+    "entrypoint": "main.py",
+    "listen_host": "127.0.0.1",
+    "port_min": 8188,
+    "port_max": 8288,
+    "fixed_arguments": [
+      "--listen",
+      "127.0.0.1",
+      "--disable-auto-launch",
+      "--disable-all-custom-nodes",
+      "--disable-api-nodes",
+      "--disable-metadata"
+    ],
+    "health_path": "/system_stats",
+    "startup_timeout_seconds": 120,
+    "shutdown_timeout_seconds": 15
+  },
+  "platforms": [
+    {
+      "operating_system": "macos",
+      "architecture": "arm64",
+      "adapter": "macos_apple_silicon",
+      "support": "experimental",
+      "install_enabled": true
+    },
+    {
+      "operating_system": "windows",
+      "architecture": "x86_64",
+      "adapter": "windows_nvidia_or_cpu",
+      "support": "contract_only",
+      "install_enabled": false
+    },
+    {
+      "operating_system": "linux",
+      "architecture": "x86_64",
+      "adapter": "linux_nvidia_or_cpu",
+      "support": "contract_only",
+      "install_enabled": false
+    }
+  ],
+  "capability_boundary": {
+    "runtime_only": true,
+    "downloads_models": false,
+    "includes_workflows": false,
+    "allows_custom_nodes": false,
+    "generation_ready": false
+  }
+}
