@@ -284,13 +284,44 @@ test("ComfyUI Runtime installs, starts, stays model-incomplete, stops, and unins
 test("ComfyUI unsafe archive failure never renders Runtime ready", async ({ page }) => {
   const catalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/hub")).json();
   const provider = catalog.providers.find((item) => item.id === "hcs.comfyui-runtime");
+  const installableProvider = {
+    ...provider,
+    status: "not_installed",
+    installed: false,
+    configured: false,
+    ready: false,
+    runtime_ready: false,
+    generation_ready: false,
+    compatible: "compatible",
+    available_actions: ["install_runtime", "view_runtime_logs", "open_runtime_directory"],
+    runtime_details: {
+      ...provider.runtime_details,
+      status: "not_installed",
+      installed: false,
+      runtime_ready: false,
+      generation_ready: false,
+      compatible: true,
+      available_actions: ["install_runtime", "view_runtime_logs", "open_runtime_directory"],
+    },
+  };
   const now = new Date().toISOString();
+  await page.route("**/api/providers/hub", async (route) => {
+    if (!route.request().url().endsWith("/api/providers/hub")) return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...catalog,
+        providers: catalog.providers.map((item) => item.id === provider.id ? installableProvider : item),
+      }),
+    });
+  });
   await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/install", async (route) => {
     await route.fulfill({
       status: 200, contentType: "application/json",
       body: JSON.stringify({
         task: { task_id: "unsafe-comfy-e2e", package_id: provider.id, operation: "install", state: "queued", phase: "preflight", progress: 0, current_file_progress: 0, downloaded_bytes: 0, total_bytes: 11611291, message: "queued", started_at: now, updated_at: now, finished_at: null, cancellable: true, cancel_requested: false, error: null, recoverable_actions: [], log_ref: "e2e" },
-        provider: { ...provider, status: "installing", available_actions: ["cancel_install", "view_runtime_logs"] },
+        provider: { ...installableProvider, status: "installing", available_actions: ["cancel_install", "view_runtime_logs"] },
       }),
     });
   });
