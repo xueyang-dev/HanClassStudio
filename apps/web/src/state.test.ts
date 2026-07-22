@@ -240,7 +240,7 @@ const hubItem: ProviderHubItem = {
   id: "hcs.local-image-basic", provider_id: "fixture_local_image", name: "Local image", description: "fixture",
   provider_type: "offline", capabilities: ["text_to_image"], trust_level: "official_verified",
   registry_source: "official_registry", status: "not_installed", installed: false, configured: false,
-  ready: false, compatible: "compatible", available_actions: ["view_details", "install"], recommended: true,
+  ready: false, runtime_ready: false, generation_ready: false, compatible: "compatible", available_actions: ["view_details", "install"], recommended: true,
   requires_download: true, requires_api_key: false, runs_locally: true, uploads_data: false,
   update_channel: "stable", source_links: {}, license: { redistribution_allowed: false, clear: false },
   third_party_executable_code: false, redistributed_by_hanclassstudio: false,
@@ -262,7 +262,7 @@ const startedInstall = applyProviderHubInstallStart({
   isolated_errors: [],
 }, {}, {
   task: {
-    task_id: "task-1", package_id: hubItem.id, state: "queued", phase: "preflight", progress: 0,
+    task_id: "task-1", package_id: hubItem.id, operation: "install", state: "queued", phase: "preflight", progress: 0,
     current_file_progress: 0, downloaded_bytes: 0, total_bytes: 1, message: "queued",
     started_at: "2026-07-20T00:00:00Z", updated_at: "2026-07-20T00:00:00Z", cancellable: true,
     cancel_requested: false, recoverable_actions: [], log_ref: "test",

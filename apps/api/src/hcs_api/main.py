@@ -83,22 +83,31 @@ from .provider_hub import (
     OnlineProviderConfigRequest,
     ProviderHubCatalog,
     ProviderHubError,
+    ProviderHubItem,
     ProviderInstallStartResponse,
     ProviderInstallTask,
     ProviderRefreshTask,
     PublicOnlineProviderConfig,
+    RuntimeDirectoryAction,
+    RuntimeLogsResponse,
     cancel_fixture_install,
     check_local_health,
+    comfyui_runtime_directory,
+    comfyui_runtime_logs,
     delete_online_config,
     detect_hardware,
     get_install_task,
+    get_latest_install_task,
     get_refresh_task,
     hub_catalog,
     save_online_config,
     set_online_disabled,
+    start_comfyui_mutation,
+    start_comfyui_runtime_package,
     start_fixture_install,
     start_refresh,
     test_online_connection,
+    stop_comfyui_runtime_package,
 )
 from .pipeline import generate_lesson_blueprint, generate_project_media
 from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artifacts, write_spec_artifacts
@@ -1079,6 +1088,14 @@ def _provider_hub_http_error(error: ProviderHubError) -> HTTPException:
         "authentication_error": 401,
         "rate_limited": 429,
         "cancelled": 409,
+        "runtime_not_found": 404,
+        "runtime_not_installed": 409,
+        "runtime_identity_mismatch": 409,
+        "unsupported_platform": 400,
+        "runtime_start_failed": 503,
+        "runtime_start_timeout": 504,
+        "runtime_crashed": 503,
+        "runtime_health_failed": 503,
     }
     status = status_by_code.get(error.code, 400)
     return HTTPException(status_code=status, detail={"code": error.code, "message": error.message})
@@ -1127,6 +1144,14 @@ def get_provider_hub_install_task(task_id: str) -> ProviderInstallTask:
         raise _provider_hub_http_error(error) from error
 
 
+@app.get("/api/providers/hub/packages/{package_id}/install-task", response_model=ProviderInstallTask)
+def get_provider_hub_latest_install_task(package_id: str) -> ProviderInstallTask:
+    try:
+        return get_latest_install_task(package_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
 @app.post("/api/providers/hub/install-tasks/{task_id}/cancel", response_model=ProviderInstallStartResponse)
 def cancel_provider_hub_install(task_id: str) -> ProviderInstallStartResponse:
     try:
@@ -1135,10 +1160,77 @@ def cancel_provider_hub_install(task_id: str) -> ProviderInstallStartResponse:
         raise _provider_hub_http_error(error) from error
 
 
-@app.post("/api/providers/hub/packages/{package_id}/health")
+@app.post("/api/providers/hub/packages/{package_id}/health", response_model=ProviderHubItem)
 def check_provider_package_health(package_id: str) -> dict[str, Any]:
     try:
         return check_local_health(package_id).model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/packages/{package_id}/runtime", response_model=ProviderHubItem)
+def get_provider_runtime(package_id: str) -> dict[str, Any]:
+    if package_id != "hcs.comfyui-runtime":
+        raise HTTPException(status_code=404, detail={"code": "runtime_not_found", "message": "Runtime package was not found"})
+    return next(item for item in hub_catalog().providers if item.id == package_id).model_dump(mode="json")
+
+
+@app.post("/api/providers/hub/packages/{package_id}/repair", response_model=ProviderInstallStartResponse)
+def repair_provider_runtime(package_id: str) -> ProviderInstallStartResponse:
+    if package_id != "hcs.comfyui-runtime":
+        raise HTTPException(status_code=404, detail={"code": "runtime_not_found", "message": "Runtime package was not found"})
+    try:
+        return start_comfyui_mutation("repair")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/uninstall", response_model=ProviderInstallStartResponse)
+def uninstall_provider_runtime(package_id: str) -> ProviderInstallStartResponse:
+    if package_id != "hcs.comfyui-runtime":
+        raise HTTPException(status_code=404, detail={"code": "runtime_not_found", "message": "Runtime package was not found"})
+    try:
+        return start_comfyui_mutation("uninstall")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/start", response_model=ProviderHubItem)
+def start_provider_runtime(package_id: str) -> dict[str, Any]:
+    try:
+        return start_comfyui_runtime_package(package_id).model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/stop", response_model=ProviderHubItem)
+def stop_provider_runtime(package_id: str) -> dict[str, Any]:
+    try:
+        return stop_comfyui_runtime_package(package_id).model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post("/api/providers/hub/packages/{package_id}/force-stop", response_model=ProviderHubItem)
+def force_stop_provider_runtime(package_id: str) -> dict[str, Any]:
+    try:
+        return stop_comfyui_runtime_package(package_id, force=True).model_dump(mode="json")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/packages/{package_id}/logs", response_model=RuntimeLogsResponse)
+def get_provider_runtime_logs(package_id: str) -> RuntimeLogsResponse:
+    try:
+        return comfyui_runtime_logs(package_id)
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.get("/api/providers/hub/packages/{package_id}/directory", response_model=RuntimeDirectoryAction)
+def get_provider_runtime_directory(package_id: str) -> RuntimeDirectoryAction:
+    try:
+        return comfyui_runtime_directory(package_id)
     except ProviderHubError as error:
         raise _provider_hub_http_error(error) from error
 

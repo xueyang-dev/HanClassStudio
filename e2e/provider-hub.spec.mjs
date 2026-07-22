@@ -186,6 +186,131 @@ test("Provider Hub refresh summary, source details, real fixture install, and na
 });
 
 
+test("ComfyUI Runtime installs, starts, stays model-incomplete, stops, and uninstalls", async ({ page }) => {
+  const initialCatalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/hub")).json();
+  const initial = initialCatalog.providers.find((provider) => provider.id === "hcs.comfyui-runtime");
+  let status = "not_installed";
+  let installed = false;
+  let activeTask = null;
+  const actions = () => {
+    if (!installed) return ["install_runtime", "view_runtime_logs", "open_runtime_directory"];
+    if (status === "runtime_ready") return ["stop_runtime", "force_stop_runtime", "check_runtime", "view_runtime_logs", "open_runtime_directory"];
+    return ["start_runtime", "check_runtime", "repair_runtime", "uninstall_runtime", "view_runtime_logs", "open_runtime_directory"];
+  };
+  const provider = () => ({
+    ...initial,
+    status,
+    installed,
+    configured: installed,
+    ready: false,
+    runtime_ready: status === "runtime_ready",
+    generation_ready: false,
+    available_actions: actions(),
+    runtime_details: {
+      ...initial.runtime_details,
+      status,
+      installed,
+      runtime_ready: status === "runtime_ready",
+      generation_ready: false,
+      available_actions: actions(),
+      actual_port: status === "runtime_ready" ? 8188 : null,
+    },
+  });
+  const task = (id, operation, state, phase, progress) => ({
+    task_id: id, package_id: "hcs.comfyui-runtime", operation, state, phase, progress,
+    current_file_progress: progress, downloaded_bytes: 11611291, total_bytes: 11611291,
+    message: phase, started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    finished_at: state === "completed" ? new Date().toISOString() : null,
+    cancellable: state !== "completed", cancel_requested: false, error: null,
+    recoverable_actions: [], log_ref: "e2e-comfyui",
+  });
+
+  await page.route("**/api/providers/hub", async (route) => {
+    if (!route.request().url().endsWith("/api/providers/hub")) return route.continue();
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ ...initialCatalog, providers: initialCatalog.providers.map((item) => item.id === initial.id ? provider() : item) }),
+    });
+  });
+  await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/install", async (route) => {
+    activeTask = task("comfy-install-e2e", "install", "queued", "preflight", 0);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ task: activeTask, provider: { ...provider(), status: "installing", available_actions: ["cancel_install", "view_runtime_logs"] } }) });
+  });
+  await page.route("**/api/providers/hub/install-tasks/comfy-install-e2e", async (route) => {
+    installed = true; status = "stopped";
+    activeTask = task("comfy-install-e2e", "install", "completed", "completed", 100);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(activeTask) });
+  });
+  await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/start", async (route) => {
+    status = "runtime_ready";
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(provider()) });
+  });
+  await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/stop", async (route) => {
+    status = "stopped";
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(provider()) });
+  });
+  await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/uninstall", async (route) => {
+    activeTask = task("comfy-uninstall-e2e", "uninstall", "queued", "preflight", 0);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ task: activeTask, provider: { ...provider(), status: "installing", available_actions: ["cancel_install", "view_runtime_logs"] } }) });
+  });
+  await page.route("**/api/providers/hub/install-tasks/comfy-uninstall-e2e", async (route) => {
+    installed = false; status = "not_installed";
+    activeTask = task("comfy-uninstall-e2e", "uninstall", "completed", "completed", 100);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(activeTask) });
+  });
+  page.on("dialog", (dialog) => void dialog.accept());
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "教学能力中心", exact: true }).first().click();
+  const hub = page.locator("dialog.provider-hub-dialog[open]");
+  const card = hub.locator(".provider-hub-card").filter({ hasText: "ComfyUI 本地运行环境" }).first();
+  await expect(card).toContainText("本阶段没有图片生成功能");
+  await expect(card.getByRole("button", { name: /生成图片/ })).toHaveCount(0);
+  await card.getByRole("button", { name: "安装运行环境", exact: true }).click();
+  await expect(card.getByText("已安装，当前停止", { exact: true })).toBeVisible();
+  await expect(card).toContainText("运行环境可用，但尚未安装图片模型");
+  await card.getByRole("button", { name: "启动", exact: true }).click();
+  await expect(card.getByText("运行环境可用", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: /生成图片/ })).toHaveCount(0);
+  await card.getByRole("button", { name: "停止", exact: true }).click();
+  await expect(card.getByText("已安装，当前停止", { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: "卸载", exact: true }).click();
+  await expect(card.getByText("未安装", { exact: true })).toBeVisible();
+  await expect.poll(() => hub.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth }))).toEqual({ scroll: 390, client: 390 });
+});
+
+
+test("ComfyUI unsafe archive failure never renders Runtime ready", async ({ page }) => {
+  const catalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/hub")).json();
+  const provider = catalog.providers.find((item) => item.id === "hcs.comfyui-runtime");
+  const now = new Date().toISOString();
+  await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/install", async (route) => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        task: { task_id: "unsafe-comfy-e2e", package_id: provider.id, operation: "install", state: "queued", phase: "preflight", progress: 0, current_file_progress: 0, downloaded_bytes: 0, total_bytes: 11611291, message: "queued", started_at: now, updated_at: now, finished_at: null, cancellable: true, cancel_requested: false, error: null, recoverable_actions: [], log_ref: "e2e" },
+        provider: { ...provider, status: "installing", available_actions: ["cancel_install", "view_runtime_logs"] },
+      }),
+    });
+  });
+  await page.route("**/api/providers/hub/install-tasks/unsafe-comfy-e2e", async (route) => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ task_id: "unsafe-comfy-e2e", package_id: provider.id, operation: "install", state: "failed", phase: "failed", progress: 32, current_file_progress: 100, downloaded_bytes: 11611291, total_bytes: 11611291, message: "unsafe", started_at: now, updated_at: now, finished_at: now, cancellable: false, cancel_requested: false, error: { code: "unsafe_archive", message: "unsafe archive" }, recoverable_actions: ["repair_runtime"], log_ref: "e2e" }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "教学能力中心", exact: true }).first().click();
+  const card = page.locator("dialog.provider-hub-dialog[open] .provider-hub-card").filter({ hasText: "ComfyUI 本地运行环境" }).first();
+  await card.getByRole("button", { name: "安装运行环境", exact: true }).click();
+  await expect(card.getByText("archive 未通过安全检查，未发布 Runtime。", { exact: true })).toBeVisible();
+  await expect(card.getByText("运行环境可用", { exact: true })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: /生成图片/ })).toHaveCount(0);
+});
+
+
 test("online Provider configuration is explicit and credentials never render", async ({ page }) => {
   const secret = "provider-hub-browser-secret";
   let configurationPuts = 0;

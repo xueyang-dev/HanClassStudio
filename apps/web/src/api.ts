@@ -363,8 +363,37 @@ export async function startProviderHubInstall(packageId: string): Promise<Provid
   return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install`, { method: "POST" });
 }
 
+export async function repairProviderRuntime(packageId: string): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/repair`, { method: "POST" });
+}
+
+export async function uninstallProviderRuntime(packageId: string): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/uninstall`, { method: "POST" });
+}
+
+export async function startProviderRuntime(packageId: string): Promise<ProviderHubItem> {
+  return request<ProviderHubItem>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/start`, { method: "POST" });
+}
+
+export async function stopProviderRuntime(packageId: string, force = false): Promise<ProviderHubItem> {
+  const action = force ? "force-stop" : "stop";
+  return request<ProviderHubItem>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/${action}`, { method: "POST" });
+}
+
+export async function fetchProviderRuntimeLogs(packageId: string): Promise<{ package_id: string; install: string[]; runtime: string[] }> {
+  return request<{ package_id: string; install: string[]; runtime: string[] }>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/logs`);
+}
+
+export async function fetchProviderRuntimeDirectoryAction(packageId: string): Promise<{ action: string; runtime_id: string }> {
+  return request<{ action: string; runtime_id: string }>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/directory`);
+}
+
 export async function fetchProviderHubInstall(taskId: string): Promise<ProviderHubInstallTask> {
   return request<ProviderHubInstallTask>(`/api/providers/hub/install-tasks/${encodeURIComponent(taskId)}`);
+}
+
+export async function fetchProviderHubLatestInstall(packageId: string): Promise<ProviderHubInstallTask> {
+  return request<ProviderHubInstallTask>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install-task`);
 }
 
 export async function cancelProviderHubInstall(taskId: string): Promise<ProviderHubInstallStartResponse> {
