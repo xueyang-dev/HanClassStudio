@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 GenerationMode = Literal["faithful", "guided_redesign", "reimagined"]
@@ -562,6 +562,30 @@ class AssetReviewEvent(BaseModel):
 
 
 VideoApprovalStatus = Literal["approved", "stale", "revoked"]
+FontSource = Literal["system", "user", "project_bundled"]
+FontLicenseStatus = Literal["approved", "local_only", "unknown", "unapproved"]
+
+
+class SubtitleFontIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    family: str
+    file_name: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source: FontSource
+    license_status: FontLicenseStatus
+
+
+class VideoRenderingEnvironment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    recipe_id: str
+    recipe_version: int = Field(ge=1)
+    ffmpeg_version: str
+    ffprobe_version: str
+    subtitle_font: SubtitleFontIdentity
+    fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class TeacherMediaApproval(BaseModel):
@@ -572,6 +596,7 @@ class TeacherMediaApproval(BaseModel):
     approval_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     proposal_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     approved_plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    approved_rendering_environment_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     teacher_id: str = Field(min_length=1, max_length=200)
     approval_status: VideoApprovalStatus = "approved"
     approved_at: str = Field(default_factory=utc_now_iso)
@@ -587,6 +612,55 @@ class VideoInputAssetRecord(BaseModel):
     kind: Literal["image", "audio"]
     path: str
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class VideoArtifactRecord(BaseModel):
+    """One verified binary video artifact, independent from teaching usage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generation_status: Literal["generated", "reused"]
+    artifact_id: str
+    video_path: str
+    subtitle_path: str
+    plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    subtitle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    subtitle_cue_count: int = Field(ge=1)
+    input_assets: list[VideoInputAssetRecord] = Field(min_length=2)
+    recipe_id: str
+    recipe_version: int = Field(ge=1)
+    duration_seconds: float = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    video_codec: str
+    audio_codec: str
+    rendering_environment: VideoRenderingEnvironment
+    provenance_schema_version: int = Field(ge=1)
+    provenance_ref: str
+    provenance_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    deduplication_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    registered_at: str = Field(default_factory=utc_now_iso)
+
+
+class VideoAssetReference(BaseModel):
+    """Teaching-context link to a reusable binary artifact."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reference_id: str
+    artifact_id: str
+    approval_id: str
+    unit_id: str | None = None
+    activity_id: str | None = None
+    media_requirement_id: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+    @model_validator(mode="after")
+    def _has_teaching_context(self) -> "VideoAssetReference":
+        if not any((self.unit_id, self.activity_id, self.media_requirement_id)):
+            raise ValueError("a video asset reference requires teaching context")
+        return self
 
 
 class GeneratedVideoAssetRecord(BaseModel):
@@ -630,6 +704,7 @@ VideoGenerationFailureCode = Literal[
     "registration_failed",
     "regeneration_required",
     "asset_id_conflict",
+    "orphan_detected",
 ]
 
 
@@ -671,6 +746,7 @@ class AssetFile(BaseModel):
     request_fingerprint: str | None = None
     presentation_theme_id: str | None = None
     presentation_theme_version: str | None = None
+    video_artifact: VideoArtifactRecord | None = None
     video_generation: GeneratedVideoAssetRecord | None = None
 
 
@@ -684,6 +760,8 @@ class AssetManifest(BaseModel):
     images: list[AssetFile] = Field(default_factory=list)
     audio: list[AssetFile] = Field(default_factory=list)
     video: list[AssetFile] = Field(default_factory=list)
+    video_references: list[VideoAssetReference] = Field(default_factory=list)
+    video_approvals: list[TeacherMediaApproval] = Field(default_factory=list)
     fonts: list[AssetFile] = Field(default_factory=list)
     presentation_theme_id: str | None = None
     presentation_theme_version: str | None = None

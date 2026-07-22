@@ -27,6 +27,18 @@ The backend is authoritative for `status`, `compatible`, `ready`, and
 performs local `GET` requests only; it never refreshes a remote source, saves a
 configuration, starts an installation, or tests a connection implicitly.
 
+The teaching-video entry uses a process-local `VideoCapabilityProbeCache`
+instead of launching the full FFmpeg/font probe on every catalog read. A normal
+read reuses a result for 15 minutes; the first read probes once, and concurrent
+readers share the same locked probe. The cache records result, probe/expiry
+times, probe-contract version, environment fingerprint, and failure summary.
+The fingerprint covers resolved FFmpeg/ffprobe file identity and configured
+font path, stat, family, source, license status, and Fontconfig settings. An
+expired entry or changed fingerprint triggers a new probe. The explicit
+`check_health` action forces refresh. Executable/font stat or probe failures
+degrade the item to unavailable/degraded with stable blockers and never fail
+the complete Hub response.
+
 The teacher surface is titled **教学能力中心**, with `Provider Hub` retained as
 the secondary technical label. Recommended capability packages remain in the
 primary catalog. Legacy Provider descriptors and implementation-level services

@@ -21,6 +21,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
+from .models import FontLicenseStatus, FontSource, SubtitleFontIdentity, VideoRenderingEnvironment
+
 
 RECIPE_ID = "hcs_teaching_video_720p_v1"
 RECIPE_VERSION = 1
@@ -76,7 +78,8 @@ class SubtitleFontCapability(BaseModel):
     file_name: str
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     selection: Literal["configured", "fontconfig"]
-    redistribution_status: Literal["not_bundled_license_review_required"] = "not_bundled_license_review_required"
+    source: FontSource
+    license_status: FontLicenseStatus
 
 
 class FfmpegCapability(BaseModel):
@@ -273,7 +276,8 @@ class VideoArtifactProvenance(BaseModel):
     actual_duration_seconds: float
     canvas: dict[str, int]
     encoder_verification: dict[str, str | int]
-    subtitle_font: SubtitleFontCapability
+    subtitle_font: SubtitleFontIdentity
+    rendering_environment: VideoRenderingEnvironment
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -293,6 +297,7 @@ class VerifiedVideoArtifact(BaseModel):
     subtitle_sha256: str
     plan_sha256: str
     source_assets: list[SourceAssetProvenance]
+    rendering_environment: VideoRenderingEnvironment
     warnings: list[str] = Field(default_factory=list)
     provenance: VideoArtifactProvenance
 
@@ -446,7 +451,13 @@ def compile_teaching_video_plan(
     return compiled
 
 
-def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecutionPlan) -> VerifiedVideoArtifact:
+def execute_compiled_video_plan(
+    project_root: Path,
+    plan: CompiledVideoExecutionPlan,
+    *,
+    capability: FfmpegCapability | None = None,
+    transaction_id: str | None = None,
+) -> VerifiedVideoArtifact:
     """Execute a compiler-produced plan and publish verified artifacts atomically."""
 
     project_root = _project_root(project_root)
@@ -457,7 +468,7 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
     if plan.video_path != expected_video or plan.subtitle_path != expected_subtitle:
         raise FfmpegVideoError("unsafe_path", "compiled output path is outside the controlled video lane")
     _validate_compiled_plan(plan)
-    capability = probe_ffmpeg()
+    capability = capability or probe_ffmpeg()
     if (
         not capability.available
         or not capability.executable
@@ -467,6 +478,9 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
         or not capability.subtitle_font
     ):
         raise FfmpegVideoError("ffmpeg_failed", ", ".join(capability.blockers) or "FFmpeg is unavailable")
+    rendering_environment = rendering_environment_from_capability(capability)
+    if transaction_id is not None and not _ID_PATTERN.fullmatch(transaction_id):
+        raise FfmpegVideoError("invalid_video_plan", "transaction ID is invalid")
 
     output_dir = project_root / "assets" / "video"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -483,7 +497,8 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
 
     published: list[Path] = []
     try:
-        with tempfile.TemporaryDirectory(prefix=f".{plan.video_id}-", dir=output_dir) as temp_name:
+        temp_prefix = f".{plan.video_id}-{transaction_id}-" if transaction_id else f".{plan.video_id}-"
+        with tempfile.TemporaryDirectory(prefix=temp_prefix, dir=output_dir) as temp_name:
             workdir = Path(temp_name)
             _stage_subtitle_font(workdir, capability.subtitle_font)
             copied = _copy_verified_inputs(project_root, workdir, plan)
@@ -539,7 +554,8 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
                 "pixel_format": metadata["pixel_format"],
                 "audio_sample_rate": metadata["audio_sample_rate"],
             },
-            subtitle_font=capability.subtitle_font,
+            subtitle_font=_font_identity(capability.subtitle_font),
+            rendering_environment=rendering_environment,
         )
         return VerifiedVideoArtifact(
             artifact_id=plan.video_id,
@@ -554,6 +570,7 @@ def execute_compiled_video_plan(project_root: Path, plan: CompiledVideoExecution
             subtitle_sha256=subtitle_sha256,
             plan_sha256=plan.plan_sha256,
             source_assets=plan.source_assets,
+            rendering_environment=rendering_environment,
             provenance=provenance,
         )
     except FfmpegVideoError:
@@ -910,15 +927,73 @@ def _probe_subtitle_font() -> tuple[SubtitleFontCapability | None, str | None]:
         resolved = font_path.resolve(strict=True)
     except (OSError, FileNotFoundError):
         return None, "cjk_font_not_found"
-    if not resolved.is_file() or resolved.stat().st_size <= 0:
-        return None, "cjk_font_not_found"
+    try:
+        if not resolved.is_file() or resolved.stat().st_size <= 0:
+            return None, "cjk_font_not_found"
+        font_sha256 = _sha256(resolved)
+    except OSError:
+        return None, "cjk_font_probe_failed"
+    source = _font_source(resolved)
+    if source == "project_bundled" and not configured_path:
+        return None, "project_font_path_required"
+    raw_license = os.environ.get("HCS_CJK_FONT_LICENSE_STATUS", "").strip()
+    license_status: FontLicenseStatus = raw_license if raw_license in {
+        "approved", "local_only", "unknown", "unapproved",
+    } else ("unknown" if source == "project_bundled" else "local_only")
+    if source == "project_bundled" and license_status != "approved":
+        return None, "project_font_license_not_approved"
     return SubtitleFontCapability(
         family=family,
         file=str(resolved),
         file_name=resolved.name,
-        sha256=_sha256(resolved),
+        sha256=font_sha256,
         selection=selection,
+        source=source,
+        license_status=license_status,
     ), None
+
+
+def _font_source(path: Path) -> FontSource:
+    configured = os.environ.get("HCS_CJK_FONT_SOURCE", "").strip()
+    if configured == "system":
+        return "system"
+    if configured == "user":
+        return "user"
+    if configured == "project_bundled":
+        return "project_bundled"
+    try:
+        path.relative_to(Path.home())
+        return "user"
+    except ValueError:
+        return "system"
+
+
+def _font_identity(font: SubtitleFontCapability) -> SubtitleFontIdentity:
+    return SubtitleFontIdentity(
+        family=font.family,
+        file_name=font.file_name,
+        sha256=font.sha256,
+        source=font.source,
+        license_status=font.license_status,
+    )
+
+
+def rendering_environment_from_capability(capability: FfmpegCapability) -> VideoRenderingEnvironment:
+    if not capability.ffmpeg_version or not capability.ffprobe_version or not capability.subtitle_font:
+        raise FfmpegVideoError("ffmpeg_failed", "rendering environment is incomplete")
+    identity = _font_identity(capability.subtitle_font)
+    payload = {
+        "schema_version": 1,
+        "recipe_id": RECIPE_ID,
+        "recipe_version": RECIPE_VERSION,
+        "ffmpeg_version": capability.ffmpeg_version,
+        "ffprobe_version": capability.ffprobe_version,
+        "subtitle_font": identity.model_dump(mode="json"),
+    }
+    return VideoRenderingEnvironment(
+        **payload,
+        fingerprint_sha256=_stable_hash(payload),
+    )
 
 
 def _safe_process_detail(stderr: str, workdir: Path) -> str:

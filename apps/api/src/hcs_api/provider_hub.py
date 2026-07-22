@@ -614,6 +614,8 @@ def _video_probe_environment_fingerprint() -> str:
         "font": {
             "path": configured_font,
             "family": os.environ.get("HCS_CJK_FONT_FAMILY", ""),
+            "source": os.environ.get("HCS_CJK_FONT_SOURCE", ""),
+            "license_status": os.environ.get("HCS_CJK_FONT_LICENSE_STATUS", ""),
             "size": font_stat.st_size if font_stat else None,
             "mtime_ns": font_stat.st_mtime_ns if font_stat else None,
         },

@@ -63,14 +63,19 @@ Raster illustration status:
 Provider Hub media capability status:
 
 - Phase 2A now has a backend-only `TeachingVideoPlan` → proposal → hash-bound
-  teacher approval → controlled execution → `VerifiedVideoArtifact` → Asset
-  Manifest registration contract;
+  teacher approval → controlled execution → `VerifiedVideoArtifact` → normalized
+  artifact/reference Asset Manifest registration contract;
 - a deterministic six-segment café-dialogue fixture validates multiple visuals,
   independent audio, bilingual WebVTT and burn-in subtitles through real local
   FFmpeg/ffprobe execution;
-- exact plan/input/recipe matches reuse verified registered output; stale
-  approvals, corrupt matches, asset-ID conflicts, missing CJK fonts, and missing
-  FFmpeg encoders/decoders/filters fail closed;
+- exact plan/input/recipe/rendering-environment matches reuse semantically
+  reverified binary output while creating separate teaching references;
+  hash/environment-stale approvals, corrupt matches, orphan outputs, asset-ID
+  conflicts, unapproved bundled fonts, missing CJK fonts, and missing FFmpeg
+  encoders/decoders/filters fail closed;
+- a persistent publication journal makes crash cleanup/reconciliation explicit
+  and idempotent, while Provider Hub caches the expensive capability probe for
+  15 minutes with force-refresh and failure degradation;
 - the capability does not connect video request planning to automatic execution,
   add UI, install FFmpeg, or claim classroom readiness;
 - see [Controlled FFmpeg Teaching Video](ffmpeg-teaching-video-phase-2a.md).

@@ -7,12 +7,12 @@ and not a pedagogical decision maker.
 ```text
 TeachingVideoPlan draft
 → TeachingVideoProposal
-→ TeacherMediaApproval(plan_sha256)
+→ TeacherMediaApproval(plan_sha256 + rendering environment fingerprint)
 → VideoGenerationRequest
-→ recompile and compare plan_sha256
+→ recompile and compare both approval identities
 → fixed FFmpeg execution and ffprobe verification
 → VerifiedVideoArtifact + WebVTT
-→ GeneratedVideoAssetRecord in Asset Manifest
+→ VideoArtifactRecord + VideoAssetReference in Asset Manifest
 ```
 
 The existing provider-neutral `video_generation_requests.json` remains a
@@ -89,10 +89,12 @@ and source hashes before running.
 ### Proposal, approval, and request
 
 `TeachingVideoProposal` stores the reviewable `TeachingVideoPlan`, both plan
-hashes, and at least one teaching-unit, activity, or media-requirement ID.
-`TeacherMediaApproval` records teacher identity, time, notes, proposal ID, and
-the exact approved `plan_sha256`. `VideoGenerationRequest` is an explicit
-request object; creating it neither grants approval nor starts generation.
+hashes, the probed rendering-environment identity, and at least one
+teaching-unit, activity, or media-requirement ID. `TeacherMediaApproval` records
+teacher identity, time, notes, proposal ID, the exact approved `plan_sha256`,
+and the approved rendering-environment fingerprint. `VideoGenerationRequest`
+is an explicit request object; creating it neither grants approval nor starts
+generation.
 
 Immediately before execution the workflow recompiles the proposal from current
 files. It runs only when all of these remain true:
@@ -100,12 +102,17 @@ files. It runs only when all of these remain true:
 - approval status is `approved`;
 - approval and request identify the same proposal;
 - proposal `plan_sha256`, approved `plan_sha256`, and newly compiled
-  `plan_sha256` are identical.
+  `plan_sha256` are identical;
+- proposal, approval, and current rendering-environment fingerprints are
+  identical.
 
 Changing a line, translation, subtitle option, image, audio file, input path,
-or recipe changes the compiled hash. The returned approval evidence is marked
+or recipe changes the compiled hash. A change to the selected font bytes,
+font identity, FFmpeg/ffprobe version, or recipe version changes the rendering
+fingerprint. In either case the returned approval evidence is marked
 `approval_status=stale`, a `VideoGenerationFailureRecord` is persisted, and
-FFmpeg is not started. The teacher must approve the new proposal hash.
+FFmpeg is not started. The teacher must approve the new proposal and rendering
+identity.
 
 ### VerifiedVideoArtifact
 
@@ -121,31 +128,76 @@ duration, canvas, codecs, output hashes, plan hash, warnings, and full
 - output MP4 and WebVTT SHA-256;
 - actual duration and 1280×720 canvas;
 - verified video codec, audio codec, pixel format, and audio sample rate.
-- selected Chinese subtitle font family, source filename, selection method,
-  redistribution status, and font-file SHA-256.
+- selected Chinese subtitle font family, source filename, source class,
+  license status, and font-file SHA-256;
+- rendering-environment schema and fingerprint.
 
-Stable provenance never uses an absolute machine path as an asset identity.
+Stable provenance never contains the font's absolute machine path. The runtime
+capability may retain that path long enough to stage the font privately, but
+only the family, filename, SHA-256, source, and license status cross the
+artifact/provenance boundary.
 
 ### Asset Manifest registration and deduplication
 
-After verification, the workflow writes a provenance JSON file and appends one
-video `AssetFile` with a nested `GeneratedVideoAssetRecord`. The record includes
-the stable video asset ID, MP4 and WebVTT relative paths, plan/artifact/subtitle
-hashes, every input image/audio asset ID and hash, recipe ID/version, duration,
-dimensions, codecs, subtitle font identity, provenance reference/hash, teacher
-approval, generation status, deduplication key, and teaching context IDs.
+After verification, one video `AssetFile` owns a nested `VideoArtifactRecord`.
+That record describes only the unique binary artifact: stable asset ID, MP4 and
+WebVTT relative paths and hashes, plan hash, ordered input asset IDs/hashes,
+recipe ID/version, duration, dimensions, codecs, rendering environment,
+provenance schema/reference/hash, and deduplication key. Teaching ownership is
+stored separately as `VideoAssetReference` entries containing unit, activity,
+media-requirement, approval, and artifact IDs. Approval evidence is stored in
+the manifest's approval collection. Existing `GeneratedVideoAssetRecord` data
+remains readable, but new writes use the normalized artifact/reference model.
 
 The deduplication key covers the compiled plan hash, ordered input asset
-IDs/hashes, and recipe ID/version. An exact valid match returns
-`generation_status=reused` without adding another manifest entry. Reuse checks
-the MP4, WebVTT, and provenance file hashes. A missing or corrupt match returns
+IDs/hashes, recipe ID/version, and rendering-environment fingerprint. Before a
+match is reused, the workflow rehashes MP4, WebVTT, and provenance; reruns
+ffprobe against the fixed media contract; parses and validates WebVTT; rejects
+unknown provenance schemas and unsupported recipe versions; and cross-checks
+manifest, provenance, rendering environment, input assets, and actual media
+metadata. A missing, corrupt, or semantically inconsistent match returns
 `regeneration_required`; it is never silently replaced or copied under a new
-name. A stable asset-ID collision also fails closed.
+name. Binary reuse still adds a distinct teaching reference and approval when
+the same content is assigned to another activity. A stable asset-ID collision
+fails closed.
 
-The provenance file is written first and the Asset Manifest is replaced
-atomically. If registration fails after generation, the new MP4, WebVTT, and
-provenance file are removed. Structured failures are retained in
-`assets/data/video_generation_failures.json` on a best-effort basis.
+### Publication journal and crash recovery
+
+MP4, WebVTT, provenance, and Asset Manifest cannot share one filesystem rename,
+so every new generation first persists a transaction under
+`assets/data/video_transactions/`. Its state machine is:
+
+```text
+prepared
+→ artifacts_published
+→ provenance_published
+→ manifest_committed
+→ completed
+```
+
+The journal records transaction and asset IDs, relative staging/final paths,
+expected hashes, plan hash, normalized artifact/reference/approval evidence,
+phase, and timestamps. Before every execution, unfinished transactions are
+scanned under the same in-process generation lock. The recovery policy is
+explicit and conservative:
+
+- if the manifest has no matching asset, all transaction-owned final/staging
+  files are deleted and the transaction completes as `cleaned`;
+- if the manifest contains a fully cross-consistent artifact and the MP4,
+  WebVTT, provenance, recipe, and hashes pass semantic verification, the
+  transaction completes as `registered`;
+- if the manifest contains the asset but verification fails, the transaction
+  completes as `regeneration_required` and the registered evidence is not
+  silently rewritten;
+- files at reserved output paths without a journal or manifest entry are
+  reported as `orphan_detected`, never as a vague output conflict.
+
+Recovery and cleanup are idempotent. Completed transactions are ignored on
+later scans. This phase deliberately deletes valid-looking but uncommitted
+artifacts instead of reconstructing a missing manifest entry, preventing a
+crash window from implicitly authorizing or registering media. Structured
+generation failures remain best-effort records in
+`assets/data/video_generation_failures.json`.
 
 ## Duration and timeline
 
@@ -271,13 +323,16 @@ injected command, or unnecessary absolute path.
   MP3, Vorbis, Opus, and PCM decoders used by the accepted input extensions.
 - Chinese subtitle burn-in requires either `HCS_CJK_FONT_PATH` (optionally with
   `HCS_CJK_FONT_FAMILY`) or a CJK-capable font selected by `fontconfig`. Missing
-  font discovery, file, or safe family name produces a stable capability
-  blocker instead of tofu glyphs.
+  font discovery, unreadable/hash-failing files, or unsafe family names produce
+  stable capability blockers instead of tofu glyphs.
 - The selected font is hashed, copied into the private work directory, supplied
-  to libass through `fontsdir`, and recorded in provenance. It is not bundled
-  into the project; its status is recorded as
-  `not_bundled_license_review_required`. Distributing a font file in a future
-  capability package requires an explicit license review.
+  to libass through `fontsdir`, and recorded by identity in provenance. Font
+  source is one of `system`, `user`, or `project_bundled`; license status is one
+  of `approved`, `local_only`, `unknown`, or `unapproved`. System/user fonts
+  default to `local_only`. A `project_bundled` font requires an explicitly
+  configured path and `approved` license status or capability probing fails
+  closed. Copying a local font into the private work directory does not grant
+  redistribution rights.
 - Images are limited to 25 MiB each, audio to 50 MiB each, all unique inputs to
   200 MiB, subtitles to 128 KiB, and plans to 24 segments / 300 seconds.
 - Inputs must resolve inside `assets/images/` or `assets/audio/`; absolute paths,
