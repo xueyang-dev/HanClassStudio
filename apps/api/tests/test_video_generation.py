@@ -82,6 +82,17 @@ def _require_ffmpeg() -> FfmpegCapability:
     return capability
 
 
+@pytest.fixture
+def controlled_media_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep approval-domain tests independent from the host media toolchain."""
+
+    monkeypatch.setattr(ffmpeg_video, "_probe_asset", lambda _path, kind, _asset_id: (
+        {"width": 96, "height": 54}
+        if kind == "image"
+        else {"duration": 0.18, "sample_rate": 8_000, "channels": 1}
+    ))
+
+
 def _approved_request(root: Path):
     proposal = create_teaching_video_proposal(
         root,
@@ -94,7 +105,7 @@ def _approved_request(root: Path):
     return proposal, approval, create_video_generation_request(proposal, approval)
 
 
-def test_execution_requires_explicit_teacher_approval(tmp_path: Path) -> None:
+def test_execution_requires_explicit_teacher_approval(tmp_path: Path, controlled_media_probe: None) -> None:
     root = _project(tmp_path)
     proposal = create_teaching_video_proposal(root, _plan(), activity_id="activity-dialogue")
 
@@ -106,7 +117,10 @@ def test_execution_requires_explicit_teacher_approval(tmp_path: Path) -> None:
     assert not (root / "assets/video/approval-contract-video.mp4").exists()
 
 
-def test_changed_script_marks_hash_bound_approval_stale_without_execution(tmp_path: Path) -> None:
+def test_changed_script_marks_hash_bound_approval_stale_without_execution(
+    tmp_path: Path,
+    controlled_media_probe: None,
+) -> None:
     root = _project(tmp_path)
     proposal, approval, _request = _approved_request(root)
     changed_segment = proposal.plan.segments[0].model_copy(update={"chinese": "你好，我要两杯咖啡。"})
@@ -123,7 +137,10 @@ def test_changed_script_marks_hash_bound_approval_stale_without_execution(tmp_pa
     assert not (root / "assets/video/approval-contract-video.mp4").exists()
 
 
-def test_changed_input_asset_marks_approval_stale_without_execution(tmp_path: Path) -> None:
+def test_changed_input_asset_marks_approval_stale_without_execution(
+    tmp_path: Path,
+    controlled_media_probe: None,
+) -> None:
     root = _project(tmp_path)
     proposal, approval, _request = _approved_request(root)
     _tone(root / "assets/audio/line.wav", frequency=880)
