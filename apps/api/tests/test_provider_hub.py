@@ -4,7 +4,10 @@ import json
 import logging
 import os
 import stat
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,7 @@ import hcs_api.main as main
 import hcs_api.provider_hub as hub
 import hcs_api.provider_registry as registry
 import hcs_api.storage as storage
+from hcs_api.ffmpeg_video import FfmpegCapability
 from hcs_api.main import app
 from hcs_api.models import ImageProviderSettings, ProviderSettings, SafeValidationErrorEnvelope
 
@@ -29,6 +33,7 @@ def _isolate(tmp_path: Path, monkeypatch) -> TestClient:
     hub._install_threads.clear()
     hub._cancelled_tasks.clear()
     hub._refresh_threads.clear()
+    hub._reset_video_probe_cache()
     return TestClient(app)
 
 
@@ -78,6 +83,88 @@ def test_hub_catalog_separates_domain_layers_and_actions(tmp_path, monkeypatch) 
     assert online["status"] == "not_configured"
     assert "test_connection" not in online["available_actions"]
     assert online["source_links"]["api_application_url"].startswith("https://")
+
+
+def test_video_package_uses_full_capability_probe_not_executable_presence(monkeypatch) -> None:
+    hub._reset_video_probe_cache()
+    monkeypatch.setattr(hub, "probe_ffmpeg", lambda: FfmpegCapability(
+        available=False,
+        executable="/usr/local/bin/ffmpeg",
+        probe_executable="/usr/local/bin/ffprobe",
+        blockers=["subtitles_filter_missing", "decoder_missing:webp", "cjk_font_not_found"],
+    ))
+
+    item = hub._video_package_item(hub.detect_hardware())
+
+    assert item.installed is True
+    assert item.ready is False
+    assert item.status == "degraded"
+    assert item.technical_error == {
+        "code": "capability_probe_failed",
+        "blockers": ["subtitles_filter_missing", "decoder_missing:webp", "cjk_font_not_found"],
+    }
+
+
+def test_video_capability_probe_is_cached_and_health_forces_refresh(monkeypatch) -> None:
+    hub._reset_video_probe_cache()
+    calls = 0
+
+    def probe() -> FfmpegCapability:
+        nonlocal calls
+        calls += 1
+        return FfmpegCapability(available=True, executable="ffmpeg", probe_executable="ffprobe")
+
+    monkeypatch.setattr(hub, "probe_ffmpeg", probe)
+    hardware = hub.detect_hardware()
+    first = hub._video_package_item(hardware)
+    second = hub._video_package_item(hardware)
+    refreshed = hub._video_package_item(hardware, force_refresh=True)
+
+    assert calls == 2
+    assert first.last_health_check_at == second.last_health_check_at
+    assert refreshed.last_health_check_at is not None
+
+
+def test_video_capability_cache_expires_and_environment_change_invalidates(monkeypatch) -> None:
+    hub._reset_video_probe_cache()
+    calls = 0
+
+    def probe() -> FfmpegCapability:
+        nonlocal calls
+        calls += 1
+        return FfmpegCapability(available=False, blockers=[f"probe-{calls}"])
+
+    monkeypatch.setattr(hub, "probe_ffmpeg", probe)
+    hub._video_capability()
+    assert hub._video_probe_cache is not None
+    hub._video_probe_cache.expires_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    hub._video_capability()
+    monkeypatch.setenv("HCS_CJK_FONT_FAMILY", "Changed Font")
+    hub._video_capability()
+
+    assert calls == 3
+
+
+def test_video_capability_probe_failure_is_degraded_and_concurrent_requests_share_probe(monkeypatch) -> None:
+    hub._reset_video_probe_cache()
+    calls = 0
+    started = threading.Event()
+
+    def broken_probe() -> FfmpegCapability:
+        nonlocal calls
+        calls += 1
+        started.set()
+        time.sleep(0.05)
+        raise PermissionError("font unreadable")
+
+    monkeypatch.setattr(hub, "probe_ffmpeg", broken_probe)
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = list(executor.map(lambda _index: hub._video_capability(), range(6)))
+
+    assert started.is_set()
+    assert calls == 1
+    assert all(result.result.available is False for result in results)
+    assert all(result.failure_summary == ["video_capability_probe_failed"] for result in results)
 
 
 def test_hub_read_is_zero_network_and_hardware_failure_degrades(tmp_path, monkeypatch) -> None:
