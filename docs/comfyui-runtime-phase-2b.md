@@ -2,8 +2,9 @@
 
 Phase 2B defines a controlled local ComfyUI **Runtime** for HanClassStudio. It is
 infrastructure for a future fixed image Model Package; it is not an image
-generator by itself. The current manifest deliberately exposes no installable
-platform because the reviewed uv/Python/wheel artifact set is incomplete.
+generator by itself. The current manifest enables one reviewed experimental
+adapter: macOS Apple Silicon on macOS 14 or newer. Other platforms remain
+non-installable.
 
 ```text
 Provider Hub
@@ -63,13 +64,12 @@ source-offer obligations must remain part of release packaging review.
 
 | Platform adapter | Manifest status | Install enabled | Evidence |
 | --- | --- | --- | --- |
-| macOS Apple Silicon | `experimental` | no | Lifecycle and security fixtures only; fixed toolchain artifacts are incomplete |
+| macOS Apple Silicon, macOS 14+ | `experimental` | yes | Fixed toolchain and real install/start/check/stop/repair/uninstall validation |
 | Windows x86_64 NVIDIA/CPU | `contract_only` | no | Contract only; not represented as verified |
 | Linux x86_64 NVIDIA/CPU | `contract_only` | no | Contract only; not represented as verified |
 | Other OS/architecture | `unavailable` | no | No reviewed adapter |
 
-The architecture keeps platform selection explicit. No adapter is currently
-install-enabled. It does not
+The architecture keeps platform selection explicit. It does not
 install GPU drivers, CUDA Toolkit, DirectML, Homebrew packages, or system
 components. Unsupported platforms receive a stable error and no install action.
 
@@ -77,16 +77,25 @@ components. Unsupported platforms receive a stable error and no install action.
 
 The macOS contract requires:
 
-- an exact application-bundled uv artifact, including version, source URL,
-  byte length, and SHA-256; `PATH` lookup is forbidden;
-- an exact application-bundled CPython `3.11.13` tree, including platform,
-  architecture, source URL, byte length, tree identity, and executable path;
+- an exact reviewed uv `0.11.26` macOS arm64 release artifact, including source
+  URL, archive and executable byte lengths, SHA-256 values, and pinned license
+  evidence; `PATH` lookup is forbidden;
+- an exact reviewed python-build-standalone CPython `3.11.13` macOS arm64
+  artifact, including source URL, archive and extracted-tree identities,
+  executable identity, and pinned builder/CPython license evidence;
 - a complete wheelhouse plus an artifact lock containing one exact filename,
-  byte length, and SHA-256 for every direct and transitive dependency;
+  PyPI files URL, byte length, SHA-256, METADATA SHA-256, embedded license-file
+  hashes, license expression/evidence/review, and upload time for every direct
+  and transitive dependency;
 - the generated lock
   `providers/comfyui/locks/comfyui-macos-arm64-py311.lock`;
 - lock SHA-256
   `926e90e5a1cb0bd81c783061880fd74ff35ded94c3132bda9862fd9e3fb61df0`;
+- the reviewed 83-wheel artifact lock
+  `providers/comfyui/locks/comfyui-macos-arm64-py311-wheels.json`, SHA-256
+  `bc0599f1953a502359490698d601427eb0875970aa6e93d8f22b700c6902b076`,
+  total size 621,931,539 bytes, and wheel-tree SHA-256
+  `8f8e0a3f582a49d93b29e9a87d2b51357b9910480b8c9eb8a1432f04dd6c76cb`;
 - offline, no-index installation with `--require-hashes`,
   `--only-binary=:all:`, `--no-build-isolation`, and `--no-deps`;
 - a configuration-free uv environment and a small environment-variable
@@ -97,21 +106,36 @@ The macOS contract requires:
 - the installed Python executable SHA-256 recorded and rechecked before start.
 
 The requirements lock is an inventory, not by itself an install authorization.
-Until the separate complete wheel artifact lock and bundled toolchain exist,
-`toolchain_status=unavailable`, macOS installation remains disabled, and no
-online or source-build fallback is permitted.
+The separate artifact lock and toolchain identities provide that authorization
+only for the declared macOS arm64 adapter. A missing, changed, unavailable, or
+unapproved artifact fails closed; no floating mirror, package-index resolution,
+sdist, or source-build fallback is permitted.
 
 The installer never uses or modifies the user's global Python, HanClassStudio's
 API virtual environment, or system packages. Repair rebuilds this managed
-environment. Uninstall removes only the managed Runtime Python/cache. The
+environment from the same manifest and artifact lock; it does not re-resolve
+dependencies. Uninstall removes only the managed Runtime Python/cache. The
 separate `provider-models/comfyui` boundary is preserved for Phase 2C.
+
+The wheel license inventory is a recorded redistribution-compatibility review,
+not legal advice. Release packaging must retain the corresponding notices and
+must repeat the review when any artifact identity changes.
 
 ## Download and archive security
 
-The downloader accepts only the manifest's exact `https://codeload.github.com`
-commit path. It rejects credentials, ports, query/fragment data, redirects,
-non-public DNS results, unexpected HTTP status, unexpected content length,
-timeouts, oversized streams, final byte-count mismatches, and SHA-256 mismatch.
+The downloader accepts only the manifest's exact source URL, exact GitHub
+release asset URLs for uv/Python, and exact `files.pythonhosted.org` wheel URLs
+from the reviewed artifact lock. Every DNS result must be public, and the TLS
+connection is made to a validated resolved address while retaining the expected
+hostname for SNI/certificate verification. Redirects are checked hop by hop and
+are allowed only for the fixed GitHub release-asset destination. Wheel
+downloads do not redirect. It rejects credentials, ports, query/fragment data,
+non-public addresses, unexpected HTTP status, timeouts, oversized or interrupted
+streams, final byte-count mismatches, and SHA-256 mismatch.
+
+Strict artifacts require an exact `Content-Length`. GitHub codeload is the sole
+documented exception because its commit archive is chunked; the downloader
+still requires the exact final byte count and SHA-256 before extraction.
 Downloads go to owner-private staging and can be cancelled.
 
 The tar reader never calls `extractall()`. It performs a full directory scan
@@ -286,9 +310,10 @@ technical data. It never embeds the ComfyUI node editor.
 
 ## Repair and uninstall
 
-When an adapter has a complete reviewed toolchain, repair stops only an owned Runtime, downloads and verifies the pinned source
-again, rebuilds the isolated environment, revalidates it, atomically publishes
-the replacement, runs through the same journal, and retains the previous valid
+Repair stops only an owned Runtime, downloads and verifies the pinned source and
+the exact same uv/Python/wheel bundle again, rebuilds the isolated environment
+without dependency resolution, revalidates it, atomically publishes the
+replacement, runs through the same journal, and retains the previous valid
 version until commit. It does not modify the separate future model directory.
 
 Uninstall verifies/stops the owned process and removes only paths authorized by
@@ -314,17 +339,25 @@ idempotently.
   separation.
 - Playwright covers the complete fixture lifecycle and archive security rejection at
   390 px, including the absence of a generation button.
-- `test_comfyui_real_opt_in.py` remains skipped in normal CI. The current
-  manifest disables installation, so it cannot pass until the fixed bundled
-  uv/Python/wheel artifacts are supplied and reviewed.
+- `test_comfyui_real_opt_in.py` remains skipped in normal CI and must be
+  explicitly enabled on a supported macOS host. It exercises the same manifest
+  and code-owned installer, with no model or workflow.
 
 ## Real validation
 
-A 2026-07-22 run exercised the earlier, less strict implementation. It is
-historical evidence only and does not validate the current fixed-artifact,
-supervisor/listener, ownership, or confirmation contracts. Current-code real
-install/start/stop/repair/uninstall validation is blocked by the intentionally
-unavailable toolchain and must be rerun before any adapter is enabled.
+On 2026-07-23 the current adapter completed a real macOS arm64
+install → start → explicit identity/health check → stop → repair → uninstall
+run. The run used uv `0.11.26`, CPython `3.11.13`, the reviewed 83-wheel bundle,
+and ComfyUI `0.28.0`; installation and repair produced the same environment
+fingerprint and the same toolchain identity. The Runtime listened only on
+`127.0.0.1`, reported the expected ComfyUI identity and core nodes, stopped its
+owned process group, and left no installed Runtime after uninstall.
+
+This is experimental adapter evidence, not a claim of production support. It
+does not validate Windows/Linux, packaged-app distribution, GPU acceleration,
+model installation, workflows, image generation, every macOS point release, or
+every machine policy. Normal CI continues to use controlled fixtures and skips
+the networked real-host test.
 
 ## Deliberately not implemented
 

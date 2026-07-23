@@ -91,9 +91,10 @@ Provider Hub local Runtime status:
   mismatches, captures bounded redacted logs, and validates `/system_stats`,
   API-reported identity, reviewed core nodes, and the official custom-node
   baseline;
-- no adapter is currently install-enabled: macOS Apple Silicon remains
-  `experimental` until complete reviewed uv/Python/wheel artifacts are bundled;
-  Windows/Linux declarations are contract-only;
+- macOS Apple Silicon on macOS 14+ is install-enabled as `experimental` with
+  reviewed fixed uv/Python artifacts and an 83-entry wheel-only bundle; real
+  install/start/check/stop/repair/uninstall validation passed on 2026-07-23;
+  Windows/Linux declarations remain contract-only;
 - Provider Hub keeps Runtime readiness separate from generation readiness:
   no model, workflow, image generation, custom node, ComfyUI Manager, LAN
   binding, arbitrary repository, or system-driver installation is enabled;

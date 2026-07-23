@@ -65,7 +65,7 @@ The first featured entries are:
 
 | ID | Type | Current behavior |
 | --- | --- | --- |
-| `hcs.comfyui-runtime` | local Runtime | Defines and supervises a fixed official ComfyUI Runtime contract. Installation currently fails closed because the complete reviewed uv/Python/wheel artifact set is not bundled. It contains no model or workflow. |
+| `hcs.comfyui-runtime` | local Runtime | Defines and supervises a fixed official ComfyUI Runtime contract. macOS Apple Silicon on macOS 14+ is install-enabled as experimental with a reviewed uv/Python/wheel-only bundle. It contains no model or workflow. |
 | `hcs.teaching-video-basic` | local | Probes system FFmpeg/ffprobe, required encoders/decoders, subtitle filter, and a usable CJK font. It does not install FFmpeg. |
 | `hcs.local-image-basic` | local | Installs a bundled, checksum-pinned JSON fixture through the real asynchronous task pipeline. It is a safe lifecycle proof, not a generative model. |
 | `hcs.online-image-high-quality` | online | Configures and tests the user's OpenAI image API credentials. The default is `gpt-image-2`; generation/editing still uses the existing media pipeline adapter. |
@@ -188,13 +188,14 @@ manifest-bound source-tree identity; it does not start the Runtime, make a
 health HTTP call, or run the full dependency probe. Start and explicit health
 perform the deep source/Python/lock/custom-node and ComfyUI API checks.
 
-No adapter is currently install-enabled. The macOS Apple Silicon declaration
-remains `experimental` but is unavailable until exact bundled uv, CPython, and
-complete wheel artifacts are reviewed. Windows/Linux adapters are
+macOS Apple Silicon on macOS 14+ is install-enabled as `experimental`. Its
+adapter is bound to exact reviewed uv and CPython artifacts plus an 83-entry
+wheel-only artifact lock; installation and repair use the same strict source
+allowlist and perform no dependency resolution. Windows/Linux adapters are
 `contract_only`; unsupported platforms receive no install action. Source,
-dependencies, archive policy, process and listener ownership,
-loopback networking, recovery, repair/uninstall, test evidence, attribution,
-and limits are documented in
+dependencies, archive policy, artifact/license identities, process and listener
+ownership, loopback networking, recovery, repair/uninstall, real-host evidence,
+attribution, and limits are documented in
 [Controlled ComfyUI Runtime — Phase 2B](comfyui-runtime-phase-2b.md).
 
 ## Online configuration and secrets
