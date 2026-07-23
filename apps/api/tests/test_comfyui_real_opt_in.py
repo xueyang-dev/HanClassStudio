@@ -103,7 +103,15 @@ def test_real_official_comfyui_install_start_health_stop_uninstall(tmp_path: Pat
         report["stop_result"] = stopped.status
         assert stopped.status == "stopped"
 
-        runtime.run_runtime_uninstall("real-opt-in-uninstall")
+        prepared = runtime.prepare_runtime_operation("uninstall")
+        confirmation = runtime.consume_runtime_operation_confirmation(
+            "uninstall",
+            prepared.confirmation_token,
+            prepared.summary.installation_identity,
+        )
+        runtime.run_runtime_uninstall(
+            "real-opt-in-uninstall", confirmation=confirmation
+        )
         installed = False
         report["uninstall_result"] = "not_installed" if not runtime._read_state().installed else "failed"
         assert runtime._read_state().installed is False
@@ -121,7 +129,15 @@ def test_real_official_comfyui_install_start_health_stop_uninstall(tmp_path: Pat
                 pass
         if installed:
             try:
-                runtime.run_runtime_uninstall("real-opt-in-cleanup")
+                prepared = runtime.prepare_runtime_operation("uninstall")
+                confirmation = runtime.consume_runtime_operation_confirmation(
+                    "uninstall",
+                    prepared.confirmation_token,
+                    prepared.summary.installation_identity,
+                )
+                runtime.run_runtime_uninstall(
+                    "real-opt-in-cleanup", confirmation=confirmation
+                )
             except runtime.ComfyUIRuntimeError:
                 pass
         report_path = os.environ.get("HCS_COMFYUI_REAL_REPORT")

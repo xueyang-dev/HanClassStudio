@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import signal
 import shutil
 import socket
+import subprocess
 import sys
 import tarfile
 import time
@@ -34,7 +36,9 @@ def _isolate(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(storage, "CONFIG_DIR", root / "config")
     monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", root / "config/provider_settings.json")
     runtime._PROCESS_HANDLES.clear()
+    runtime._WORKER_HANDLES.clear()
     runtime._LOG_THREADS.clear()
+    runtime._DESTRUCTIVE_CONFIRMATIONS.clear()
 
 
 def _write_archive(path: Path, manifest: ComfyUIRuntimeManifest) -> dict[str, bytes]:
@@ -154,6 +158,15 @@ def _install_fakes(tmp_path: Path, monkeypatch) -> tuple[ComfyUIRuntimeManifest,
     monkeypatch.setattr(runtime, "ENVIRONMENT_BUILDER", environment_builder)
     monkeypatch.setattr(runtime, "RUNTIME_VALIDATOR", validator)
     return manifest, archive
+
+
+def _confirmed_operation(operation: str) -> runtime.RuntimeOperationSummary:
+    prepared = runtime.prepare_runtime_operation(operation)
+    return runtime.consume_runtime_operation_confirmation(
+        operation,
+        prepared.confirmation_token,
+        prepared.summary.installation_identity,
+    )
 
 
 def test_install_uses_durable_journal_atomic_publish_and_runtime_only_boundary(tmp_path: Path, monkeypatch) -> None:
@@ -306,7 +319,9 @@ def test_uninstall_removes_only_managed_runtime_and_preserves_model_boundary(tmp
     project_asset.parent.mkdir(parents=True)
     project_asset.write_bytes(b"asset")
 
-    runtime.run_runtime_uninstall("task-uninstall")
+    runtime.run_runtime_uninstall(
+        "task-uninstall", confirmation=_confirmed_operation("uninstall")
+    )
 
     assert not runtime._version_root(manifest).exists()
     assert model.read_bytes() == b"future-owned-model"
@@ -315,6 +330,81 @@ def test_uninstall_removes_only_managed_runtime_and_preserves_model_boundary(tmp
     assert runtime._managed_root().is_dir()
     assert runtime._logs_root().is_dir()
     assert not runtime._config_path(runtime._JOURNAL_FILE).exists()
+
+
+def test_destructive_confirmation_is_required_one_time_and_identity_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    manifest, _archive = _install_fakes(tmp_path, monkeypatch)
+    runtime.run_runtime_install("task-install")
+    version = runtime._version_root(manifest)
+
+    with pytest.raises(runtime.ComfyUIRuntimeError) as missing:
+        runtime.run_runtime_uninstall("task-uninstall")
+    assert missing.value.code == "confirmation_invalid"
+    assert version.exists()
+
+    prepared = runtime.prepare_runtime_operation("uninstall")
+    confirmed = runtime.consume_runtime_operation_confirmation(
+        "uninstall",
+        prepared.confirmation_token,
+        prepared.summary.installation_identity,
+    )
+    assert confirmed == prepared.summary
+    with pytest.raises(runtime.ComfyUIRuntimeError) as replayed:
+        runtime.consume_runtime_operation_confirmation(
+            "uninstall",
+            prepared.confirmation_token,
+            prepared.summary.installation_identity,
+        )
+    assert replayed.value.code == "confirmation_invalid"
+    assert version.exists()
+
+
+def test_destructive_confirmation_expires_or_becomes_stale_without_mutating_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    manifest, _archive = _install_fakes(tmp_path, monkeypatch)
+    runtime.run_runtime_install("task-install")
+    version = runtime._version_root(manifest)
+
+    expired = runtime.prepare_runtime_operation("uninstall")
+    expired_key = hashlib.sha256(expired.confirmation_token.encode()).hexdigest()
+    runtime._DESTRUCTIVE_CONFIRMATIONS[expired_key].expires_at_epoch = 0
+    with pytest.raises(runtime.ComfyUIRuntimeError) as expired_error:
+        runtime.consume_runtime_operation_confirmation(
+            "uninstall",
+            expired.confirmation_token,
+            expired.summary.installation_identity,
+        )
+    assert expired_error.value.code == "confirmation_expired"
+
+    stale = runtime.prepare_runtime_operation("uninstall")
+    (version / "source/main.py").write_text("changed fixture", encoding="utf-8")
+    with pytest.raises(runtime.ComfyUIRuntimeError) as stale_error:
+        runtime.consume_runtime_operation_confirmation(
+            "uninstall",
+            stale.confirmation_token,
+            stale.summary.installation_identity,
+        )
+    assert stale_error.value.code == "confirmation_stale"
+    assert version.exists()
+
+    queued = runtime.prepare_runtime_operation("uninstall")
+    queued_summary = runtime.consume_runtime_operation_confirmation(
+        "uninstall",
+        queued.confirmation_token,
+        queued.summary.installation_identity,
+    )
+    (version / "source/main.py").write_text("changed again", encoding="utf-8")
+    with pytest.raises(runtime.ComfyUIRuntimeError) as queued_error:
+        runtime.run_runtime_uninstall(
+            "task-uninstall-stale", confirmation=queued_summary
+        )
+    assert queued_error.value.code == "confirmation_stale"
+    assert version.exists()
 
 
 def test_interrupted_uninstall_recovery_finishes_cleanup_idempotently(tmp_path: Path, monkeypatch) -> None:
@@ -370,7 +460,9 @@ def test_uninstall_refuses_changed_managed_root_identity_and_preserves_unowned_f
     runtime._managed_root().symlink_to(unowned_root, target_is_directory=True)
 
     with pytest.raises(runtime.ComfyUIRuntimeError) as error:
-        runtime.run_runtime_uninstall("task-uninstall")
+        runtime.run_runtime_uninstall(
+            "task-uninstall", confirmation=_confirmed_operation("uninstall")
+        )
 
     assert error.value.code == "runtime_identity_mismatch"
     assert marker.read_text(encoding="utf-8") == "unchanged"
@@ -395,7 +487,9 @@ def test_uninstall_refuses_replaced_version_and_missing_installation_record(
     final.symlink_to(unowned, target_is_directory=True)
 
     with pytest.raises(runtime.ComfyUIRuntimeError) as linked_error:
-        runtime.run_runtime_uninstall("task-uninstall-linked")
+        runtime.run_runtime_uninstall(
+            "task-uninstall-linked", confirmation=_confirmed_operation("uninstall")
+        )
 
     assert linked_error.value.code == "runtime_identity_mismatch"
     assert marker.read_text(encoding="utf-8") == "unchanged"
@@ -405,7 +499,9 @@ def test_uninstall_refuses_replaced_version_and_missing_installation_record(
     unrecorded_marker.write_text("unchanged", encoding="utf-8")
 
     with pytest.raises(runtime.ComfyUIRuntimeError) as unrecorded_error:
-        runtime.run_runtime_uninstall("task-uninstall-unrecorded")
+        runtime.run_runtime_uninstall(
+            "task-uninstall-unrecorded", confirmation=_confirmed_operation("uninstall")
+        )
 
     assert unrecorded_error.value.code == "runtime_identity_mismatch"
     assert unrecorded_marker.read_text(encoding="utf-8") == "unchanged"
@@ -455,7 +551,10 @@ def test_uninstall_requires_current_manifest_and_tree_identity(
         (final / "source/main.py").write_text("changed\n", encoding="utf-8")
 
     with pytest.raises(runtime.ComfyUIRuntimeError):
-        runtime.run_runtime_uninstall(f"task-uninstall-{changed_identity}")
+            runtime.run_runtime_uninstall(
+                f"task-uninstall-{changed_identity}",
+                confirmation=_confirmed_operation("uninstall"),
+            )
 
     assert final.is_dir()
     assert protected.read_text(encoding="utf-8") == "unchanged"
@@ -724,6 +823,9 @@ def test_supervisor_starts_health_checks_loopback_identity_and_stops(tmp_path: P
     assert snapshot.available_actions[0] == "stop_runtime"
     process = runtime._read_process()
     assert process is not None
+    assert process.ownership.process_group_id == process.ownership.pid
+    assert process.ownership.session_id == process.ownership.pid
+    assert process.ownership.cwd_relative_path == f"versions/{manifest.version}/source"
     assert process.ownership.nonce in " ".join(runtime._expected_runtime_argv(manifest, process.ownership.port, process.ownership.nonce))
     stopped = runtime.stop_runtime()
     assert stopped.status == "stopped"
@@ -747,6 +849,147 @@ def test_supervisor_detects_crash_and_does_not_return_runtime_ready(tmp_path: Pa
     assert health.status == "crashed"
     assert health.healthy is False
     assert runtime.runtime_snapshot(recover=False).runtime_ready is False
+
+
+@pytest.mark.skipif(os.name != "posix", reason="listener ownership fixture targets POSIX CI")
+@pytest.mark.parametrize("mismatch", ["process", "address"])
+def test_listener_identity_mismatch_never_reports_runtime_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    _prepare_fake_runtime(tmp_path, monkeypatch)
+    runtime.start_runtime()
+    process = runtime._read_process()
+    assert process is not None
+    assert process.ownership.listener_pid is not None
+    if mismatch == "process":
+        monkeypatch.setattr(runtime, "_listener_owners", lambda _process: [(os.getpid(), "127.0.0.1")])
+    else:
+        listener_pid = process.ownership.listener_pid
+        monkeypatch.setattr(runtime, "_listener_owners", lambda _process: [(listener_pid, "::")])
+    try:
+        health = runtime.check_runtime_health()
+
+        assert health.healthy is False
+        assert health.status == "repair_required"
+        assert health.error is not None
+        assert health.error["code"] == "runtime_identity_mismatch"
+    finally:
+        runtime.stop_runtime(force=True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group fixture currently targets POSIX CI")
+def test_dead_supervisor_owned_group_is_reclaimed_without_touching_adjacent_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _prepare_fake_runtime(tmp_path, monkeypatch)
+    runtime.start_runtime()
+    process = runtime._read_process()
+    assert process is not None
+    adjacent = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        cwd=tmp_path,
+        start_new_session=True,
+    )
+    try:
+        os.kill(process.ownership.pid, signal.SIGKILL)
+        deadline = time.monotonic() + 3
+        while runtime._process_alive(process.ownership.pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+        health = runtime.check_runtime_health()
+
+        assert health.status == "crashed"
+        assert health.identity_verified is True
+        assert runtime._read_process() is None
+        assert not runtime._process_group_alive(process.ownership.process_group_id)
+        assert adjacent.poll() is None
+    finally:
+        adjacent.terminate()
+        adjacent.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="worker process-group fixture targets POSIX CI")
+def test_owned_install_worker_is_reclaimed_without_touching_adjacent_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    runtime._managed_root().mkdir(parents=True)
+    argv = [sys.executable, "-c", "import time; time.sleep(30)"]
+    worker = subprocess.Popen(argv, cwd=runtime._managed_root(), start_new_session=True)
+    runtime._WORKER_HANDLES[worker.pid] = worker
+    adjacent = subprocess.Popen(argv, cwd=tmp_path, start_new_session=True)
+    try:
+        token = runtime._process_start_token(worker.pid)
+        group = runtime._process_group_identity(worker.pid)
+        assert token is not None
+        assert group == (worker.pid, worker.pid)
+        root_info = runtime._managed_root().stat()
+        ownership = runtime.RuntimeWorkerOwnership(
+            pid=worker.pid,
+            process_start_token=token,
+            process_group_id=group[0],
+            session_id=group[1],
+            executable_sha256=runtime.sha256_file(Path(sys.executable)),
+            argv_sha256=runtime._argv_digest(argv),
+            argv=argv,
+            cwd_relative_path=".",
+            managed_root_identity=runtime.RuntimeDirectoryIdentity(
+                device=root_info.st_dev,
+                inode=root_info.st_ino,
+            ),
+            started_at=runtime._iso(),
+        )
+        runtime._write_worker_process(ownership)
+
+        assert runtime._runtime_worker_mismatch_reason(ownership) is None
+        assert runtime._reclaim_runtime_worker() is True
+        worker.wait(timeout=5)
+        assert runtime._read_worker_process() is None
+        assert adjacent.poll() is None
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+            worker.wait(timeout=5)
+        adjacent.terminate()
+        adjacent.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="worker process-group fixture targets POSIX CI")
+def test_mismatched_worker_record_never_signals_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    runtime._managed_root().mkdir(parents=True)
+    argv = [sys.executable, "-c", "import time; time.sleep(30)"]
+    worker = subprocess.Popen(argv, cwd=runtime._managed_root(), start_new_session=True)
+    try:
+        group = runtime._process_group_identity(worker.pid)
+        assert group == (worker.pid, worker.pid)
+        root_info = runtime._managed_root().stat()
+        runtime._write_worker_process(runtime.RuntimeWorkerOwnership(
+            pid=worker.pid,
+            process_start_token="mismatched-start-token",
+            process_group_id=group[0],
+            session_id=group[1],
+            executable_sha256=runtime.sha256_file(Path(sys.executable)),
+            argv_sha256=runtime._argv_digest(argv),
+            argv=argv,
+            cwd_relative_path=".",
+            managed_root_identity=runtime.RuntimeDirectoryIdentity(
+                device=root_info.st_dev,
+                inode=root_info.st_ino,
+            ),
+            started_at=runtime._iso(),
+        ))
+
+        with pytest.raises(runtime.ComfyUIRuntimeError) as error:
+            runtime._reclaim_runtime_worker()
+
+        assert error.value.code == "runtime_identity_mismatch"
+        assert worker.poll() is None
+    finally:
+        worker.terminate()
+        worker.wait(timeout=5)
 
 
 def test_port_selector_skips_conflicts_and_fails_when_range_is_full(tmp_path: Path, monkeypatch) -> None:
@@ -774,12 +1017,18 @@ def test_pid_identity_mismatch_never_sends_signal(tmp_path: Path, monkeypatch) -
     ownership = runtime.RuntimeProcessOwnership(
         pid=os.getpid(),
         process_start_token="reused-pid-token",
+        process_group_id=os.getpid(),
+        session_id=os.getpid(),
         executable_sha256="0" * 64,
         runtime_version=manifest.version,
         runtime_root_relative_path=f"versions/{manifest.version}",
+        cwd_relative_path=f"versions/{manifest.version}/source",
+        installation_identity_sha256="0" * 64,
         port=manifest.launch.port_min,
         nonce="a" * 32,
         expected_argv_sha256="0" * 64,
+        runtime_argv_sha256="0" * 64,
+        supervisor_script_sha256="0" * 64,
         source_tree_sha256=manifest.source.source_tree_sha256,
         started_at=runtime._iso(),
     )

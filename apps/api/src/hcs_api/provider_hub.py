@@ -33,9 +33,13 @@ from .comfyui_archive import ComfyUIArchiveError
 from .comfyui_runtime import (
     ComfyUIRuntimeError,
     RuntimeOperation,
+    RuntimeOperationConfirmation,
+    RuntimeOperationSummary,
     RuntimeSnapshot,
     check_runtime_health,
+    consume_runtime_operation_confirmation,
     log_summary as comfyui_log_summary,
+    prepare_runtime_operation,
     recover_installations as recover_comfyui_installations,
     run_runtime_install,
     run_runtime_uninstall,
@@ -355,6 +359,14 @@ class RuntimeDirectoryAction(BaseModel):
 
     action: Literal["open_managed_runtime_directory"]
     runtime_id: Literal["comfyui"]
+
+
+class RuntimeMutationConfirmationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation_token: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_runtime_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    preserve_models: Literal[True] = True
 
 
 def _normalize_online_model(value: str) -> str:
@@ -1201,7 +1213,10 @@ def _run_fixture_install(task_id: str) -> None:
             _cancelled_tasks.discard(task_id)
 
 
-def _run_comfyui_mutation(task_id: str) -> None:
+def _run_comfyui_mutation(
+    task_id: str,
+    confirmation: RuntimeOperationSummary | None = None,
+) -> None:
     task = get_install_task(task_id)
 
     def cancel() -> None:
@@ -1230,9 +1245,17 @@ def _run_comfyui_mutation(task_id: str) -> None:
 
     try:
         if task.operation == "uninstall":
-            run_runtime_uninstall(task_id, progress=progress, cancel=cancel)
+            run_runtime_uninstall(
+                task_id, progress=progress, cancel=cancel, confirmation=confirmation
+            )
         else:
-            run_runtime_install(task_id, operation=task.operation, progress=progress, cancel=cancel)
+            run_runtime_install(
+                task_id,
+                operation=task.operation,
+                progress=progress,
+                cancel=cancel,
+                confirmation=confirmation,
+            )
         _update_install_task(
             task_id,
             state="completed",
@@ -1269,7 +1292,21 @@ def _run_comfyui_mutation(task_id: str) -> None:
             _cancelled_tasks.discard(task_id)
 
 
-def start_comfyui_mutation(operation: RuntimeOperation) -> ProviderInstallStartResponse:
+def prepare_comfyui_mutation(
+    operation: Literal["repair", "uninstall"],
+) -> RuntimeOperationConfirmation:
+    try:
+        return prepare_runtime_operation(operation)
+    except ComfyUIRuntimeError as exc:
+        raise ProviderHubError(exc.code, exc.message) from exc
+
+
+def start_comfyui_mutation(
+    operation: RuntimeOperation,
+    *,
+    confirmation_token: str | None = None,
+    expected_runtime_identity: str | None = None,
+) -> ProviderInstallStartResponse:
     with _install_lock:
         active = latest_install_task(_COMFYUI_PACKAGE_ID)
         if active and active.state in {"queued", "running"} and active.task_id in _install_threads:
@@ -1279,6 +1316,18 @@ def start_comfyui_mutation(operation: RuntimeOperation) -> ProviderInstallStartR
             raise ProviderHubError("task_conflict", "ComfyUI Runtime is already installed; use repair")
         if operation in {"repair", "uninstall"} and not snapshot.installed:
             raise ProviderHubError("runtime_not_installed", "ComfyUI Runtime is not installed")
+        confirmation: RuntimeOperationSummary | None = None
+        if operation in {"repair", "uninstall"}:
+            if not confirmation_token or not expected_runtime_identity:
+                raise ProviderHubError(
+                    "confirmation_invalid", "A backend Runtime confirmation is required"
+                )
+            try:
+                confirmation = consume_runtime_operation_confirmation(
+                    operation, confirmation_token, expected_runtime_identity
+                )
+            except ComfyUIRuntimeError as exc:
+                raise ProviderHubError(exc.code, exc.message) from exc
         now = _iso()
         messages = {
             "install": "ComfyUI Runtime 安装任务已排队",
@@ -1299,7 +1348,7 @@ def start_comfyui_mutation(operation: RuntimeOperation) -> ProviderInstallStartR
         _save_install_task(task)
         thread = threading.Thread(
             target=_run_comfyui_mutation,
-            args=(task.task_id,),
+            args=(task.task_id, confirmation),
             daemon=True,
             name=f"hcs-comfyui-{operation}-{task.task_id[:8]}",
         )

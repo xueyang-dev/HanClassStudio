@@ -17,6 +17,7 @@ import type {
   ProviderHubInstallStartResponse,
   ProviderHubInstallTask,
   ProviderHubItem,
+  RuntimeOperationConfirmation,
   ProviderRefreshTask,
   PublicOnlineProviderConfig,
   ProjectState,
@@ -363,12 +364,47 @@ export async function startProviderHubInstall(packageId: string): Promise<Provid
   return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install`, { method: "POST" });
 }
 
-export async function repairProviderRuntime(packageId: string): Promise<ProviderHubInstallStartResponse> {
-  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/repair`, { method: "POST" });
+export async function prepareProviderRuntimeMutation(
+  packageId: string,
+  operation: "repair" | "uninstall"
+): Promise<RuntimeOperationConfirmation> {
+  return request<RuntimeOperationConfirmation>(
+    `/api/providers/hub/packages/${encodeURIComponent(packageId)}/prepare-${operation}`,
+    { method: "POST" }
+  );
 }
 
-export async function uninstallProviderRuntime(packageId: string): Promise<ProviderHubInstallStartResponse> {
-  return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/uninstall`, { method: "POST" });
+async function mutateProviderRuntime(
+  packageId: string,
+  operation: "repair" | "uninstall",
+  confirmation: RuntimeOperationConfirmation
+): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(
+    `/api/providers/hub/packages/${encodeURIComponent(packageId)}/${operation}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmation_token: confirmation.confirmation_token,
+        expected_runtime_identity: confirmation.summary.installation_identity,
+        preserve_models: true
+      })
+    }
+  );
+}
+
+export async function repairProviderRuntime(
+  packageId: string,
+  confirmation: RuntimeOperationConfirmation
+): Promise<ProviderHubInstallStartResponse> {
+  return mutateProviderRuntime(packageId, "repair", confirmation);
+}
+
+export async function uninstallProviderRuntime(
+  packageId: string,
+  confirmation: RuntimeOperationConfirmation
+): Promise<ProviderHubInstallStartResponse> {
+  return mutateProviderRuntime(packageId, "uninstall", confirmation);
 }
 
 export async function startProviderRuntime(packageId: string): Promise<ProviderHubItem> {

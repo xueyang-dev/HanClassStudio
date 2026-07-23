@@ -90,6 +90,8 @@ from .provider_hub import (
     PublicOnlineProviderConfig,
     RuntimeDirectoryAction,
     RuntimeLogsResponse,
+    RuntimeMutationConfirmationRequest,
+    RuntimeOperationConfirmation,
     cancel_fixture_install,
     check_local_health,
     comfyui_runtime_directory,
@@ -100,6 +102,7 @@ from .provider_hub import (
     get_latest_install_task,
     get_refresh_task,
     hub_catalog,
+    prepare_comfyui_mutation,
     save_online_config,
     set_online_disabled,
     start_comfyui_mutation,
@@ -1091,6 +1094,9 @@ def _provider_hub_http_error(error: ProviderHubError) -> HTTPException:
         "runtime_not_found": 404,
         "runtime_not_installed": 409,
         "runtime_identity_mismatch": 409,
+        "confirmation_invalid": 409,
+        "confirmation_expired": 409,
+        "confirmation_stale": 409,
         "unsupported_platform": 400,
         "runtime_start_failed": 503,
         "runtime_start_timeout": 504,
@@ -1176,21 +1182,67 @@ def get_provider_runtime(package_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/providers/hub/packages/{package_id}/repair", response_model=ProviderInstallStartResponse)
-def repair_provider_runtime(package_id: str) -> ProviderInstallStartResponse:
+def repair_provider_runtime(
+    package_id: str,
+    request: RuntimeMutationConfirmationRequest,
+) -> ProviderInstallStartResponse:
     if package_id != "hcs.comfyui-runtime":
         raise HTTPException(status_code=404, detail={"code": "runtime_not_found", "message": "Runtime package was not found"})
     try:
-        return start_comfyui_mutation("repair")
+        return start_comfyui_mutation(
+            "repair",
+            confirmation_token=request.confirmation_token,
+            expected_runtime_identity=request.expected_runtime_identity,
+        )
     except ProviderHubError as error:
         raise _provider_hub_http_error(error) from error
 
 
 @app.post("/api/providers/hub/packages/{package_id}/uninstall", response_model=ProviderInstallStartResponse)
-def uninstall_provider_runtime(package_id: str) -> ProviderInstallStartResponse:
+def uninstall_provider_runtime(
+    package_id: str,
+    request: RuntimeMutationConfirmationRequest,
+) -> ProviderInstallStartResponse:
     if package_id != "hcs.comfyui-runtime":
         raise HTTPException(status_code=404, detail={"code": "runtime_not_found", "message": "Runtime package was not found"})
     try:
-        return start_comfyui_mutation("uninstall")
+        return start_comfyui_mutation(
+            "uninstall",
+            confirmation_token=request.confirmation_token,
+            expected_runtime_identity=request.expected_runtime_identity,
+        )
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post(
+    "/api/providers/hub/packages/{package_id}/prepare-repair",
+    response_model=RuntimeOperationConfirmation,
+)
+def prepare_repair_provider_runtime(package_id: str) -> RuntimeOperationConfirmation:
+    if package_id != "hcs.comfyui-runtime":
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "runtime_not_found", "message": "Runtime package was not found"},
+        )
+    try:
+        return prepare_comfyui_mutation("repair")
+    except ProviderHubError as error:
+        raise _provider_hub_http_error(error) from error
+
+
+@app.post(
+    "/api/providers/hub/packages/{package_id}/prepare-uninstall",
+    response_model=RuntimeOperationConfirmation,
+)
+def prepare_uninstall_provider_runtime(package_id: str) -> RuntimeOperationConfirmation:
+    if package_id != "hcs.comfyui-runtime":
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "runtime_not_found", "message": "Runtime package was not found"},
+        )
+    try:
+        return prepare_comfyui_mutation("uninstall")
     except ProviderHubError as error:
         raise _provider_hub_http_error(error) from error
 

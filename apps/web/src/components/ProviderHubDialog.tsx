@@ -12,6 +12,7 @@ import {
   fetchProviderHubRefresh,
   fetchProviderRuntimeDirectoryAction,
   fetchProviderRuntimeLogs,
+  prepareProviderRuntimeMutation,
   repairProviderRuntime,
   saveOnlineProviderConfig,
   setOnlineProviderEnabled,
@@ -174,15 +175,30 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
   }
 
   async function mutateRuntime(item: ProviderHubItem, operation: "install" | "repair" | "uninstall"): Promise<void> {
-    if (operation === "repair" && !window.confirm(t("provider.hub.runtimeRepairConfirm"))) return;
-    if (operation === "uninstall" && !window.confirm(t("provider.hub.runtimeUninstallConfirm"))) return;
     if (!beginMutation(item.id)) return;
     setError("");
     try {
+      const confirmation = operation === "install"
+        ? null
+        : await prepareProviderRuntimeMutation(item.id, operation);
+      if (
+        operation === "repair"
+        && !window.confirm(t("provider.hub.runtimeRepairConfirm"))
+      ) {
+        endMutation(item.id);
+        return;
+      }
+      if (
+        operation === "uninstall"
+        && !window.confirm(t("provider.hub.runtimeUninstallConfirm"))
+      ) {
+        endMutation(item.id);
+        return;
+      }
       const started = operation === "repair"
-        ? await repairProviderRuntime(item.id)
+        ? await repairProviderRuntime(item.id, confirmation!)
         : operation === "uninstall"
-          ? await uninstallProviderRuntime(item.id)
+          ? await uninstallProviderRuntime(item.id, confirmation!)
           : await startProviderHubInstall(item.id);
       let task = started.task;
       setHubState((current) => applyProviderHubInstallStart(current.catalog, current.installTasks, started));

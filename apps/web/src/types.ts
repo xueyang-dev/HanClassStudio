@@ -354,6 +354,23 @@ export interface ProviderHubInstallStartResponse {
   provider: ProviderHubItem;
 }
 
+export interface RuntimeOperationConfirmation {
+  summary: {
+    operation: "repair" | "uninstall";
+    runtime_id: "comfyui";
+    version: string;
+    installation_identity: string;
+    tree_identity: string;
+    modified: boolean;
+    replaces_runtime_files: boolean;
+    preserves_models: true;
+    preserves_runtime_data: true;
+    preserves_logs: true;
+  };
+  confirmation_token: string;
+  expires_at: string;
+}
+
 export interface PublicOnlineProviderConfig {
   provider_id: string;
   endpoint: string;

@@ -16,6 +16,7 @@ import socket
 import ssl
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -61,6 +62,7 @@ RuntimeAction = Literal[
 _STATE_FILE = "comfyui_runtime_state.json"
 _JOURNAL_FILE = "comfyui_runtime_journal.json"
 _PROCESS_FILE = "comfyui_runtime_process.json"
+_WORKER_PROCESS_FILE = "comfyui_runtime_worker.json"
 _MAX_DOWNLOAD_SECONDS = 10 * 60
 _CONNECT_TIMEOUT_SECONDS = 10
 _READ_TIMEOUT_SECONDS = 30
@@ -69,8 +71,12 @@ _LOG_BACKUPS = 2
 _CONFIG_LOCK = threading.RLock()
 _MUTATION_LOCK = threading.RLock()
 _PROCESS_LOCK = threading.RLock()
+_CONFIRMATION_LOCK = threading.RLock()
 _PROCESS_HANDLES: dict[int, subprocess.Popen[bytes]] = {}
+_WORKER_HANDLES: dict[int, subprocess.Popen[str]] = {}
 _LOG_THREADS: dict[int, threading.Thread] = {}
+_DESTRUCTIVE_CONFIRMATIONS: dict[str, "RuntimeDestructiveConfirmationRecord"] = {}
+_CONFIRMATION_TTL_SECONDS = 5 * 60
 PUBLIC_ERROR_CODES = frozenset({
     "runtime_manifest_invalid", "unsupported_platform", "hardware_incompatible",
     "insufficient_disk", "download_failed", "download_cancelled", "checksum_mismatch",
@@ -80,6 +86,7 @@ PUBLIC_ERROR_CODES = frozenset({
     "port_conflict", "runtime_start_failed", "runtime_start_timeout",
     "runtime_identity_mismatch", "runtime_crashed", "runtime_stop_failed",
     "runtime_health_failed", "runtime_modified", "repair_failed", "uninstall_failed",
+    "confirmation_invalid", "confirmation_expired", "confirmation_stale",
     "task_conflict", "cancelled", "internal_error",
 })
 
@@ -225,16 +232,31 @@ class RuntimeInstallJournal(_StrictModel):
 class RuntimeProcessOwnership(_StrictModel):
     pid: int = Field(gt=0)
     process_start_token: str
+    process_group_id: int = Field(gt=0)
+    session_id: int = Field(gt=0)
     executable_sha256: str
     runtime_version: str
     runtime_root_relative_path: str
+    cwd_relative_path: str
+    installation_identity_sha256: str
     port: int = Field(ge=1024, le=65535)
     nonce: str
     expected_argv_sha256: str
+    runtime_argv_sha256: str
+    supervisor_script_sha256: str
     source_tree_sha256: str
+    listener_pid: int | None = Field(default=None, gt=0)
+    listener_start_token: str | None = None
     started_at: str
 
-    @field_validator("executable_sha256", "expected_argv_sha256", "source_tree_sha256")
+    @field_validator(
+        "executable_sha256",
+        "expected_argv_sha256",
+        "runtime_argv_sha256",
+        "supervisor_script_sha256",
+        "source_tree_sha256",
+        "installation_identity_sha256",
+    )
     @classmethod
     def _sha256_identity(cls, value: str) -> str:
         if not re.fullmatch(r"[0-9a-f]{64}", value):
@@ -256,6 +278,19 @@ class RuntimeProcessOwnership(_StrictModel):
             raise ValueError("process Runtime root identity is invalid")
         return value
 
+    @field_validator("cwd_relative_path")
+    @classmethod
+    def _cwd_identity(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if (
+            len(path.parts) != 3
+            or path.parts[0] != "versions"
+            or path.parts[2] != "source"
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise ValueError("process working-directory identity is invalid")
+        return value
+
 
 class ComfyUIRuntimeProcess(_StrictModel):
     schema_: Literal["hanclassstudio.comfyui_runtime_process.v1"] = Field(
@@ -268,6 +303,39 @@ class ComfyUIRuntimeProcess(_StrictModel):
     error: dict[str, str] | None = None
 
 
+class RuntimeWorkerOwnership(_StrictModel):
+    schema_: Literal["hanclassstudio.comfyui_runtime_worker.v1"] = Field(
+        default="hanclassstudio.comfyui_runtime_worker.v1", alias="schema"
+    )
+    pid: int = Field(gt=0)
+    process_start_token: str
+    process_group_id: int = Field(gt=0)
+    session_id: int = Field(gt=0)
+    executable_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    argv_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    argv: list[str]
+    cwd_relative_path: str
+    managed_root_identity: RuntimeDirectoryIdentity
+    started_at: str
+
+    @field_validator("argv")
+    @classmethod
+    def _worker_argv(cls, value: list[str]) -> list[str]:
+        if not value or len(value) > 256 or any(not item or len(item) > 4096 for item in value):
+            raise ValueError("worker argv is invalid")
+        return value
+
+    @field_validator("cwd_relative_path")
+    @classmethod
+    def _worker_cwd(cls, value: str) -> str:
+        if value == ".":
+            return value
+        path = PurePosixPath(value)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+            raise ValueError("worker working directory must remain managed")
+        return path.as_posix()
+
+
 class RuntimeHealthSnapshot(_StrictModel):
     healthy: bool
     checked_at: str
@@ -278,6 +346,32 @@ class RuntimeHealthSnapshot(_StrictModel):
     custom_nodes_pristine: bool = False
     identity_verified: bool = False
     error: dict[str, str] | None = None
+
+
+class RuntimeOperationSummary(_StrictModel):
+    operation: Literal["repair", "uninstall"]
+    runtime_id: Literal["comfyui"] = "comfyui"
+    version: str
+    installation_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    tree_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    modified: bool
+    replaces_runtime_files: bool
+    preserves_models: Literal[True] = True
+    preserves_runtime_data: Literal[True] = True
+    preserves_logs: Literal[True] = True
+
+
+class RuntimeOperationConfirmation(_StrictModel):
+    summary: RuntimeOperationSummary
+    confirmation_token: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expires_at: str
+
+
+class RuntimeDestructiveConfirmationRecord(_StrictModel):
+    token_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    summary: RuntimeOperationSummary
+    nonce: str = Field(pattern=r"^[0-9a-f]{32}$")
+    expires_at_epoch: float
 
 
 class RuntimeSnapshot(_StrictModel):
@@ -482,6 +576,11 @@ def _open_managed_directory(
 
 def _managed_directory_identity(path: Path, *, expected_root: RuntimeDirectoryIdentity | None = None) -> RuntimeDirectoryIdentity:
     with _open_managed_directory(path, expected_root=expected_root) as (_fd, _root, identity):
+        return identity
+
+
+def _current_managed_root_identity() -> RuntimeDirectoryIdentity:
+    with _open_managed_root() as (_fd, identity):
         return identity
 
 
@@ -931,6 +1030,7 @@ def _run_controlled(
     error_code: str,
     cancel: CancellationCheck,
     environment: dict[str, str] | None = None,
+    persist_ownership: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     cancel()
     try:
@@ -946,6 +1046,41 @@ def _run_controlled(
         )
     except OSError as exc:
         raise ComfyUIRuntimeError(error_code, "Controlled ComfyUI environment command failed") from exc
+    if persist_ownership:
+        token = _process_start_token(process.pid)
+        group_identity = _process_group_identity(process.pid)
+        try:
+            relative_cwd = cwd.relative_to(_managed_root()).as_posix() or "."
+            executable = Path(argv[0])
+            root_identity = _current_managed_root_identity()
+            if (
+                token is None
+                or group_identity != (process.pid, process.pid)
+                or not executable.is_absolute()
+                or not executable.is_file()
+            ):
+                raise ComfyUIRuntimeError(
+                    "runtime_identity_mismatch", "Controlled Runtime worker identity could not be recorded"
+                )
+            _write_worker_process(RuntimeWorkerOwnership(
+                pid=process.pid,
+                process_start_token=token,
+                process_group_id=group_identity[0],
+                session_id=group_identity[1],
+                executable_sha256=sha256_file(executable),
+                argv_sha256=_argv_digest(argv),
+                argv=argv,
+                cwd_relative_path=relative_cwd,
+                managed_root_identity=root_identity,
+                started_at=_iso(),
+            ))
+            _WORKER_HANDLES[process.pid] = process
+        except (OSError, ValueError, ComfyUIRuntimeError):
+            _terminate_controlled_process(process, force=True)
+            _write_worker_process(None)
+            raise ComfyUIRuntimeError(
+                "runtime_identity_mismatch", "Controlled Runtime worker identity could not be recorded"
+            )
     deadline = time.monotonic() + timeout
     try:
         while True:
@@ -960,6 +1095,10 @@ def _run_controlled(
     except BaseException:
         _terminate_controlled_process(process)
         raise
+    finally:
+        if persist_ownership:
+            _WORKER_HANDLES.pop(process.pid, None)
+            _write_worker_process(None)
     cancel()
     if stdout:
         _append_log("install", stdout[-16_384:])
@@ -1203,6 +1342,7 @@ def create_python_environment(
         ],
         cwd=_managed_root(), timeout=120,
         error_code="python_environment_failed", cancel=cancel, environment=manager_environment,
+        persist_ownership=True,
     )
     _run_controlled(
         [
@@ -1213,6 +1353,7 @@ def create_python_environment(
         ],
         cwd=_managed_root(), timeout=45 * 60,
         error_code="dependency_install_failed", cancel=cancel, environment=manager_environment,
+        persist_ownership=True,
     )
     fingerprint = environment_fingerprint(environment, manifest)
     for package, version in sorted(_expected_dependencies(storage.ROOT_DIR / manifest.python.lock_file).items()):
@@ -1267,6 +1408,55 @@ def source_tree_fingerprint(source: Path) -> str:
                 digest.update(bytes.fromhex(sha256_file(target)))
     except OSError as exc:
         raise ComfyUIRuntimeError("runtime_validation_failed", "ComfyUI source tree cannot be verified") from exc
+    return digest.hexdigest()
+
+
+def installed_tree_fingerprint(version_root: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        for current_root, directory_names, file_names, current_fd in os.fwalk(
+            version_root, topdown=True, follow_symlinks=False
+        ):
+            directory_names.sort()
+            file_names.sort()
+            current = Path(current_root)
+            for name in [*directory_names, *file_names]:
+                info = os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+                relative = (current / name).relative_to(version_root).as_posix().encode()
+                if stat.S_ISLNK(info.st_mode):
+                    target = os.readlink(name, dir_fd=current_fd).encode()
+                    digest.update(b"L\0" + relative + b"\0" + target + b"\0")
+                elif stat.S_ISDIR(info.st_mode):
+                    digest.update(b"D\0" + relative + b"\0")
+                elif stat.S_ISREG(info.st_mode):
+                    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=current_fd)
+                    try:
+                        opened = os.fstat(fd)
+                        if (
+                            opened.st_dev != info.st_dev
+                            or opened.st_ino != info.st_ino
+                            or opened.st_size != info.st_size
+                        ):
+                            raise OSError
+                        digest.update(
+                            b"F\0" + relative + b"\0" + str(info.st_size).encode() + b"\0"
+                        )
+                        while chunk := os.read(fd, 1024 * 1024):
+                            digest.update(chunk)
+                        digest.update(b"\0")
+                    finally:
+                        os.close(fd)
+                else:
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch",
+                        "Managed Runtime contains an unsupported filesystem object",
+                    )
+    except ComfyUIRuntimeError:
+        raise
+    except OSError as exc:
+        raise ComfyUIRuntimeError(
+            "runtime_identity_mismatch", "Managed Runtime tree identity changed while it was inspected"
+        ) from exc
     return digest.hexdigest()
 
 
@@ -1366,6 +1556,102 @@ def _source_contract_pristine(version_root: Path, manifest: ComfyUIRuntimeManife
 RUNTIME_VALIDATOR = validate_runtime_tree
 
 
+def _runtime_operation_summary(
+    operation: Literal["repair", "uninstall"],
+    manifest: ComfyUIRuntimeManifest,
+) -> RuntimeOperationSummary:
+    version_root = _version_root(manifest)
+    record, _root_identity, _version_identity = _read_owned_installation_record(version_root)
+    if (
+        record.runtime_id != manifest.runtime_id
+        or record.version != manifest.version
+        or record.source_commit != manifest.source_commit
+        or record.manifest_sha256 != _manifest_sha256()
+    ):
+        raise ComfyUIRuntimeError(
+            "runtime_identity_mismatch", "Runtime installation identity does not match the current manifest"
+        )
+    modified = False
+    try:
+        RUNTIME_VALIDATOR(version_root, manifest)
+    except ComfyUIRuntimeError as exc:
+        if exc.code != "runtime_modified":
+            raise
+        modified = True
+    return RuntimeOperationSummary(
+        operation=operation,
+        version=manifest.version,
+        installation_identity=_installation_identity(record),
+        tree_identity=installed_tree_fingerprint(version_root),
+        modified=modified,
+        replaces_runtime_files=operation == "repair",
+    )
+
+
+def prepare_runtime_operation(
+    operation: Literal["repair", "uninstall"],
+) -> RuntimeOperationConfirmation:
+    summary = _runtime_operation_summary(operation, _runtime_manifest())
+    token = secrets.token_hex(32)
+    expires_at_epoch = time.time() + _CONFIRMATION_TTL_SECONDS
+    record = RuntimeDestructiveConfirmationRecord(
+        token_sha256=hashlib.sha256(token.encode()).hexdigest(),
+        summary=summary,
+        nonce=secrets.token_hex(16),
+        expires_at_epoch=expires_at_epoch,
+    )
+    with _CONFIRMATION_LOCK:
+        now = time.time()
+        for key, existing in list(_DESTRUCTIVE_CONFIRMATIONS.items()):
+            if existing.expires_at_epoch <= now:
+                _DESTRUCTIVE_CONFIRMATIONS.pop(key, None)
+        _DESTRUCTIVE_CONFIRMATIONS[record.token_sha256] = record
+    return RuntimeOperationConfirmation(
+        summary=summary,
+        confirmation_token=token,
+        expires_at=datetime.fromtimestamp(expires_at_epoch, timezone.utc).isoformat(),
+    )
+
+
+def consume_runtime_operation_confirmation(
+    operation: Literal["repair", "uninstall"],
+    confirmation_token: str,
+    expected_runtime_identity: str,
+) -> RuntimeOperationSummary:
+    token_sha256 = hashlib.sha256(confirmation_token.encode()).hexdigest()
+    with _CONFIRMATION_LOCK:
+        record = _DESTRUCTIVE_CONFIRMATIONS.pop(token_sha256, None)
+    if record is None or not secrets.compare_digest(record.token_sha256, token_sha256):
+        raise ComfyUIRuntimeError(
+            "confirmation_invalid", "A valid one-time Runtime confirmation is required"
+        )
+    if record.expires_at_epoch <= time.time():
+        raise ComfyUIRuntimeError("confirmation_expired", "The Runtime confirmation expired")
+    if (
+        record.summary.operation != operation
+        or not secrets.compare_digest(
+            record.summary.installation_identity, expected_runtime_identity
+        )
+    ):
+        raise ComfyUIRuntimeError(
+            "confirmation_invalid", "The Runtime confirmation does not match this operation"
+        )
+    current = _runtime_operation_summary(operation, _runtime_manifest())
+    if current != record.summary:
+        raise ComfyUIRuntimeError(
+            "confirmation_stale", "The Runtime changed after confirmation was prepared"
+        )
+    return current
+
+
+def assert_runtime_operation_identity(summary: RuntimeOperationSummary) -> None:
+    current = _runtime_operation_summary(summary.operation, _runtime_manifest())
+    if current != summary:
+        raise ComfyUIRuntimeError(
+            "confirmation_stale", "The Runtime changed before the confirmed operation started"
+        )
+
+
 def _write_installation_record(path: Path, record: RuntimeInstallationRecord) -> None:
     directory = path.parent
     with _open_managed_directory(
@@ -1459,18 +1745,26 @@ def run_runtime_install(
     operation: Literal["install", "repair"] = "install",
     progress: ProgressCallback = _default_progress,
     cancel: CancellationCheck = lambda: None,
+    confirmation: RuntimeOperationSummary | None = None,
 ) -> None:
     manifest = _runtime_manifest()
     adapter, _support, enabled = platform_adapter(manifest)
-    if not enabled:
-        raise ComfyUIRuntimeError("unsupported_platform", "Current platform is not enabled for ComfyUI Runtime installation")
     with _MUTATION_LOCK:
         if operation == "repair":
+            if confirmation is None or confirmation.operation != "repair":
+                raise ComfyUIRuntimeError(
+                    "confirmation_invalid", "Repair requires a valid backend confirmation"
+                )
+            assert_runtime_operation_identity(confirmation)
             try:
                 stop_runtime(force=False)
             except ComfyUIRuntimeError as exc:
                 if exc.code not in {"runtime_not_running", "runtime_not_installed"}:
                     raise
+        if not enabled:
+            raise ComfyUIRuntimeError(
+                "unsupported_platform", "Current platform is not enabled for ComfyUI Runtime installation"
+            )
         with _open_managed_root(create=True) as (_managed_fd, managed_root_identity):
             pass
         transaction_id = uuid.uuid4().hex
@@ -1686,6 +1980,14 @@ def recover_installations() -> list[str]:
     recovered_uninstall = False
     manifest = _runtime_manifest()
     with _MUTATION_LOCK:
+        try:
+            _reclaim_runtime_worker()
+        except ComfyUIRuntimeError as exc:
+            state = _read_state()
+            state.status = "repair_required"
+            state.error = {"code": exc.code, "message": exc.message}
+            _write_state(state)
+            raise
         for transaction_id, raw in list(_journals().items()):
             try:
                 journal = RuntimeInstallJournal.model_validate(raw)
@@ -1823,6 +2125,29 @@ def _write_process(process: ComfyUIRuntimeProcess | None) -> None:
             _atomic_json(_config_path(_PROCESS_FILE), process.model_dump(mode="json", by_alias=True))
 
 
+def _read_worker_process() -> RuntimeWorkerOwnership | None:
+    path = _config_path(_WORKER_PROCESS_FILE)
+    if not path.exists():
+        return None
+    try:
+        return RuntimeWorkerOwnership.model_validate(_read_json(path))
+    except (OSError, ValueError) as exc:
+        raise ComfyUIRuntimeError(
+            "runtime_identity_mismatch", "Managed Runtime worker ownership record is invalid"
+        ) from exc
+
+
+def _write_worker_process(process: RuntimeWorkerOwnership | None) -> None:
+    with _CONFIG_LOCK:
+        if process is None:
+            _config_path(_WORKER_PROCESS_FILE).unlink(missing_ok=True)
+        else:
+            _atomic_json(
+                _config_path(_WORKER_PROCESS_FILE),
+                process.model_dump(mode="json", by_alias=True),
+            )
+
+
 def _process_start_token(pid: int) -> str | None:
     if platform.system().lower() == "linux":
         try:
@@ -1868,8 +2193,155 @@ def _process_command(pid: int) -> list[str] | str | None:
     return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
 
 
+def _process_cwd(pid: int) -> Path | None:
+    if platform.system().lower() == "linux":
+        try:
+            return Path(os.readlink(f"/proc/{pid}/cwd"))
+        except OSError:
+            return None
+    try:
+        result = subprocess.run(
+            ["/usr/sbin/lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            env={"PATH": os.defpath},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("n/"):
+            return Path(line[1:])
+    return None
+
+
+def _process_group_identity(pid: int) -> tuple[int, int] | None:
+    if os.name != "posix":
+        return None
+    try:
+        return os.getpgid(pid), os.getsid(pid)
+    except (OSError, ProcessLookupError):
+        return None
+
+
+def _process_cwd_matches(pid: int, expected: Path) -> bool:
+    actual = _process_cwd(pid)
+    if actual is None:
+        return False
+    try:
+        return _directory_identity(actual.stat()) == _directory_identity(expected.stat())
+    except OSError:
+        return False
+
+
+def _process_group_alive(process_group_id: int) -> bool:
+    if os.name != "posix":
+        return False
+    try:
+        os.killpg(process_group_id, 0)
+        return True
+    except PermissionError:
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _linux_descendants(pid: int) -> set[int]:
+    descendants = {pid}
+    pending = [pid]
+    while pending:
+        parent = pending.pop()
+        try:
+            children = Path(f"/proc/{parent}/task/{parent}/children").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for value in children.split():
+            child = int(value)
+            if child not in descendants:
+                descendants.add(child)
+                pending.append(child)
+    return descendants
+
+
+def _linux_listener_owners(process: ComfyUIRuntimeProcess) -> list[tuple[int, str]]:
+    port_hex = f"{process.ownership.port:04X}"
+    sockets: dict[str, str] = {}
+    for table, ipv6 in ((Path("/proc/net/tcp"), False), (Path("/proc/net/tcp6"), True)):
+        try:
+            lines = table.read_text(encoding="ascii").splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 10 or fields[3] != "0A":
+                continue
+            address_hex, candidate_port = fields[1].rsplit(":", 1)
+            if candidate_port != port_hex:
+                continue
+            if ipv6:
+                address = "::" if set(address_hex) <= {"0"} else "ipv6"
+            else:
+                try:
+                    address = socket.inet_ntoa(bytes.fromhex(address_hex)[::-1])
+                except (OSError, ValueError):
+                    address = "invalid"
+            sockets[fields[9]] = address
+    owners: list[tuple[int, str]] = []
+    for pid in _linux_descendants(process.ownership.pid):
+        try:
+            descriptors = Path(f"/proc/{pid}/fd").iterdir()
+            for descriptor in descriptors:
+                try:
+                    target = os.readlink(descriptor)
+                except OSError:
+                    continue
+                if target.startswith("socket:[") and target.endswith("]"):
+                    inode = target[8:-1]
+                    if inode in sockets:
+                        owners.append((pid, sockets[inode]))
+        except OSError:
+            continue
+    return sorted(set(owners))
+
+
+def _darwin_listener_owners(process: ComfyUIRuntimeProcess) -> list[tuple[int, str]]:
+    try:
+        result = subprocess.run(
+            [
+                "/usr/sbin/lsof", "-nP",
+                f"-iTCP:{process.ownership.port}", "-sTCP:LISTEN", "-Fpfn",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+            env={"PATH": os.defpath},
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    owners: list[tuple[int, str]] = []
+    pid: int | None = None
+    for line in result.stdout.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+        elif pid is not None and line.startswith("n"):
+            endpoint = line[1:].removeprefix("TCP ").removesuffix(" (LISTEN)")
+            address = endpoint.rsplit(":", 1)[0].strip("[]")
+            owners.append((pid, address))
+    return sorted(set(owners))
+
+
+def _listener_owners(process: ComfyUIRuntimeProcess) -> list[tuple[int, str]]:
+    if platform.system().lower() == "linux":
+        return _linux_listener_owners(process)
+    if platform.system().lower() == "darwin":
+        return _darwin_listener_owners(process)
+    return []
+
+
 def _process_alive(pid: int) -> bool:
-    handle = _PROCESS_HANDLES.get(pid)
+    handle = _PROCESS_HANDLES.get(pid) or _WORKER_HANDLES.get(pid)
     if handle is not None:
         return handle.poll() is None
     try:
@@ -1881,6 +2353,12 @@ def _process_alive(pid: int) -> bool:
 
 def _argv_digest(argv: list[str]) -> str:
     return hashlib.sha256(json.dumps(argv, separators=(",", ":")).encode()).hexdigest()
+
+
+def _installation_identity(record: RuntimeInstallationRecord) -> str:
+    return hashlib.sha256(
+        json.dumps(record.model_dump(mode="json", by_alias=True), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _expected_runtime_argv(manifest: ComfyUIRuntimeManifest, port: int, nonce: str) -> list[str]:
@@ -1901,6 +2379,18 @@ def _expected_runtime_argv(manifest: ComfyUIRuntimeManifest, port: int, nonce: s
     ]
 
 
+def _supervisor_script() -> Path:
+    return Path(__file__).with_name("comfyui_supervisor.py")
+
+
+def _supervisor_request_path(nonce: str) -> Path:
+    return _runtime_data_root() / "user" / nonce / "supervisor-request.json"
+
+
+def _expected_supervisor_argv(nonce: str) -> list[str]:
+    return [sys.executable, "-I", str(_supervisor_script()), str(_supervisor_request_path(nonce))]
+
+
 def _ownership_mismatch_reason(
     process: ComfyUIRuntimeProcess, manifest: ComfyUIRuntimeManifest
 ) -> str | None:
@@ -1908,16 +2398,35 @@ def _ownership_mismatch_reason(
     if (
         ownership.runtime_version != manifest.version
         or ownership.runtime_root_relative_path != f"versions/{manifest.version}"
+        or ownership.cwd_relative_path != f"versions/{manifest.version}/source"
         or not manifest.launch.port_min <= ownership.port <= manifest.launch.port_max
+        or ownership.process_group_id != ownership.pid
+        or ownership.session_id != ownership.pid
     ):
         return "runtime_contract"
     if not _process_alive(ownership.pid):
         return "process_not_alive"
     if _process_start_token(ownership.pid) != ownership.process_start_token:
         return "process_start_token"
-    expected_argv = _expected_runtime_argv(manifest, ownership.port, ownership.nonce)
-    if _argv_digest(expected_argv) != ownership.expected_argv_sha256:
+    if _process_group_identity(ownership.pid) != (
+        ownership.process_group_id,
+        ownership.session_id,
+    ):
+        return "process_group"
+    expected_runtime_argv = _expected_runtime_argv(manifest, ownership.port, ownership.nonce)
+    expected_supervisor_argv = _expected_supervisor_argv(ownership.nonce)
+    if _argv_digest(expected_supervisor_argv) != ownership.expected_argv_sha256:
         return "argv_digest"
+    if _argv_digest(expected_runtime_argv) != ownership.runtime_argv_sha256:
+        return "runtime_argv_digest"
+    try:
+        installation, _root_identity, _version_identity = _read_owned_installation_record(
+            _version_root(manifest)
+        )
+        if _installation_identity(installation) != ownership.installation_identity_sha256:
+            return "installation_identity"
+    except ComfyUIRuntimeError:
+        return "installation_identity"
     try:
         if source_tree_fingerprint(_source_root(manifest)) != ownership.source_tree_sha256:
             return "source_tree"
@@ -1925,14 +2434,18 @@ def _ownership_mismatch_reason(
         return "source_tree_unreadable"
     command = _process_command(ownership.pid)
     expected_command: list[str] | str = (
-        expected_argv if isinstance(command, list) else " ".join(expected_argv)
+        expected_supervisor_argv if isinstance(command, list) else " ".join(expected_supervisor_argv)
     )
     if command != expected_command:
         return "process_command"
-    executable = Path(expected_argv[0])
+    if not _process_cwd_matches(ownership.pid, _source_root(manifest)):
+        return "process_cwd"
+    executable = Path(expected_supervisor_argv[0])
     try:
         if not executable.is_file() or sha256_file(executable) != ownership.executable_sha256:
             return "executable"
+        if sha256_file(_supervisor_script()) != ownership.supervisor_script_sha256:
+            return "supervisor_script"
     except OSError:
         return "executable_unreadable"
     return None
@@ -1940,6 +2453,109 @@ def _ownership_mismatch_reason(
 
 def _ownership_matches(process: ComfyUIRuntimeProcess, manifest: ComfyUIRuntimeManifest) -> bool:
     return _ownership_mismatch_reason(process, manifest) is None
+
+
+def _orphan_group_is_reclaimable(
+    process: ComfyUIRuntimeProcess, manifest: ComfyUIRuntimeManifest
+) -> bool:
+    ownership = process.ownership
+    if (
+        ownership.process_group_id != ownership.pid
+        or ownership.session_id != ownership.pid
+        or ownership.runtime_version != manifest.version
+        or ownership.runtime_root_relative_path != f"versions/{manifest.version}"
+        or ownership.cwd_relative_path != f"versions/{manifest.version}/source"
+        or not _process_group_alive(ownership.process_group_id)
+    ):
+        return False
+    try:
+        installation, _root_identity, _version_identity = _read_owned_installation_record(
+            _version_root(manifest)
+        )
+        return (
+            _installation_identity(installation) == ownership.installation_identity_sha256
+            and source_tree_fingerprint(_source_root(manifest)) == ownership.source_tree_sha256
+            and sha256_file(Path(_expected_supervisor_argv(ownership.nonce)[0]))
+            == ownership.executable_sha256
+            and sha256_file(_supervisor_script()) == ownership.supervisor_script_sha256
+            and _argv_digest(_expected_supervisor_argv(ownership.nonce))
+            == ownership.expected_argv_sha256
+            and _argv_digest(_expected_runtime_argv(manifest, ownership.port, ownership.nonce))
+            == ownership.runtime_argv_sha256
+        )
+    except (OSError, ComfyUIRuntimeError):
+        return False
+
+
+def _runtime_worker_mismatch_reason(worker: RuntimeWorkerOwnership) -> str | None:
+    if worker.process_group_id != worker.pid or worker.session_id != worker.pid:
+        return "process_group_contract"
+    if not _process_alive(worker.pid):
+        return "process_not_alive"
+    if _process_start_token(worker.pid) != worker.process_start_token:
+        return "process_start_token"
+    if _process_group_identity(worker.pid) != (worker.process_group_id, worker.session_id):
+        return "process_group"
+    if _argv_digest(worker.argv) != worker.argv_sha256:
+        return "argv_digest"
+    try:
+        root_identity = _current_managed_root_identity()
+        cwd = _managed_root() if worker.cwd_relative_path == "." else (
+            _managed_root().joinpath(*PurePosixPath(worker.cwd_relative_path).parts)
+        )
+        command = _process_command(worker.pid)
+        expected_command: list[str] | str = (
+            worker.argv if isinstance(command, list) else " ".join(worker.argv)
+        )
+        if not _same_directory(root_identity, worker.managed_root_identity):
+            return "managed_root"
+        if not _process_cwd_matches(worker.pid, cwd):
+            return "process_cwd"
+        if command != expected_command:
+            return "process_command"
+        if not Path(worker.argv[0]).is_absolute():
+            return "executable_path"
+        if sha256_file(Path(worker.argv[0])) != worker.executable_sha256:
+            return "executable"
+    except (OSError, ComfyUIRuntimeError):
+        return "identity_unreadable"
+    return None
+
+
+def _reclaim_runtime_worker() -> bool:
+    worker = _read_worker_process()
+    if worker is None:
+        return False
+    if not _process_alive(worker.pid) and not _process_group_alive(worker.process_group_id):
+        _WORKER_HANDLES.pop(worker.pid, None)
+        _write_worker_process(None)
+        return True
+    mismatch = _runtime_worker_mismatch_reason(worker)
+    if mismatch:
+        _append_log("install", f"managed worker identity mismatch: {mismatch}")
+        raise ComfyUIRuntimeError(
+            "runtime_identity_mismatch", "Refusing to reclaim a Runtime worker with mismatched ownership"
+        )
+    try:
+        os.killpg(worker.process_group_id, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError as exc:
+        raise ComfyUIRuntimeError(
+            "runtime_identity_mismatch", "The owned Runtime worker could not be reclaimed"
+        ) from exc
+    deadline = time.monotonic() + 5
+    while (
+        _process_alive(worker.pid) or _process_group_alive(worker.process_group_id)
+    ) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if _process_alive(worker.pid) or _process_group_alive(worker.process_group_id):
+        raise ComfyUIRuntimeError(
+            "runtime_identity_mismatch", "The owned Runtime worker did not stop"
+        )
+    _WORKER_HANDLES.pop(worker.pid, None)
+    _write_worker_process(None)
+    return True
 
 
 def _find_port(manifest: ComfyUIRuntimeManifest) -> int:
@@ -1978,6 +2594,64 @@ def _read_http_json(port: int, path: str, *, max_bytes: int, timeout: float) -> 
         connection.close()
 
 
+def _listener_identity_mismatch_reason(
+    process: ComfyUIRuntimeProcess, manifest: ComfyUIRuntimeManifest
+) -> str | None:
+    owners = _listener_owners(process)
+    if not owners:
+        try:
+            with socket.create_connection(("127.0.0.1", process.ownership.port), timeout=0.1):
+                started = datetime.fromisoformat(process.ownership.started_at).timestamp()
+                return "listener_not_ready" if time.time() - started < 1 else "listener_owner"
+        except OSError:
+            return "listener_not_ready"
+        except ValueError:
+            return "listener_owner"
+    if len(owners) != 1:
+        return "listener_owner"
+    listener_pid, address = owners[0]
+    if address != "127.0.0.1":
+        return "listener_address"
+    ownership = process.ownership
+    if _process_group_identity(listener_pid) != (
+        ownership.process_group_id,
+        ownership.session_id,
+    ):
+        return "listener_process_group"
+    start_token = _process_start_token(listener_pid)
+    if start_token is None:
+        return "listener_start_token"
+    if ownership.listener_pid is not None and ownership.listener_pid != listener_pid:
+        return "listener_pid_changed"
+    if (
+        ownership.listener_start_token is not None
+        and ownership.listener_start_token != start_token
+    ):
+        return "listener_start_token_changed"
+    expected_argv = _expected_runtime_argv(manifest, ownership.port, ownership.nonce)
+    if _argv_digest(expected_argv) != ownership.runtime_argv_sha256:
+        return "listener_argv_digest"
+    command = _process_command(listener_pid)
+    expected_command: list[str] | str = (
+        expected_argv if isinstance(command, list) else " ".join(expected_argv)
+    )
+    if command != expected_command:
+        return "listener_command"
+    if not _process_cwd_matches(listener_pid, _source_root(manifest)):
+        return "listener_cwd"
+    try:
+        installation, _root_identity, _version_identity = _read_owned_installation_record(
+            _version_root(manifest)
+        )
+        if sha256_file(Path(expected_argv[0])) != installation.python_executable_sha256:
+            return "listener_executable"
+    except (OSError, ComfyUIRuntimeError):
+        return "listener_executable"
+    ownership.listener_pid = listener_pid
+    ownership.listener_start_token = start_token
+    return None
+
+
 def _health_probe(process: ComfyUIRuntimeProcess, manifest: ComfyUIRuntimeManifest) -> RuntimeHealthSnapshot:
     checked_at = _iso()
     if not _process_alive(process.ownership.pid):
@@ -1998,6 +2672,20 @@ def _health_probe(process: ComfyUIRuntimeProcess, manifest: ComfyUIRuntimeManife
             error={
                 "code": "runtime_identity_mismatch",
                 "message": f"The recorded process identity no longer matches ({ownership_mismatch})",
+            },
+        )
+    listener_mismatch = _listener_identity_mismatch_reason(process, manifest)
+    if listener_mismatch:
+        _append_log("runtime", f"managed listener identity mismatch: {listener_mismatch}")
+        listener_not_ready = listener_mismatch == "listener_not_ready"
+        return RuntimeHealthSnapshot(
+            healthy=False,
+            checked_at=checked_at,
+            status="degraded" if listener_not_ready else "repair_required",
+            port=process.ownership.port,
+            error={
+                "code": "runtime_health_failed" if listener_not_ready else "runtime_identity_mismatch",
+                "message": f"The Runtime listener identity does not match ({listener_mismatch})",
             },
         )
     if not custom_node_tree_is_pristine(_source_root(manifest), manifest):
@@ -2118,6 +2806,41 @@ def check_runtime_health() -> RuntimeHealthSnapshot:
             custom_nodes_pristine=state.installed and custom_node_tree_is_pristine(_source_root(manifest), manifest),
             error={"code": "runtime_not_running", "message": "ComfyUI Runtime is not running"},
         )
+    if (
+        not _process_alive(process.ownership.pid)
+        and _process_group_alive(process.ownership.process_group_id)
+    ):
+        try:
+            _stop_owned_process(process, manifest, force=True)
+        except ComfyUIRuntimeError as exc:
+            state.status = "repair_required"
+            state.error = {"code": exc.code, "message": exc.message}
+            _write_state(state)
+            return RuntimeHealthSnapshot(
+                healthy=False,
+                checked_at=_iso(),
+                status="repair_required",
+                version=state.version,
+                port=process.ownership.port,
+                error=state.error,
+            )
+        _write_process(None)
+        state.status = "crashed"
+        state.error = {
+            "code": "runtime_crashed",
+            "message": "The managed supervisor exited; its owned process group was reclaimed",
+        }
+        state.checked_at = _iso()
+        _write_state(state)
+        return RuntimeHealthSnapshot(
+            healthy=False,
+            checked_at=state.checked_at,
+            status="crashed",
+            version=state.version,
+            port=process.ownership.port,
+            identity_verified=True,
+            error=state.error,
+        )
     health = HEALTH_PROBER(process, manifest)
     state.checked_at = health.checked_at
     state.status = health.status
@@ -2151,13 +2874,21 @@ def start_runtime() -> RuntimeHealthSnapshot:
         if not state.installed:
             raise ComfyUIRuntimeError("runtime_not_installed", "Install ComfyUI Runtime before starting it")
         existing = _read_process()
-        if existing and _process_alive(existing.ownership.pid):
-            if not _ownership_matches(existing, manifest):
-                raise ComfyUIRuntimeError("runtime_identity_mismatch", "Refusing to control a process with mismatched ownership")
-            health = HEALTH_PROBER(existing, manifest)
-            if health.healthy:
-                return health
-            raise ComfyUIRuntimeError(health.error["code"] if health.error else "runtime_health_failed", "Managed ComfyUI is running but unhealthy")
+        if existing and _process_group_alive(existing.ownership.process_group_id):
+            if _process_alive(existing.ownership.pid):
+                if not _ownership_matches(existing, manifest):
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch", "Refusing to control a process with mismatched ownership"
+                    )
+                health = HEALTH_PROBER(existing, manifest)
+                if health.healthy:
+                    return health
+                raise ComfyUIRuntimeError(
+                    health.error["code"] if health.error else "runtime_health_failed",
+                    "Managed ComfyUI is running but unhealthy",
+                )
+            _stop_owned_process(existing, manifest, force=True)
+            _write_process(None)
         if existing:
             _write_process(None)
         try:
@@ -2175,20 +2906,33 @@ def start_runtime() -> RuntimeHealthSnapshot:
             directory.mkdir(parents=True, exist_ok=True)
         nonce = secrets.token_hex(16)
         (data / "user" / nonce).mkdir(parents=True, exist_ok=True)
-        argv = _expected_runtime_argv(manifest, port, nonce)
+        runtime_argv = _expected_runtime_argv(manifest, port, nonce)
+        supervisor_argv = _expected_supervisor_argv(nonce)
+        supervisor_script = _supervisor_script()
         try:
-            executable_sha256 = sha256_file(Path(argv[0]))
+            executable_sha256 = sha256_file(Path(supervisor_argv[0]))
+            supervisor_script_sha256 = sha256_file(supervisor_script)
         except OSError as exc:
-            raise ComfyUIRuntimeError("runtime_validation_failed", "Managed Python executable cannot be verified") from exc
+            raise ComfyUIRuntimeError("runtime_validation_failed", "Managed process supervisor cannot be verified") from exc
+        request_path = _supervisor_request_path(nonce)
+        _atomic_json(request_path, {
+            "argv": runtime_argv,
+            "cwd": str(_source_root(manifest)),
+            "environment": {
+                **_controlled_environment(),
+                "HCS_COMFYUI_RUNTIME_NONCE": nonce,
+            },
+        })
+        request_path.chmod(0o600)
         state.status = "starting"
         state.error = None
         _write_state(state)
         _append_log("runtime", f"starting ComfyUI {manifest.version} on loopback port {port}")
         try:
             process_handle = subprocess.Popen(
-                argv,
+                supervisor_argv,
                 cwd=_source_root(manifest),
-                env={**_controlled_environment(), "HCS_COMFYUI_RUNTIME_NONCE": nonce},
+                env=_controlled_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -2196,18 +2940,29 @@ def start_runtime() -> RuntimeHealthSnapshot:
                 shell=False,
             )
         except OSError as exc:
+            request_path.unlink(missing_ok=True)
             state.status = "failed"
             state.error = {"code": "runtime_start_failed"}
             _write_state(state)
             raise ComfyUIRuntimeError("runtime_start_failed", "ComfyUI Runtime process could not be started") from exc
         _PROCESS_HANDLES[process_handle.pid] = process_handle
         start_token = None
+        group_identity = None
         deadline = time.monotonic() + 3
-        while start_token is None and process_handle.poll() is None and time.monotonic() < deadline:
+        while (
+            (start_token is None or group_identity is None)
+            and process_handle.poll() is None
+            and time.monotonic() < deadline
+        ):
             start_token = _process_start_token(process_handle.pid)
-            if start_token is None:
+            group_identity = _process_group_identity(process_handle.pid)
+            if start_token is None or group_identity is None:
                 time.sleep(0.02)
-        if start_token is None:
+        if (
+            start_token is None
+            or group_identity is None
+            or group_identity != (process_handle.pid, process_handle.pid)
+        ):
             process_handle.terminate()
             process_handle.wait(timeout=5)
             _PROCESS_HANDLES.pop(process_handle.pid, None)
@@ -2218,12 +2973,18 @@ def start_runtime() -> RuntimeHealthSnapshot:
         ownership = RuntimeProcessOwnership(
             pid=process_handle.pid,
             process_start_token=start_token,
+            process_group_id=group_identity[0],
+            session_id=group_identity[1],
             executable_sha256=executable_sha256,
             runtime_version=manifest.version,
             runtime_root_relative_path=f"versions/{manifest.version}",
+            cwd_relative_path=f"versions/{manifest.version}/source",
+            installation_identity_sha256=_installation_identity(installation),
             port=port,
             nonce=nonce,
-            expected_argv_sha256=_argv_digest(argv),
+            expected_argv_sha256=_argv_digest(supervisor_argv),
+            runtime_argv_sha256=_argv_digest(runtime_argv),
+            supervisor_script_sha256=supervisor_script_sha256,
             source_tree_sha256=installation.source_tree_sha256,
             started_at=_iso(),
         )
@@ -2287,14 +3048,22 @@ def _stop_owned_process(
     *,
     force: bool,
 ) -> None:
-    if not _process_alive(process.ownership.pid):
-        return
-    if not _ownership_matches(process, manifest):
+    ownership = process.ownership
+    leader_alive = _process_alive(ownership.pid)
+    if leader_alive and not _ownership_matches(process, manifest):
         raise ComfyUIRuntimeError("runtime_identity_mismatch", "Refusing to stop a process with mismatched ownership")
-    pid = process.ownership.pid
+    group_alive = _process_group_alive(ownership.process_group_id)
+    if not leader_alive:
+        if not group_alive:
+            return
+        if not _orphan_group_is_reclaimable(process, manifest):
+            raise ComfyUIRuntimeError(
+                "runtime_identity_mismatch", "Refusing to reclaim a process group with mismatched ownership"
+            )
+    pid = ownership.pid
     try:
         if os.name == "posix":
-            os.killpg(pid, signal.SIGKILL if force else signal.SIGTERM)
+            os.killpg(ownership.process_group_id, signal.SIGKILL if force else signal.SIGTERM)
         else:
             handle = _PROCESS_HANDLES.get(pid)
             if handle is None:
@@ -2306,9 +3075,17 @@ def _stop_owned_process(
         raise ComfyUIRuntimeError("runtime_stop_failed", "ComfyUI Runtime could not be stopped") from exc
     timeout = 5 if force else manifest.launch.shutdown_timeout_seconds
     deadline = time.monotonic() + timeout
-    while _process_alive(pid) and time.monotonic() < deadline:
+    while (
+        _process_alive(pid) or _process_group_alive(ownership.process_group_id)
+    ) and time.monotonic() < deadline:
         time.sleep(0.05)
-    if _process_alive(pid):
+    handle = _PROCESS_HANDLES.get(pid)
+    if handle is not None:
+        try:
+            handle.wait(timeout=0)
+        except subprocess.TimeoutExpired:
+            pass
+    if _process_alive(pid) or _process_group_alive(ownership.process_group_id):
         raise ComfyUIRuntimeError("runtime_stop_failed", "ComfyUI Runtime did not stop before the timeout")
 
 
@@ -2319,7 +3096,10 @@ def stop_runtime(*, force: bool = False) -> RuntimeHealthSnapshot:
         if not state.installed:
             raise ComfyUIRuntimeError("runtime_not_installed", "ComfyUI Runtime is not installed")
         process = _read_process()
-        if process is None or not _process_alive(process.ownership.pid):
+        if process is None or (
+            not _process_alive(process.ownership.pid)
+            and not _process_group_alive(process.ownership.process_group_id)
+        ):
             _write_process(None)
             state.status = "stopped"
             state.error = None
@@ -2362,10 +3142,16 @@ def run_runtime_uninstall(
     *,
     progress: ProgressCallback = _default_progress,
     cancel: CancellationCheck = lambda: None,
+    confirmation: RuntimeOperationSummary | None = None,
 ) -> None:
     manifest = _runtime_manifest()
     adapter, _support, _enabled = platform_adapter(manifest)
     with _MUTATION_LOCK:
+        if confirmation is None or confirmation.operation != "uninstall":
+            raise ComfyUIRuntimeError(
+                "confirmation_invalid", "Uninstall requires a valid backend confirmation"
+            )
+        assert_runtime_operation_identity(confirmation)
         try:
             stop_runtime(force=False)
         except ComfyUIRuntimeError as exc:
@@ -2441,7 +3227,27 @@ def runtime_snapshot(*, recover: bool = True) -> RuntimeSnapshot:
         state.error = {"code": "runtime_modified", "message": "Controlled ComfyUI source or custom_nodes was modified"}
         _write_state(state)
     if process:
-        if not _process_alive(process.ownership.pid):
+        if (
+            not _process_alive(process.ownership.pid)
+            and _process_group_alive(process.ownership.process_group_id)
+        ):
+            try:
+                _stop_owned_process(process, manifest, force=True)
+                _write_process(None)
+                process = None
+                state.status = "crashed"
+                state.error = {
+                    "code": "runtime_crashed",
+                    "message": "The managed supervisor exited; its owned process group was reclaimed",
+                }
+                _write_state(state)
+            except ComfyUIRuntimeError as exc:
+                state.status = "repair_required"
+                state.error = {"code": exc.code, "message": exc.message}
+                _write_state(state)
+        if process is None:
+            pass
+        elif not _process_alive(process.ownership.pid):
             state.status = "crashed"
             state.error = {"code": "runtime_crashed", "message": "The managed ComfyUI process exited unexpectedly"}
             _write_state(state)
