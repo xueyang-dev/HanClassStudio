@@ -102,9 +102,8 @@ def test_bundled_manifest_is_strict_commit_pinned_and_lock_verified() -> None:
     assert manifest.capability_boundary.generation_ready is False
     assert "--disable-all-custom-nodes" in manifest.launch.fixed_arguments
     assert "--disable-api-nodes" in manifest.launch.fixed_arguments
-    assert [(item.operating_system, item.architecture) for item in manifest.platforms if item.install_enabled] == [
-        ("macos", "arm64")
-    ]
+    assert manifest.python.toolchain_status == "unavailable"
+    assert not [item for item in manifest.platforms if item.install_enabled]
 
 
 def test_manifest_rejects_floating_source_and_unknown_fields(tmp_path: Path) -> None:

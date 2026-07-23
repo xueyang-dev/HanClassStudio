@@ -14,7 +14,13 @@ import pytest
 
 import hcs_api.comfyui_runtime as runtime
 import hcs_api.storage as storage
-from hcs_api.comfyui_archive import ComfyUIRuntimeManifest, load_runtime_manifest
+from hcs_api.comfyui_archive import (
+    ComfyUIRuntimeManifest,
+    PythonRuntimeArtifact,
+    ToolBinaryArtifact,
+    WheelhouseArtifact,
+    load_runtime_manifest,
+)
 
 
 def _sha(data: bytes) -> str:
@@ -82,8 +88,49 @@ def _fixture_manifest(tmp_path: Path) -> tuple[ComfyUIRuntimeManifest, Path]:
 
 def _install_fakes(tmp_path: Path, monkeypatch) -> tuple[ComfyUIRuntimeManifest, Path]:
     manifest, archive = _fixture_manifest(tmp_path)
+    artifact_fields = {
+        "relative_path": "tests/fixtures/toolchain",
+        "source_url": "https://example.invalid/fixed-artifact",
+        "size": 1,
+        "sha256": "a" * 64,
+        "operating_system": "macos",
+        "architecture": "arm64",
+    }
+    manifest.python.toolchain_status = "ready"
+    manifest.python.toolchain_unavailable_reason = None
+    manifest.python.uv_artifact = ToolBinaryArtifact(
+        **artifact_fields,
+        version=manifest.python.environment_manager_version,
+    )
+    manifest.python.python_runtime = PythonRuntimeArtifact(
+        **artifact_fields,
+        implementation="cpython",
+        version=manifest.python.version,
+        executable_relative_path="bin/python3",
+        tree_sha256="a" * 64,
+    )
+    manifest.python.wheelhouse = WheelhouseArtifact(
+        **artifact_fields,
+        artifact_lock_file="tests/fixtures/wheels.json",
+        artifact_lock_sha256="b" * 64,
+        wheel_only=True,
+        allow_sdist=False,
+        allow_editable=False,
+        allow_build_backend=False,
+        allow_dependency_resolution=False,
+    )
     monkeypatch.setattr(runtime, "load_runtime_manifest", lambda: manifest)
     monkeypatch.setattr(runtime, "platform_adapter", lambda _manifest: ("test_adapter", "experimental", True))
+    monkeypatch.setattr(
+        runtime,
+        "verify_python_toolchain",
+        lambda _manifest: runtime.VerifiedPythonToolchain(
+            uv=tmp_path / "toolchain/uv",
+            python=tmp_path / "toolchain/python",
+            wheelhouse=tmp_path / "toolchain/wheels",
+            identity_sha256=runtime._toolchain_contract_identity(manifest),
+        ),
+    )
 
     def download(destination, _manifest, progress, cancel):
         cancel()
@@ -480,6 +527,72 @@ def test_environment_fingerprint_rejects_wrong_python_even_with_matching_package
     assert error.value.code == "dependency_install_failed"
 
 
+def test_python_toolchain_fails_closed_when_reviewed_artifacts_are_unavailable() -> None:
+    manifest = load_runtime_manifest()
+
+    with pytest.raises(runtime.ComfyUIRuntimeError) as error:
+        runtime.verify_python_toolchain(manifest)
+
+    assert error.value.code == "unsupported_platform"
+
+
+def test_environment_install_is_offline_wheel_only_and_never_resolves_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = load_runtime_manifest()
+    toolchain_root = tmp_path / "toolchain"
+    toolchain = runtime.VerifiedPythonToolchain(
+        uv=toolchain_root / "uv",
+        python=toolchain_root / "python/bin/python3",
+        wheelhouse=toolchain_root / "wheels",
+        identity_sha256="a" * 64,
+    )
+    commands: list[tuple[list[str], dict[str, str]]] = []
+    monkeypatch.setattr(runtime, "verify_python_toolchain", lambda _manifest: toolchain)
+    monkeypatch.setattr(runtime, "environment_fingerprint", lambda _environment, _manifest: "f" * 64)
+
+    def run_controlled(argv, **kwargs):
+        commands.append((argv, kwargs["environment"]))
+        return None
+
+    monkeypatch.setattr(runtime, "_run_controlled", run_controlled)
+    runtime.create_python_environment(tmp_path / "environment", manifest, lambda: None)
+
+    assert len(commands) == 2
+    assert commands[0][0][0] == str(toolchain.uv)
+    assert "--python" in commands[0][0]
+    assert str(toolchain.python) in commands[0][0]
+    dependency_command, environment = commands[1]
+    assert "--offline" in dependency_command
+    assert "--no-index" in dependency_command
+    assert "--only-binary=:all:" in dependency_command
+    assert "--no-build-isolation" in dependency_command
+    assert "--no-deps" in dependency_command
+    assert "install" in dependency_command
+    assert environment["UV_PYTHON_DOWNLOADS"] == "never"
+    assert environment["UV_OFFLINE"] == "1"
+
+
+def test_runtime_validation_rejects_changed_toolchain_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    manifest, _archive = _install_fakes(tmp_path, monkeypatch)
+    runtime.run_runtime_install("task-install")
+    version = runtime._version_root(manifest)
+    record = runtime.RuntimeInstallationRecord.model_validate_json(
+        (version / "installation.json").read_text(encoding="utf-8")
+    )
+    record.toolchain_identity_sha256 = "0" * 64
+    runtime._write_installation_record(version / "installation.json", record)
+    monkeypatch.setattr(runtime, "environment_fingerprint", lambda _environment, _manifest: "f" * 64)
+
+    with pytest.raises(runtime.ComfyUIRuntimeError) as error:
+        runtime.validate_runtime_tree(version, manifest)
+
+    assert error.value.code == "runtime_validation_failed"
+
+
 @pytest.mark.parametrize(
     ("internal", "public"),
     [
@@ -555,6 +668,11 @@ def _prepare_fake_runtime(tmp_path: Path, monkeypatch) -> ComfyUIRuntimeManifest
         source_tree_sha256=manifest.source.source_tree_sha256,
         python_executable_sha256=runtime.sha256_file(python),
         environment_manager_version="test",
+        toolchain_identity_sha256="1" * 64,
+        uv_artifact_sha256="2" * 64,
+        python_runtime_sha256="3" * 64,
+        wheelhouse_sha256="4" * 64,
+        wheel_artifact_lock_sha256="5" * 64,
         platform_adapter="test_adapter",
         managed_root_identity=runtime.RuntimeDirectoryIdentity(
             device=runtime._managed_root().stat().st_dev,

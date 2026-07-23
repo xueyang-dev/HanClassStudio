@@ -90,17 +90,127 @@ class PythonEnvironment(_StrictModel):
     implementation: Literal["cpython"]
     version: str
     environment_manager: Literal["uv"]
-    environment_manager_min_version: str
-    dependency_index_url: Literal["https://pypi.org/simple"]
+    environment_manager_version: str
     lock_file: str
     lock_sha256: str
     requirements_sha256: str
+    toolchain_status: Literal["ready", "unavailable"]
+    toolchain_unavailable_reason: str | None = None
+    uv_artifact: ToolBinaryArtifact | None = None
+    python_runtime: PythonRuntimeArtifact | None = None
+    wheelhouse: WheelhouseArtifact | None = None
 
-    @field_validator("version", "environment_manager_min_version")
+    @field_validator("version", "environment_manager_version")
     @classmethod
     def _semantic_version(cls, value: str) -> str:
         if not re.fullmatch(r"\d+\.\d+\.\d+", value):
             raise ValueError("Python environment versions must be exact three-part versions")
+        return value
+
+    @model_validator(mode="after")
+    def _fixed_toolchain(self) -> "PythonEnvironment":
+        artifacts = (self.uv_artifact, self.python_runtime, self.wheelhouse)
+        if self.toolchain_status == "ready":
+            if any(item is None for item in artifacts) or self.toolchain_unavailable_reason is not None:
+                raise ValueError("ready Python toolchains require every fixed artifact")
+        elif any(item is not None for item in artifacts) or not self.toolchain_unavailable_reason:
+            raise ValueError("unavailable Python toolchains must fail closed without partial artifacts")
+        return self
+
+
+class _PinnedArtifact(_StrictModel):
+    relative_path: str
+    source_url: str
+    size: int = Field(gt=0)
+    sha256: str
+    operating_system: Literal["macos"]
+    architecture: Literal["arm64"]
+
+    @field_validator("relative_path")
+    @classmethod
+    def _relative_path(cls, value: str) -> str:
+        _validated_relative_name(value, max_bytes=512, max_depth=12)
+        return value
+
+    @field_validator("sha256")
+    @classmethod
+    def _artifact_sha256(cls, value: str) -> str:
+        if not _SHA256.fullmatch(value):
+            raise ValueError("toolchain identities must be lowercase SHA-256")
+        return value
+
+    @field_validator("source_url")
+    @classmethod
+    def _source_url(cls, value: str) -> str:
+        if not value.startswith("https://") or any(character.isspace() for character in value):
+            raise ValueError("toolchain artifact source must be an exact HTTPS URL")
+        return value
+
+
+class ToolBinaryArtifact(_PinnedArtifact):
+    version: str
+
+    @field_validator("version")
+    @classmethod
+    def _tool_version(cls, value: str) -> str:
+        if not re.fullmatch(r"\d+\.\d+\.\d+", value):
+            raise ValueError("tool version must be exact")
+        return value
+
+
+class PythonRuntimeArtifact(_PinnedArtifact):
+    implementation: Literal["cpython"]
+    version: str
+    executable_relative_path: str
+    tree_sha256: str
+
+    @field_validator("version")
+    @classmethod
+    def _python_version(cls, value: str) -> str:
+        if not re.fullmatch(r"\d+\.\d+\.\d+", value):
+            raise ValueError("Python version must be exact")
+        return value
+
+    @field_validator("executable_relative_path")
+    @classmethod
+    def _executable_path(cls, value: str) -> str:
+        _validated_relative_name(value, max_bytes=256, max_depth=8)
+        return value
+
+    @field_validator("tree_sha256")
+    @classmethod
+    def _tree_sha256(cls, value: str) -> str:
+        if not _SHA256.fullmatch(value):
+            raise ValueError("Python tree identity must be lowercase SHA-256")
+        return value
+
+    @model_validator(mode="after")
+    def _tree_matches_artifact(self) -> "PythonRuntimeArtifact":
+        if self.tree_sha256 != self.sha256:
+            raise ValueError("bundled Python artifact and tree identities disagree")
+        return self
+
+
+class WheelhouseArtifact(_PinnedArtifact):
+    artifact_lock_file: str
+    artifact_lock_sha256: str
+    wheel_only: Literal[True]
+    allow_sdist: Literal[False]
+    allow_editable: Literal[False]
+    allow_build_backend: Literal[False]
+    allow_dependency_resolution: Literal[False]
+
+    @field_validator("artifact_lock_file")
+    @classmethod
+    def _artifact_lock_file(cls, value: str) -> str:
+        _validated_relative_name(value, max_bytes=512, max_depth=12)
+        return value
+
+    @field_validator("artifact_lock_sha256")
+    @classmethod
+    def _artifact_lock_sha256(cls, value: str) -> str:
+        if not _SHA256.fullmatch(value):
+            raise ValueError("wheel artifact lock identity must be lowercase SHA-256")
         return value
 
 
@@ -183,8 +293,11 @@ class ComfyUIRuntimeManifest(_StrictModel):
         ]:
             raise ValueError("runtime launch arguments weakened the security boundary")
         enabled = [item for item in self.platforms if item.install_enabled]
-        if [(item.operating_system, item.architecture) for item in enabled] != [("macos", "arm64")]:
+        enabled_platforms = [(item.operating_system, item.architecture) for item in enabled]
+        if enabled_platforms not in ([], [("macos", "arm64")]):
             raise ValueError("only the reviewed macOS Apple Silicon adapter may install")
+        if enabled and self.python.toolchain_status != "ready":
+            raise ValueError("platform installation cannot be enabled without a fixed toolchain")
         if self.license.bundled_file not in self.critical_files:
             raise ValueError("bundled license is not covered by critical file identity")
         if self.critical_files[self.license.bundled_file] != self.license.bundled_file_sha256:
@@ -226,6 +339,18 @@ def load_runtime_manifest(path: Path | None = None) -> ComfyUIRuntimeManifest:
     lock_path = storage.ROOT_DIR / manifest.python.lock_file
     if not lock_path.is_file() or sha256_file(lock_path) != manifest.python.lock_sha256:
         raise ComfyUIArchiveError("dependency_lock_mismatch", "ComfyUI dependency lock cannot be verified")
+    if manifest.python.toolchain_status == "ready":
+        wheelhouse = manifest.python.wheelhouse
+        if wheelhouse is None:
+            raise ComfyUIArchiveError("invalid_manifest", "ComfyUI fixed wheelhouse is missing")
+        artifact_lock_path = storage.ROOT_DIR / wheelhouse.artifact_lock_file
+        if (
+            not artifact_lock_path.is_file()
+            or sha256_file(artifact_lock_path) != wheelhouse.artifact_lock_sha256
+        ):
+            raise ComfyUIArchiveError(
+                "dependency_lock_mismatch", "ComfyUI wheel artifact lock cannot be verified"
+            )
     return manifest
 
 

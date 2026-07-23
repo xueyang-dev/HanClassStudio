@@ -54,11 +54,12 @@
     "implementation": "cpython",
     "version": "3.11.13",
     "environment_manager": "uv",
-    "environment_manager_min_version": "0.11.0",
-    "dependency_index_url": "https://pypi.org/simple",
+    "environment_manager_version": "0.11.26",
     "lock_file": "providers/comfyui/locks/comfyui-macos-arm64-py311.lock",
     "lock_sha256": "926e90e5a1cb0bd81c783061880fd74ff35ded94c3132bda9862fd9e3fb61df0",
-    "requirements_sha256": "9b70c3536a599720335e1c175f4f02fe819781d209cc504525bfe4322e7f746b"
+    "requirements_sha256": "9b70c3536a599720335e1c175f4f02fe819781d209cc504525bfe4322e7f746b",
+    "toolchain_status": "unavailable",
+    "toolchain_unavailable_reason": "A complete reviewed macOS arm64 wheel artifact set is not bundled; installation fails closed."
   },
   "launch": {
     "entrypoint": "main.py",
@@ -83,7 +84,7 @@
       "architecture": "arm64",
       "adapter": "macos_apple_silicon",
       "support": "experimental",
-      "install_enabled": true
+      "install_enabled": false
     },
     {
       "operating_system": "windows",

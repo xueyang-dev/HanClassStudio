@@ -100,6 +100,41 @@ class RuntimeDirectoryIdentity(_StrictModel):
     inode: int = Field(gt=0)
 
 
+class LockedWheel(_StrictModel):
+    name: str
+    version: str
+    filename: str
+    size: int = Field(gt=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("filename")
+    @classmethod
+    def _wheel_filename(cls, value: str) -> str:
+        if (
+            not value.endswith(".whl")
+            or "/" in value
+            or "\\" in value
+            or value in {".", ".."}
+        ):
+            raise ValueError("dependency artifact must be one wheel filename")
+        return value
+
+
+class WheelArtifactLock(_StrictModel):
+    schema_: Literal["hanclassstudio.comfyui_wheel_artifacts.v1"] = Field(alias="schema")
+    operating_system: Literal["macos"]
+    architecture: Literal["arm64"]
+    python_version: str
+    wheels: list[LockedWheel]
+
+
+class VerifiedPythonToolchain(_StrictModel):
+    uv: Path
+    python: Path
+    wheelhouse: Path
+    identity_sha256: str
+
+
 class RuntimeInstallationRecord(_StrictModel):
     schema_: Literal["hanclassstudio.comfyui_runtime_installation.v2"] = Field(
         default="hanclassstudio.comfyui_runtime_installation.v2", alias="schema"
@@ -113,7 +148,11 @@ class RuntimeInstallationRecord(_StrictModel):
     source_tree_sha256: str
     python_executable_sha256: str
     environment_manager_version: str
-    dependency_index_url: Literal["https://pypi.org/simple"] = "https://pypi.org/simple"
+    toolchain_identity_sha256: str
+    uv_artifact_sha256: str
+    python_runtime_sha256: str
+    wheelhouse_sha256: str
+    wheel_artifact_lock_sha256: str
     platform_adapter: str
     managed_root_identity: RuntimeDirectoryIdentity
     parent_directory_identity: RuntimeDirectoryIdentity
@@ -987,38 +1026,189 @@ def environment_fingerprint(environment: Path, manifest: ComfyUIRuntimeManifest)
     return hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
 
 
+def _project_artifact(relative_name: str, *, directory: bool) -> Path:
+    target = storage.ROOT_DIR.joinpath(*PurePosixPath(relative_name).parts)
+    try:
+        current = storage.ROOT_DIR
+        if not stat.S_ISDIR(current.lstat().st_mode):
+            raise OSError
+        for part in PurePosixPath(relative_name).parts:
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise OSError
+        final = target.lstat()
+        if directory and not stat.S_ISDIR(final.st_mode):
+            raise OSError
+        if not directory and not stat.S_ISREG(final.st_mode):
+            raise OSError
+    except OSError as exc:
+        raise ComfyUIRuntimeError(
+            "python_environment_failed", "A fixed Python toolchain artifact is unavailable"
+        ) from exc
+    return target
+
+
+def _regular_tree_identity(root: Path) -> tuple[int, str]:
+    total = 0
+    digest = hashlib.sha256()
+    try:
+        for current_root, directory_names, file_names in os.walk(root, topdown=True, followlinks=False):
+            directory_names.sort()
+            file_names.sort()
+            current = Path(current_root)
+            for name in directory_names:
+                target = current / name
+                info = target.lstat()
+                if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    raise OSError
+                relative = target.relative_to(root).as_posix().encode()
+                digest.update(b"D\0" + relative + b"\0")
+            for name in file_names:
+                target = current / name
+                info = target.lstat()
+                if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                    raise OSError
+                relative = target.relative_to(root).as_posix().encode()
+                total += info.st_size
+                digest.update(b"F\0" + relative + b"\0" + str(info.st_size).encode() + b"\0")
+                with target.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        digest.update(chunk)
+                digest.update(b"\0")
+    except OSError as exc:
+        raise ComfyUIRuntimeError(
+            "python_environment_failed", "A fixed Python toolchain tree cannot be verified"
+        ) from exc
+    return total, digest.hexdigest()
+
+
+def _read_wheel_artifact_lock(path: Path) -> WheelArtifactLock:
+    try:
+        if not path.is_file() or path.stat().st_size > 1024 * 1024:
+            raise OSError
+        return WheelArtifactLock.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise ComfyUIRuntimeError(
+            "dependency_lock_mismatch", "The fixed wheel artifact lock is invalid"
+        ) from exc
+
+
+def verify_python_toolchain(manifest: ComfyUIRuntimeManifest) -> VerifiedPythonToolchain:
+    python_contract = manifest.python
+    if python_contract.toolchain_status != "ready":
+        raise ComfyUIRuntimeError(
+            "unsupported_platform", "A complete reviewed wheel-only Python toolchain is unavailable"
+        )
+    uv_artifact = python_contract.uv_artifact
+    python_artifact = python_contract.python_runtime
+    wheelhouse_artifact = python_contract.wheelhouse
+    if uv_artifact is None or python_artifact is None or wheelhouse_artifact is None:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python toolchain is incomplete")
+
+    uv = _project_artifact(uv_artifact.relative_path, directory=False)
+    if uv.stat().st_size != uv_artifact.size or sha256_file(uv) != uv_artifact.sha256:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed uv identity does not match")
+    if _environment_manager_version(str(uv)) != python_contract.environment_manager_version:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed uv version does not match")
+
+    python_root = _project_artifact(python_artifact.relative_path, directory=True)
+    python_size, python_identity = _regular_tree_identity(python_root)
+    if python_size != python_artifact.size or python_identity != python_artifact.tree_sha256:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python Runtime identity does not match")
+    python = python_root.joinpath(*PurePosixPath(python_artifact.executable_relative_path).parts)
+    try:
+        if not stat.S_ISREG(python.lstat().st_mode):
+            raise OSError
+    except OSError as exc:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python executable is invalid") from exc
+
+    wheelhouse = _project_artifact(wheelhouse_artifact.relative_path, directory=True)
+    wheelhouse_size, wheelhouse_identity = _regular_tree_identity(wheelhouse)
+    if wheelhouse_size != wheelhouse_artifact.size or wheelhouse_identity != wheelhouse_artifact.sha256:
+        raise ComfyUIRuntimeError("dependency_lock_mismatch", "The fixed wheelhouse identity does not match")
+    artifact_lock_path = _project_artifact(wheelhouse_artifact.artifact_lock_file, directory=False)
+    artifact_lock = _read_wheel_artifact_lock(artifact_lock_path)
+    if (
+        sha256_file(artifact_lock_path) != wheelhouse_artifact.artifact_lock_sha256
+        or artifact_lock.python_version != python_contract.version
+        or (artifact_lock.operating_system, artifact_lock.architecture) != ("macos", "arm64")
+    ):
+        raise ComfyUIRuntimeError("dependency_lock_mismatch", "The fixed wheel artifact lock does not match")
+    expected = _expected_dependencies(storage.ROOT_DIR / python_contract.lock_file)
+    locked = {
+        re.sub(r"[-_.]+", "-", wheel.name).lower(): wheel.version
+        for wheel in artifact_lock.wheels
+    }
+    if len(locked) != len(artifact_lock.wheels) or locked != expected:
+        raise ComfyUIRuntimeError(
+            "dependency_lock_mismatch", "The wheel artifact set is not a complete dependency lock"
+        )
+    expected_filenames = {wheel.filename for wheel in artifact_lock.wheels}
+    if len(expected_filenames) != len(artifact_lock.wheels):
+        raise ComfyUIRuntimeError("dependency_lock_mismatch", "The wheel artifact lock contains duplicates")
+    try:
+        actual_filenames = {item.name for item in wheelhouse.iterdir()}
+    except OSError as exc:
+        raise ComfyUIRuntimeError("dependency_lock_mismatch", "The fixed wheelhouse cannot be inspected") from exc
+    if actual_filenames != expected_filenames:
+        raise ComfyUIRuntimeError("dependency_lock_mismatch", "The fixed wheelhouse contains an unexpected artifact")
+    for wheel in artifact_lock.wheels:
+        target = wheelhouse / wheel.filename
+        try:
+            info = target.lstat()
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_size != wheel.size
+                or sha256_file(target) != wheel.sha256
+            ):
+                raise OSError
+        except OSError as exc:
+            raise ComfyUIRuntimeError(
+                "dependency_lock_mismatch", "A fixed wheel artifact identity does not match"
+            ) from exc
+    identity = _toolchain_contract_identity(manifest)
+    return VerifiedPythonToolchain(
+        uv=uv,
+        python=python,
+        wheelhouse=wheelhouse,
+        identity_sha256=identity,
+    )
+
+
+def _toolchain_contract_identity(manifest: ComfyUIRuntimeManifest) -> str:
+    return hashlib.sha256(
+        json.dumps(manifest.python.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def create_python_environment(
     environment: Path,
     manifest: ComfyUIRuntimeManifest,
     cancel: CancellationCheck,
 ) -> str:
-    uv = shutil.which("uv")
-    if not uv:
-        raise ComfyUIRuntimeError("python_environment_failed", "The controlled Python environment manager is unavailable")
-    manager_version = _environment_manager_version(uv)
-    try:
-        minimum = tuple(int(part) for part in manifest.python.environment_manager_min_version.split("."))
-        actual = tuple(int(part) for part in manager_version.split("."))
-    except ValueError as exc:
-        raise ComfyUIRuntimeError("python_environment_failed", "The controlled Python environment manager version is invalid") from exc
-    if actual < minimum:
-        raise ComfyUIRuntimeError("python_environment_failed", "The controlled Python environment manager is too old")
+    toolchain = verify_python_toolchain(manifest)
+    uv = str(toolchain.uv)
     manager_environment = _controlled_environment()
-    manager_environment["PATH"] = os.pathsep.join([str(Path(uv).parent), os.defpath])
+    manager_environment.update({
+        "PATH": str(toolchain.uv.parent),
+        "UV_OFFLINE": "1",
+        "UV_PYTHON_DOWNLOADS": "never",
+        "UV_NO_CONFIG": "1",
+    })
     _run_controlled(
-        [uv, "python", "install", manifest.python.version],
-        cwd=_managed_root(), timeout=10 * 60,
-        error_code="python_environment_failed", cancel=cancel, environment=manager_environment,
-    )
-    _run_controlled(
-        [uv, "venv", "--relocatable", "--python", manifest.python.version, str(environment)],
+        [
+            uv, "venv", "--offline", "--relocatable",
+            "--python", str(toolchain.python), str(environment),
+        ],
         cwd=_managed_root(), timeout=120,
         error_code="python_environment_failed", cancel=cancel, environment=manager_environment,
     )
     _run_controlled(
         [
             uv, "pip", "install", "--python", str(_environment_python(environment)),
-            "--require-hashes", "--default-index", manifest.python.dependency_index_url,
+            "--offline", "--no-index", "--find-links", str(toolchain.wheelhouse),
+            "--require-hashes", "--only-binary=:all:", "--no-build-isolation", "--no-deps",
             "-r", str(storage.ROOT_DIR / manifest.python.lock_file),
         ],
         cwd=_managed_root(), timeout=45 * 60,
@@ -1034,12 +1224,11 @@ ENVIRONMENT_BUILDER = create_python_environment
 
 
 def _environment_manager_version(executable: str | None = None) -> str:
-    uv = executable or shutil.which("uv")
-    if not uv:
+    if executable is None:
         return "unavailable"
     try:
         result = subprocess.run(
-            [uv, "--version"],
+            [executable, "--version"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -1112,12 +1301,24 @@ def _read_owned_installation_record(
 
 def validate_runtime_tree(version_root: Path, manifest: ComfyUIRuntimeManifest) -> RuntimeInstallationRecord:
     record, root_identity, _version_identity = _read_owned_installation_record(version_root)
+    uv_artifact = manifest.python.uv_artifact
+    python_artifact = manifest.python.python_runtime
+    wheelhouse_artifact = manifest.python.wheelhouse
     if (
         record.version != manifest.version
         or record.source_commit != manifest.source_commit
         or record.manifest_sha256 != _manifest_sha256()
         or record.dependency_lock_sha256 != manifest.python.lock_sha256
-        or record.dependency_index_url != manifest.python.dependency_index_url
+        or manifest.python.toolchain_status != "ready"
+        or uv_artifact is None
+        or python_artifact is None
+        or wheelhouse_artifact is None
+        or record.environment_manager_version != manifest.python.environment_manager_version
+        or record.toolchain_identity_sha256 != _toolchain_contract_identity(manifest)
+        or record.uv_artifact_sha256 != uv_artifact.sha256
+        or record.python_runtime_sha256 != python_artifact.tree_sha256
+        or record.wheelhouse_sha256 != wheelhouse_artifact.sha256
+        or record.wheel_artifact_lock_sha256 != wheelhouse_artifact.artifact_lock_sha256
         or record.source_tree_sha256 != manifest.source.source_tree_sha256
     ):
         raise ComfyUIRuntimeError("runtime_validation_failed", "ComfyUI installation identity differs from the manifest")
@@ -1337,6 +1538,12 @@ def run_runtime_install(
             cancel()
             environment = payload / "environment"
             progress("creating_python_environment", 53, "正在创建隔离 Python 环境", None, None)
+            toolchain = verify_python_toolchain(manifest)
+            uv_artifact = manifest.python.uv_artifact
+            python_artifact = manifest.python.python_runtime
+            wheelhouse_artifact = manifest.python.wheelhouse
+            if uv_artifact is None or python_artifact is None or wheelhouse_artifact is None:
+                raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python toolchain is incomplete")
             environment_fingerprint_value = ENVIRONMENT_BUILDER(environment, manifest, cancel)
             _update_journal(journal, "environment_created")
             progress("installing_dependencies", 78, "正在安装固定且校验过的依赖", None, None)
@@ -1367,8 +1574,12 @@ def run_runtime_install(
                 environment_fingerprint=environment_fingerprint_value,
                 source_tree_sha256=source_tree_sha256,
                 python_executable_sha256=sha256_file(_environment_python(environment)),
-                environment_manager_version=_environment_manager_version(),
-                dependency_index_url=manifest.python.dependency_index_url,
+                environment_manager_version=manifest.python.environment_manager_version,
+                toolchain_identity_sha256=toolchain.identity_sha256,
+                uv_artifact_sha256=uv_artifact.sha256,
+                python_runtime_sha256=python_artifact.tree_sha256,
+                wheelhouse_sha256=wheelhouse_artifact.sha256,
+                wheel_artifact_lock_sha256=wheelhouse_artifact.artifact_lock_sha256,
                 platform_adapter=adapter,
                 managed_root_identity=managed_root_identity,
                 parent_directory_identity=_managed_directory_identity(
