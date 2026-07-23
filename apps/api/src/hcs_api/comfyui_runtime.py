@@ -14,13 +14,15 @@ import shutil
 import signal
 import socket
 import ssl
+import stat
 import subprocess
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterator, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -93,9 +95,14 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RuntimeDirectoryIdentity(_StrictModel):
+    device: int = Field(ge=0)
+    inode: int = Field(gt=0)
+
+
 class RuntimeInstallationRecord(_StrictModel):
-    schema_: Literal["hanclassstudio.comfyui_runtime_installation.v1"] = Field(
-        default="hanclassstudio.comfyui_runtime_installation.v1", alias="schema"
+    schema_: Literal["hanclassstudio.comfyui_runtime_installation.v2"] = Field(
+        default="hanclassstudio.comfyui_runtime_installation.v2", alias="schema"
     )
     runtime_id: Literal["comfyui"] = "comfyui"
     version: str
@@ -108,7 +115,18 @@ class RuntimeInstallationRecord(_StrictModel):
     environment_manager_version: str
     dependency_index_url: Literal["https://pypi.org/simple"] = "https://pypi.org/simple"
     platform_adapter: str
+    managed_root_identity: RuntimeDirectoryIdentity
+    parent_directory_identity: RuntimeDirectoryIdentity
+    version_directory_identity: RuntimeDirectoryIdentity
+    managed_path_identities: dict[str, RuntimeDirectoryIdentity] = Field(default_factory=dict)
     installed_at: str
+
+    @field_validator("managed_path_identities")
+    @classmethod
+    def _managed_paths(cls, value: dict[str, RuntimeDirectoryIdentity]) -> dict[str, RuntimeDirectoryIdentity]:
+        if any(name not in {"python", "uv-cache", "home"} for name in value):
+            raise ValueError("installation record contains an unmanaged cleanup path")
+        return value
 
 
 class RuntimeStateRecord(_StrictModel):
@@ -127,8 +145,8 @@ class RuntimeStateRecord(_StrictModel):
 
 
 class RuntimeInstallJournal(_StrictModel):
-    schema_: Literal["hanclassstudio.comfyui_runtime_journal.v1"] = Field(
-        default="hanclassstudio.comfyui_runtime_journal.v1", alias="schema"
+    schema_: Literal["hanclassstudio.comfyui_runtime_journal.v2"] = Field(
+        default="hanclassstudio.comfyui_runtime_journal.v2", alias="schema"
     )
     transaction_id: str
     task_id: str
@@ -143,6 +161,8 @@ class RuntimeInstallJournal(_StrictModel):
     backup_relative_path: str | None = None
     archive_relative_path: str
     expected_archive_sha256: str
+    managed_root_identity: RuntimeDirectoryIdentity
+    staging_directory_identity: RuntimeDirectoryIdentity | None = None
     published_paths: list[str] = Field(default_factory=list)
     process_state: str | None = None
     created_at: str
@@ -312,6 +332,292 @@ def _config_path(name: str) -> Path:
     return storage.CONFIG_DIR / name
 
 
+_DIRECTORY_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _directory_identity(info: os.stat_result) -> RuntimeDirectoryIdentity:
+    return RuntimeDirectoryIdentity(device=info.st_dev, inode=info.st_ino)
+
+
+def _same_directory(actual: RuntimeDirectoryIdentity, expected: RuntimeDirectoryIdentity) -> bool:
+    return actual.device == expected.device and actual.inode == expected.inode
+
+
+def _open_child_directory(parent_fd: int, name: str, *, create: bool = False) -> int:
+    if not name or name in {".", ".."} or "/" in name:
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime directory name is invalid")
+    try:
+        if create:
+            try:
+                os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                pass
+        before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode):
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime path is not a real directory")
+        fd = os.open(name, _DIRECTORY_OPEN_FLAGS, dir_fd=parent_fd)
+        after = os.fstat(fd)
+        if _directory_identity(before) != _directory_identity(after):
+            os.close(fd)
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime directory identity changed")
+        return fd
+    except ComfyUIRuntimeError:
+        raise
+    except OSError as exc:
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime directory cannot be opened safely") from exc
+
+
+def _open_runtime_directory(*, create: bool = False) -> int:
+    path = storage.RUNTIME_DIR
+    try:
+        parent_info = path.parent.lstat()
+        if not stat.S_ISDIR(parent_info.st_mode):
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Runtime parent is not a real directory")
+        parent_fd = os.open(path.parent, _DIRECTORY_OPEN_FLAGS)
+    except ComfyUIRuntimeError:
+        raise
+    except OSError as exc:
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Runtime parent cannot be opened safely") from exc
+    try:
+        if _directory_identity(os.fstat(parent_fd)) != _directory_identity(parent_info):
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Runtime parent identity changed")
+        return _open_child_directory(parent_fd, path.name, create=create)
+    finally:
+        os.close(parent_fd)
+
+
+@contextmanager
+def _open_managed_root(
+    *,
+    create: bool = False,
+    expected: RuntimeDirectoryIdentity | None = None,
+) -> Iterator[tuple[int, RuntimeDirectoryIdentity]]:
+    if not secure_dirfd_extraction_supported() or not shutil.rmtree.avoids_symlink_attacks:
+        raise ComfyUIRuntimeError("unsupported_platform", "Safe managed-directory operations are unavailable")
+    runtime_fd = _open_runtime_directory(create=create)
+    try:
+        providers_fd = _open_child_directory(runtime_fd, "providers", create=create)
+    finally:
+        os.close(runtime_fd)
+    try:
+        managed_fd = _open_child_directory(providers_fd, "hcs.comfyui-runtime", create=create)
+    finally:
+        os.close(providers_fd)
+    identity = _directory_identity(os.fstat(managed_fd))
+    try:
+        if expected is not None and not _same_directory(identity, expected):
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime root identity changed")
+        yield managed_fd, identity
+    finally:
+        os.close(managed_fd)
+
+
+def _managed_relative_parts(path: Path) -> tuple[str, ...]:
+    try:
+        relative = path.relative_to(_managed_root())
+    except ValueError as exc:
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime path escaped its root") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime path is not a removable child")
+    return relative.parts
+
+
+@contextmanager
+def _open_managed_directory(
+    path: Path,
+    *,
+    expected_root: RuntimeDirectoryIdentity | None = None,
+) -> Iterator[tuple[int, RuntimeDirectoryIdentity, RuntimeDirectoryIdentity]]:
+    parts = _managed_relative_parts(path)
+    with _open_managed_root(expected=expected_root) as (root_fd, root_identity):
+        current = os.dup(root_fd)
+        try:
+            for part in parts:
+                child = _open_child_directory(current, part)
+                os.close(current)
+                current = child
+            yield current, root_identity, _directory_identity(os.fstat(current))
+        finally:
+            os.close(current)
+
+
+def _managed_directory_identity(path: Path, *, expected_root: RuntimeDirectoryIdentity | None = None) -> RuntimeDirectoryIdentity:
+    with _open_managed_directory(path, expected_root=expected_root) as (_fd, _root, identity):
+        return identity
+
+
+def _optional_managed_directory_identity(
+    path: Path,
+    *,
+    root_identity: RuntimeDirectoryIdentity,
+) -> RuntimeDirectoryIdentity | None:
+    parts = _managed_relative_parts(path)
+    with _open_managed_root(expected=root_identity) as (root_fd, _root):
+        parent_fd = os.dup(root_fd)
+        try:
+            for part in parts[:-1]:
+                try:
+                    info = os.stat(part, dir_fd=parent_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    return None
+                if not stat.S_ISDIR(info.st_mode):
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch", "Managed Runtime path is not a real directory"
+                    )
+                child = _open_child_directory(parent_fd, part)
+                os.close(parent_fd)
+                parent_fd = child
+            try:
+                info = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return None
+            if not stat.S_ISDIR(info.st_mode):
+                raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime path is not a real directory")
+            return _directory_identity(info)
+        finally:
+            os.close(parent_fd)
+
+
+def _ensure_managed_directory(
+    path: Path,
+    *,
+    root_identity: RuntimeDirectoryIdentity,
+) -> RuntimeDirectoryIdentity:
+    parts = _managed_relative_parts(path)
+    with _open_managed_root(expected=root_identity) as (root_fd, _root):
+        current = os.dup(root_fd)
+        try:
+            for part in parts:
+                child = _open_child_directory(current, part, create=True)
+                os.close(current)
+                current = child
+            return _directory_identity(os.fstat(current))
+        finally:
+            os.close(current)
+
+
+@contextmanager
+def _open_managed_parent(
+    path: Path,
+    *,
+    root_identity: RuntimeDirectoryIdentity,
+) -> Iterator[tuple[int, str]]:
+    parts = _managed_relative_parts(path)
+    with _open_managed_root(expected=root_identity) as (root_fd, _root):
+        current = os.dup(root_fd)
+        try:
+            for part in parts[:-1]:
+                child = _open_child_directory(current, part)
+                os.close(current)
+                current = child
+            yield current, parts[-1]
+        finally:
+            os.close(current)
+
+
+def _secure_replace_managed(
+    source: Path,
+    destination: Path,
+    *,
+    root_identity: RuntimeDirectoryIdentity,
+) -> None:
+    with _open_managed_parent(source, root_identity=root_identity) as (source_fd, source_name):
+        with _open_managed_parent(destination, root_identity=root_identity) as (destination_fd, destination_name):
+            try:
+                source_info = os.stat(source_name, dir_fd=source_fd, follow_symlinks=False)
+                if not stat.S_ISDIR(source_info.st_mode):
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch", "Managed Runtime publish source is not a real directory"
+                    )
+                try:
+                    destination_info = os.stat(destination_name, dir_fd=destination_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    destination_info = None
+                if destination_info is not None and not stat.S_ISDIR(destination_info.st_mode):
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch", "Managed Runtime publish destination is not a real directory"
+                    )
+                os.rename(
+                    source_name,
+                    destination_name,
+                    src_dir_fd=source_fd,
+                    dst_dir_fd=destination_fd,
+                )
+            except ComfyUIRuntimeError:
+                raise
+            except OSError as exc:
+                raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime publish failed safely") from exc
+
+
+def _assert_safe_removal_tree(directory_fd: int) -> None:
+    try:
+        for _root, directory_names, file_names, current_fd in os.fwalk(
+            ".", topdown=True, follow_symlinks=False, dir_fd=directory_fd
+        ):
+            for name in [*directory_names, *file_names]:
+                info = os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode) or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch",
+                        "Managed Runtime cleanup refused a link or special file",
+                    )
+    except ComfyUIRuntimeError:
+        raise
+    except OSError as exc:
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime cleanup tree changed") from exc
+
+
+def _secure_remove_managed_directory(
+    path: Path,
+    *,
+    root_identity: RuntimeDirectoryIdentity,
+    target_identity: RuntimeDirectoryIdentity,
+) -> bool:
+    parts = _managed_relative_parts(path)
+    with _open_managed_root(expected=root_identity) as (root_fd, _root):
+        parent_fd = os.dup(root_fd)
+        try:
+            for part in parts[:-1]:
+                child = _open_child_directory(parent_fd, part)
+                os.close(parent_fd)
+                parent_fd = child
+            name = parts[-1]
+            try:
+                current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            if not stat.S_ISDIR(current.st_mode) or not _same_directory(
+                _directory_identity(current), target_identity
+            ):
+                raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime cleanup target identity changed")
+            target_fd = _open_child_directory(parent_fd, name)
+            try:
+                if not _same_directory(_directory_identity(os.fstat(target_fd)), target_identity):
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch", "Managed Runtime cleanup target identity changed"
+                    )
+                _assert_safe_removal_tree(target_fd)
+                quarantine = f".hcs-delete-{uuid.uuid4().hex}"
+                os.rename(name, quarantine, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                moved = os.stat(quarantine, dir_fd=parent_fd, follow_symlinks=False)
+                if not stat.S_ISDIR(moved.st_mode) or not _same_directory(
+                    _directory_identity(moved), target_identity
+                ):
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch", "Managed Runtime cleanup rename identity changed"
+                    )
+            finally:
+                os.close(target_fd)
+            shutil.rmtree(quarantine, dir_fd=parent_fd)
+            return True
+        except ComfyUIRuntimeError:
+            raise
+        except OSError as exc:
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime cleanup failed safely") from exc
+        finally:
+            os.close(parent_fd)
+
+
 def _manifest_sha256() -> str:
     return sha256_file(storage.ROOT_DIR / "providers/comfyui/runtime-manifest.v1.json")
 
@@ -387,13 +693,10 @@ def _update_journal(
 
 
 def _resolve_journal_path(relative: str) -> Path:
-    root = _managed_root().resolve()
-    target = root.joinpath(*PurePosixPath(relative).parts).resolve(strict=False)
-    try:
-        target.relative_to(root)
-    except ValueError as exc:
-        raise ComfyUIRuntimeError("runtime_journal_invalid", "Runtime journal path escaped its managed root") from exc
-    return target
+    path = PurePosixPath(relative)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ComfyUIRuntimeError("runtime_journal_invalid", "Runtime journal path escaped its managed root")
+    return _managed_root().joinpath(*path.parts)
 
 
 def platform_adapter(manifest: ComfyUIRuntimeManifest) -> tuple[str, str, bool]:
@@ -778,12 +1081,37 @@ def source_tree_fingerprint(source: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_runtime_tree(version_root: Path, manifest: ComfyUIRuntimeManifest) -> RuntimeInstallationRecord:
-    record_path = _installation_record_path(version_root)
+def _read_owned_installation_record(
+    version_root: Path,
+) -> tuple[RuntimeInstallationRecord, RuntimeDirectoryIdentity, RuntimeDirectoryIdentity]:
     try:
-        record = RuntimeInstallationRecord.model_validate_json(record_path.read_text(encoding="utf-8"))
+        with _open_managed_directory(version_root) as (directory_fd, root_identity, version_identity):
+            record_fd = os.open("installation.json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            try:
+                record_info = os.fstat(record_fd)
+                if not stat.S_ISREG(record_info.st_mode) or record_info.st_size > 256 * 1024:
+                    raise ComfyUIRuntimeError(
+                        "runtime_identity_mismatch", "ComfyUI installation record is not a bounded regular file"
+                    )
+                payload = bytearray()
+                while chunk := os.read(record_fd, 64 * 1024):
+                    payload.extend(chunk)
+            finally:
+                os.close(record_fd)
+        record = RuntimeInstallationRecord.model_validate_json(bytes(payload))
+    except ComfyUIRuntimeError:
+        raise
     except (OSError, UnicodeDecodeError, ValueError) as exc:
-        raise ComfyUIRuntimeError("runtime_validation_failed", "ComfyUI installation record is invalid") from exc
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "ComfyUI installation record is invalid") from exc
+    if not _same_directory(record.managed_root_identity, root_identity):
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime root identity changed")
+    if not _same_directory(record.version_directory_identity, version_identity):
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime version identity changed")
+    return record, root_identity, version_identity
+
+
+def validate_runtime_tree(version_root: Path, manifest: ComfyUIRuntimeManifest) -> RuntimeInstallationRecord:
+    record, root_identity, _version_identity = _read_owned_installation_record(version_root)
     if (
         record.version != manifest.version
         or record.source_commit != manifest.source_commit
@@ -793,6 +1121,10 @@ def validate_runtime_tree(version_root: Path, manifest: ComfyUIRuntimeManifest) 
         or record.source_tree_sha256 != manifest.source.source_tree_sha256
     ):
         raise ComfyUIRuntimeError("runtime_validation_failed", "ComfyUI installation identity differs from the manifest")
+    if version_root == _version_root(manifest):
+        parent_identity = _managed_directory_identity(version_root.parent, expected_root=root_identity)
+        if not _same_directory(parent_identity, record.parent_directory_identity):
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime parent identity changed")
     source = version_root / "source"
     python = _environment_python(version_root / "environment")
     if not python.is_file() or sha256_file(python) != record.python_executable_sha256:
@@ -833,19 +1165,87 @@ def _source_contract_pristine(version_root: Path, manifest: ComfyUIRuntimeManife
 RUNTIME_VALIDATOR = validate_runtime_tree
 
 
-def _safe_remove(path: Path) -> None:
-    try:
-        path.resolve(strict=False).relative_to(_managed_root().resolve())
-    except ValueError as exc:
-        raise ComfyUIRuntimeError("internal_error", "Refused to remove a path outside the managed Runtime") from exc
-    if path.is_symlink():
-        path.unlink(missing_ok=True)
-    elif path.exists():
-        shutil.rmtree(path)
-
-
 def _write_installation_record(path: Path, record: RuntimeInstallationRecord) -> None:
-    _atomic_json(path, record.model_dump(mode="json", by_alias=True))
+    directory = path.parent
+    with _open_managed_directory(
+        directory, expected_root=record.managed_root_identity
+    ) as (directory_fd, _root, directory_identity):
+        if not _same_directory(directory_identity, record.version_directory_identity):
+            raise ComfyUIRuntimeError("runtime_identity_mismatch", "Installation record directory identity changed")
+        temporary = f".installation.{uuid.uuid4().hex}.tmp"
+        encoded = json.dumps(
+            record.model_dump(mode="json", by_alias=True), ensure_ascii=False, indent=2
+        ).encode("utf-8")
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            with os.fdopen(fd, "wb", closefd=False) as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            os.close(fd)
+        os.rename(temporary, "installation.json", src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
+
+
+def _remove_owned_runtime_tree(path: Path, manifest: ComfyUIRuntimeManifest) -> RuntimeInstallationRecord:
+    record = RUNTIME_VALIDATOR(path, manifest)
+    _secure_remove_managed_directory(
+        path,
+        root_identity=record.managed_root_identity,
+        target_identity=record.version_directory_identity,
+    )
+    return record
+
+
+def _remove_recorded_managed_paths(record: RuntimeInstallationRecord) -> None:
+    for relative, identity in record.managed_path_identities.items():
+        _secure_remove_managed_directory(
+            _managed_root() / relative,
+            root_identity=record.managed_root_identity,
+            target_identity=identity,
+        )
+
+
+def _validate_journal_contract(
+    journal: RuntimeInstallJournal,
+    manifest: ComfyUIRuntimeManifest,
+) -> None:
+    expected_staging = f"staging/{journal.transaction_id}"
+    expected_final = f"versions/{manifest.version}"
+    expected_archive = f"{expected_staging}/source.tar.gz"
+    expected_backup = f"backups/{manifest.version}-{journal.transaction_id}"
+    if (
+        journal.runtime_version != manifest.version
+        or journal.manifest_sha256 != _manifest_sha256()
+        or journal.expected_archive_sha256 != manifest.source.archive_sha256
+        or journal.staging_relative_path != expected_staging
+        or journal.final_relative_path != expected_final
+        or journal.archive_relative_path not in {expected_archive, f"{expected_staging}/unused.tar.gz"}
+        or (
+            journal.operation in {"install", "repair"}
+            and journal.backup_relative_path != expected_backup
+        )
+        or (journal.operation == "uninstall" and journal.backup_relative_path is not None)
+    ):
+        raise ComfyUIRuntimeError("runtime_identity_mismatch", "Runtime journal identity is not authoritative")
+    with _open_managed_root(expected=journal.managed_root_identity):
+        pass
+
+
+def _remove_journal_staging(journal: RuntimeInstallJournal) -> None:
+    if journal.staging_directory_identity is None:
+        return
+    _secure_remove_managed_directory(
+        _managed_root() / journal.staging_relative_path,
+        root_identity=journal.managed_root_identity,
+        target_identity=journal.staging_directory_identity,
+    )
 
 
 def _default_progress(_phase: str, _percent: int, _message: str, _current: int | None, _total: int | None) -> None:
@@ -870,8 +1270,8 @@ def run_runtime_install(
             except ComfyUIRuntimeError as exc:
                 if exc.code not in {"runtime_not_running", "runtime_not_installed"}:
                     raise
-        managed = _managed_root()
-        managed.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with _open_managed_root(create=True) as (_managed_fd, managed_root_identity):
+            pass
         transaction_id = uuid.uuid4().hex
         staging_rel = f"staging/{transaction_id}"
         final_rel = f"versions/{manifest.version}"
@@ -890,6 +1290,7 @@ def run_runtime_install(
             backup_relative_path=backup_rel,
             archive_relative_path=archive_rel,
             expected_archive_sha256=manifest.source.archive_sha256,
+            managed_root_identity=managed_root_identity,
             created_at=now,
             updated_at=now,
         )
@@ -905,8 +1306,14 @@ def run_runtime_install(
             required_free = max(8 * 1024**3, manifest.archive_policy.max_total_file_bytes * 8)
             if disk.free < required_free:
                 raise ComfyUIRuntimeError("insufficient_disk", "ComfyUI Runtime installation needs at least 8 GB free disk space")
-            staging.mkdir(parents=True, mode=0o700)
-            payload.mkdir(mode=0o700)
+            staging_identity = _ensure_managed_directory(
+                staging, root_identity=managed_root_identity
+            )
+            journal.staging_directory_identity = staging_identity
+            _save_journal(journal)
+            payload_identity = _ensure_managed_directory(
+                payload, root_identity=managed_root_identity
+            )
             cancel()
             _update_journal(journal, "downloading")
             progress("downloading", 8, "正在下载固定版本 ComfyUI", 0, manifest.source.archive_size)
@@ -939,6 +1346,19 @@ def run_runtime_install(
                 raise ComfyUIRuntimeError(
                     "runtime_validation_failed", "Extracted ComfyUI source tree differs from the pinned manifest"
                 )
+            _ensure_managed_directory(final.parent, root_identity=managed_root_identity)
+            _ensure_managed_directory(backup.parent, root_identity=managed_root_identity)
+            managed_path_identities = {
+                relative: identity
+                for relative in ("python", "uv-cache", "home")
+                if (
+                    identity := _optional_managed_directory_identity(
+                        _managed_root() / relative,
+                        root_identity=managed_root_identity,
+                    )
+                )
+                is not None
+            }
             record = RuntimeInstallationRecord(
                 version=manifest.version,
                 source_commit=manifest.source_commit,
@@ -950,6 +1370,12 @@ def run_runtime_install(
                 environment_manager_version=_environment_manager_version(),
                 dependency_index_url=manifest.python.dependency_index_url,
                 platform_adapter=adapter,
+                managed_root_identity=managed_root_identity,
+                parent_directory_identity=_managed_directory_identity(
+                    final.parent, expected_root=managed_root_identity
+                ),
+                version_directory_identity=payload_identity,
+                managed_path_identities=managed_path_identities,
                 installed_at=_iso(),
             )
             _write_installation_record(payload / "installation.json", record)
@@ -959,13 +1385,18 @@ def run_runtime_install(
             cancel()
             _update_journal(journal, "publish_prepared")
             progress("publishing_runtime", 92, "正在发布受控运行环境", None, None)
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            final.parent.mkdir(parents=True, exist_ok=True)
-            if backup.exists():
-                _safe_remove(backup)
-            if final.exists():
-                os.replace(final, backup)
-            os.replace(payload, final)
+            backup_identity = _optional_managed_directory_identity(
+                backup, root_identity=managed_root_identity
+            )
+            if backup_identity is not None:
+                _remove_owned_runtime_tree(backup, manifest)
+            final_identity = _optional_managed_directory_identity(
+                final, root_identity=managed_root_identity
+            )
+            if final_identity is not None:
+                RUNTIME_VALIDATOR(final, manifest)
+                _secure_replace_managed(final, backup, root_identity=managed_root_identity)
+            _secure_replace_managed(payload, final, root_identity=managed_root_identity)
             _update_journal(journal, "runtime_published", published_paths=[final_rel])
             RUNTIME_VALIDATOR(final, manifest)
             state = RuntimeStateRecord(
@@ -980,9 +1411,11 @@ def run_runtime_install(
             )
             _write_state(state)
             _update_journal(journal, "state_committed")
-            if backup.exists():
-                _safe_remove(backup)
-            _safe_remove(staging)
+            if _optional_managed_directory_identity(
+                backup, root_identity=managed_root_identity
+            ) is not None:
+                _remove_owned_runtime_tree(backup, manifest)
+            _remove_journal_staging(journal)
             _update_journal(journal, "completed")
             _append_log("install", f"{operation} completed for ComfyUI {manifest.version} ({manifest.source_commit})")
             progress("completed", 100, "ComfyUI 运行环境已安装；尚未安装图片模型", None, None)
@@ -990,12 +1423,18 @@ def run_runtime_install(
             _append_log("install", f"{operation} failed: {exc.code}")
             _update_journal(journal, "rolling_back", error_code=exc.code)
             try:
-                if final.exists() and backup.exists():
-                    _safe_remove(final)
-                    os.replace(backup, final)
-                elif not final.exists() and backup.exists():
-                    os.replace(backup, final)
-                _safe_remove(staging)
+                final_present = _optional_managed_directory_identity(
+                    final, root_identity=managed_root_identity
+                )
+                backup_present = _optional_managed_directory_identity(
+                    backup, root_identity=managed_root_identity
+                )
+                if final_present is not None and backup_present is not None:
+                    _remove_owned_runtime_tree(final, manifest)
+                    _secure_replace_managed(backup, final, root_identity=managed_root_identity)
+                elif final_present is None and backup_present is not None:
+                    _secure_replace_managed(backup, final, root_identity=managed_root_identity)
+                _remove_journal_staging(journal)
                 _update_journal(journal, "cancelled" if exc.code == "cancelled" else "rolled_back", error_code=exc.code)
             except (OSError, ComfyUIRuntimeError):
                 _update_journal(journal, "failed", error_code="rollback_failed")
@@ -1012,12 +1451,18 @@ def run_runtime_install(
             _append_log("install", f"{operation} failed: {code}")
             _update_journal(journal, "rolling_back", error_code=code)
             try:
-                if final.exists() and backup.exists():
-                    _safe_remove(final)
-                    os.replace(backup, final)
-                elif not final.exists() and backup.exists():
-                    os.replace(backup, final)
-                _safe_remove(staging)
+                final_present = _optional_managed_directory_identity(
+                    final, root_identity=managed_root_identity
+                )
+                backup_present = _optional_managed_directory_identity(
+                    backup, root_identity=managed_root_identity
+                )
+                if final_present is not None and backup_present is not None:
+                    _remove_owned_runtime_tree(final, manifest)
+                    _secure_replace_managed(backup, final, root_identity=managed_root_identity)
+                elif final_present is None and backup_present is not None:
+                    _secure_replace_managed(backup, final, root_identity=managed_root_identity)
+                _remove_journal_staging(journal)
                 _update_journal(journal, "rolled_back", error_code=code)
             except (OSError, ComfyUIRuntimeError):
                 _update_journal(journal, "failed", error_code="rollback_failed")
@@ -1034,6 +1479,18 @@ def recover_installations() -> list[str]:
             try:
                 journal = RuntimeInstallJournal.model_validate(raw)
             except ValueError:
+                state = _read_state()
+                state.status = "repair_required"
+                state.error = {"code": "runtime_identity_mismatch"}
+                _write_state(state)
+                recovered.append(transaction_id)
+                continue
+            if journal.transaction_id != transaction_id:
+                state = _read_state()
+                state.status = "repair_required"
+                state.error = {"code": "runtime_identity_mismatch"}
+                _write_state(state)
+                recovered.append(transaction_id)
                 continue
             if journal.phase in {"completed", "rolled_back", "failed", "cancelled"}:
                 continue
@@ -1041,23 +1498,33 @@ def recover_installations() -> list[str]:
             final = _resolve_journal_path(journal.final_relative_path)
             backup = _resolve_journal_path(journal.backup_relative_path) if journal.backup_relative_path else None
             try:
+                _validate_journal_contract(journal, manifest)
+                final_present = _optional_managed_directory_identity(
+                    final, root_identity=journal.managed_root_identity
+                )
+                payload_present = _optional_managed_directory_identity(
+                    staging / "payload", root_identity=journal.managed_root_identity
+                )
+                backup_present = (
+                    _optional_managed_directory_identity(
+                        backup, root_identity=journal.managed_root_identity
+                    )
+                    if backup is not None
+                    else None
+                )
                 if journal.operation == "uninstall":
-                    _safe_remove(final)
-                    _safe_remove(staging)
-                    for managed_path in (
-                        _managed_root() / "python",
-                        _managed_root() / "uv-cache",
-                        _managed_root() / "backups",
-                    ):
-                        _safe_remove(managed_path)
+                    if final_present is not None:
+                        record = _remove_owned_runtime_tree(final, manifest)
+                        _remove_recorded_managed_paths(record)
+                    _remove_journal_staging(journal)
                     _write_process(None)
                     _write_state(RuntimeStateRecord())
                     _update_journal(journal, "completed")
                     recovered_uninstall = True
                 elif (
                     journal.phase in {"publish_prepared", "runtime_published", "state_committed"}
-                    and final.exists()
-                    and not (staging / "payload").exists()
+                    and final_present is not None
+                    and payload_present is None
                 ):
                     record = RUNTIME_VALIDATOR(final, manifest)
                     _write_state(RuntimeStateRecord(
@@ -1070,34 +1537,41 @@ def recover_installations() -> list[str]:
                         installed_at=record.installed_at,
                         checked_at=_iso(),
                     ))
-                    if backup and backup.exists():
-                        _safe_remove(backup)
-                    _safe_remove(staging)
+                    if backup is not None and backup_present is not None:
+                        _remove_owned_runtime_tree(backup, manifest)
+                    _remove_journal_staging(journal)
                     _update_journal(journal, "completed")
                 else:
-                    if backup and backup.exists():
-                        if final.exists():
-                            _safe_remove(final)
-                        os.replace(backup, final)
-                    elif journal.phase == "publish_prepared" and final.exists() and not (staging / "payload").exists():
-                        _safe_remove(final)
-                    _safe_remove(staging)
+                    if backup is not None and backup_present is not None:
+                        if final_present is not None:
+                            _remove_owned_runtime_tree(final, manifest)
+                        _secure_replace_managed(
+                            backup,
+                            final,
+                            root_identity=journal.managed_root_identity,
+                        )
+                    elif (
+                        journal.phase == "publish_prepared"
+                        and final_present is not None
+                        and payload_present is None
+                    ):
+                        _remove_owned_runtime_tree(final, manifest)
+                    _remove_journal_staging(journal)
                     _update_journal(journal, "rolled_back", error_code="interrupted")
                 recovered.append(transaction_id)
-            except (OSError, ComfyUIRuntimeError):
-                _update_journal(journal, "failed", error_code="recovery_failed")
+            except (OSError, ComfyUIRuntimeError) as exc:
+                code = "runtime_identity_mismatch" if isinstance(exc, ComfyUIRuntimeError) and exc.code == "runtime_identity_mismatch" else "recovery_failed"
+                _update_journal(journal, "failed", error_code=code)
+                prior_state = _read_state()
                 _write_state(RuntimeStateRecord(
-                    installed=final.exists(),
-                    version=manifest.version if final.exists() else None,
+                    installed=prior_state.installed,
+                    version=prior_state.version,
                     status="repair_required",
                     platform_adapter=journal.platform_adapter,
-                    error={"code": "recovery_failed"},
+                    error={"code": code},
                 ))
                 recovered.append(transaction_id)
     if recovered_uninstall:
-        _safe_remove(_managed_root())
-        shutil.rmtree(_runtime_data_root(), ignore_errors=True)
-        shutil.rmtree(_logs_root(), ignore_errors=True)
         _config_path(_STATE_FILE).unlink(missing_ok=True)
         _config_path(_JOURNAL_FILE).unlink(missing_ok=True)
     return recovered
@@ -1687,8 +2161,11 @@ def run_runtime_uninstall(
             if exc.code not in {"runtime_not_running", "runtime_not_installed"}:
                 raise
         cancel()
+        final = _version_root(manifest)
+        ownership = RUNTIME_VALIDATOR(final, manifest)
         transaction_id = uuid.uuid4().hex
         now = _iso()
+        staging_relative = f"staging/{transaction_id}"
         journal = RuntimeInstallJournal(
             transaction_id=transaction_id,
             task_id=task_id,
@@ -1696,40 +2173,30 @@ def run_runtime_uninstall(
             runtime_version=manifest.version,
             manifest_sha256=_manifest_sha256(),
             platform_adapter=adapter,
-            staging_relative_path=f"staging/uninstall-{transaction_id}",
+            staging_relative_path=staging_relative,
             final_relative_path=f"versions/{manifest.version}",
-            archive_relative_path=f"staging/uninstall-{transaction_id}/unused.tar.gz",
+            archive_relative_path=f"{staging_relative}/unused.tar.gz",
             expected_archive_sha256=manifest.source.archive_sha256,
+            managed_root_identity=ownership.managed_root_identity,
             created_at=now,
             updated_at=now,
         )
         _save_journal(journal)
         progress("preflight", 10, "正在确认受控运行进程已停止", None, None)
-        final = _version_root(manifest)
         try:
             cancel()
             _update_journal(journal, "rolling_back")
             progress("uninstalling_runtime", 55, "正在移除 HanClassStudio 管理的 Runtime", None, None)
-            _safe_remove(final)
-            for managed_path in (
-                _managed_root() / "python",
-                _managed_root() / "uv-cache",
-                _managed_root() / "staging",
-                _managed_root() / "backups",
-            ):
-                _safe_remove(managed_path)
-            versions = final.parent
-            if versions.exists() and not any(versions.iterdir()):
-                versions.rmdir()
+            removed_record = _remove_owned_runtime_tree(final, manifest)
+            _remove_recorded_managed_paths(removed_record)
             # Deliberately retain provider-models/comfyui for Phase 2C ownership separation.
+            # Runtime input/output, logs, and unknown managed-root entries are retained
+            # because they are not authorized by the installation ownership record.
             _write_process(None)
             _write_state(RuntimeStateRecord())
             _update_journal(journal, "state_committed")
             _update_journal(journal, "completed")
             progress("completed", 100, "ComfyUI 运行环境已卸载", None, None)
-            _safe_remove(_managed_root())
-            shutil.rmtree(_runtime_data_root(), ignore_errors=True)
-            shutil.rmtree(_logs_root(), ignore_errors=True)
             _config_path(_STATE_FILE).unlink(missing_ok=True)
             _config_path(_JOURNAL_FILE).unlink(missing_ok=True)
         except (OSError, ComfyUIRuntimeError) as exc:

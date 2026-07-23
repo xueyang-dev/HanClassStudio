@@ -216,9 +216,10 @@ def test_recovery_restores_backup_from_publish_crash(tmp_path: Path, monkeypatch
     manifest, _archive = _install_fakes(tmp_path, monkeypatch)
     runtime.run_runtime_install("task-base")
     final = runtime._version_root(manifest)
-    backup = runtime._managed_root() / "backups/interrupted"
+    backup = runtime._managed_root() / f"backups/{manifest.version}-interrupted"
     backup.parent.mkdir(parents=True, exist_ok=True)
     os.replace(final, backup)
+    ownership = runtime._read_owned_installation_record(backup)[0]
     now = runtime._iso()
     journal = runtime.RuntimeInstallJournal(
         transaction_id="interrupted",
@@ -230,9 +231,10 @@ def test_recovery_restores_backup_from_publish_crash(tmp_path: Path, monkeypatch
         phase="publish_prepared",
         staging_relative_path="staging/interrupted",
         final_relative_path=f"versions/{manifest.version}",
-        backup_relative_path="backups/interrupted",
+        backup_relative_path=f"backups/{manifest.version}-interrupted",
         archive_relative_path="staging/interrupted/source.tar.gz",
         expected_archive_sha256=manifest.source.archive_sha256,
+        managed_root_identity=ownership.managed_root_identity,
         created_at=now,
         updated_at=now,
     )
@@ -263,8 +265,8 @@ def test_uninstall_removes_only_managed_runtime_and_preserves_model_boundary(tmp
     assert model.read_bytes() == b"future-owned-model"
     assert project_asset.read_bytes() == b"asset"
     assert runtime._read_state().installed is False
-    assert not runtime._managed_root().exists()
-    assert not runtime._logs_root().exists()
+    assert runtime._managed_root().is_dir()
+    assert runtime._logs_root().is_dir()
     assert not runtime._config_path(runtime._JOURNAL_FILE).exists()
 
 
@@ -285,6 +287,9 @@ def test_interrupted_uninstall_recovery_finishes_cleanup_idempotently(tmp_path: 
         final_relative_path=f"versions/{manifest.version}",
         archive_relative_path="staging/uninstall-crash/unused.tar.gz",
         expected_archive_sha256=manifest.source.archive_sha256,
+        managed_root_identity=runtime._read_owned_installation_record(
+            runtime._version_root(manifest)
+        )[0].managed_root_identity,
         created_at=now,
         updated_at=now,
     )
@@ -295,6 +300,118 @@ def test_interrupted_uninstall_recovery_finishes_cleanup_idempotently(tmp_path: 
     assert not runtime._version_root(manifest).exists()
     assert runtime._read_state().installed is False
     assert not runtime._config_path(runtime._JOURNAL_FILE).exists()
+
+
+def _enable_strict_fixture_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runtime, "environment_fingerprint", lambda _environment, _manifest: "f" * 64)
+    monkeypatch.setattr(runtime, "RUNTIME_VALIDATOR", runtime.validate_runtime_tree)
+
+
+def test_uninstall_refuses_changed_managed_root_identity_and_preserves_unowned_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    manifest, _archive = _install_fakes(tmp_path, monkeypatch)
+    runtime.run_runtime_install("task-install")
+    _enable_strict_fixture_validation(monkeypatch)
+    original_root = tmp_path / "owned-runtime-root"
+    runtime._managed_root().rename(original_root)
+    unowned_root = tmp_path / "unowned-root"
+    unowned_root.mkdir()
+    marker = unowned_root / "marker.txt"
+    marker.write_text("unchanged", encoding="utf-8")
+    runtime._managed_root().symlink_to(unowned_root, target_is_directory=True)
+
+    with pytest.raises(runtime.ComfyUIRuntimeError) as error:
+        runtime.run_runtime_uninstall("task-uninstall")
+
+    assert error.value.code == "runtime_identity_mismatch"
+    assert marker.read_text(encoding="utf-8") == "unchanged"
+    assert runtime._version_root(manifest).is_symlink() is False
+    assert (original_root / f"versions/{manifest.version}").is_dir()
+
+
+def test_uninstall_refuses_replaced_version_and_missing_installation_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    manifest, _archive = _install_fakes(tmp_path, monkeypatch)
+    runtime.run_runtime_install("task-install")
+    _enable_strict_fixture_validation(monkeypatch)
+    final = runtime._version_root(manifest)
+    owned_copy = tmp_path / "owned-version"
+    final.rename(owned_copy)
+    unowned = tmp_path / "unowned-version"
+    unowned.mkdir()
+    marker = unowned / "marker.txt"
+    marker.write_text("unchanged", encoding="utf-8")
+    final.symlink_to(unowned, target_is_directory=True)
+
+    with pytest.raises(runtime.ComfyUIRuntimeError) as linked_error:
+        runtime.run_runtime_uninstall("task-uninstall-linked")
+
+    assert linked_error.value.code == "runtime_identity_mismatch"
+    assert marker.read_text(encoding="utf-8") == "unchanged"
+    final.unlink()
+    final.mkdir()
+    unrecorded_marker = final / "unrecorded.txt"
+    unrecorded_marker.write_text("unchanged", encoding="utf-8")
+
+    with pytest.raises(runtime.ComfyUIRuntimeError) as unrecorded_error:
+        runtime.run_runtime_uninstall("task-uninstall-unrecorded")
+
+    assert unrecorded_error.value.code == "runtime_identity_mismatch"
+    assert unrecorded_marker.read_text(encoding="utf-8") == "unchanged"
+    assert owned_copy.is_dir()
+
+
+def test_recovery_rejects_non_authoritative_journal_without_modifying_unowned_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    _manifest, _archive = _install_fakes(tmp_path, monkeypatch)
+    runtime.run_runtime_install("task-install")
+    marker = tmp_path / "unowned-marker.txt"
+    marker.write_text("unchanged", encoding="utf-8")
+    raw = runtime._journals()
+    transaction_id, journal = next(iter(raw.items()))
+    journal["phase"] = "rolling_back"
+    journal["final_relative_path"] = "../unowned-marker.txt"
+    raw[transaction_id] = journal
+    runtime._atomic_json(runtime._config_path(runtime._JOURNAL_FILE), raw)
+
+    assert runtime.recover_installations() == [transaction_id]
+    assert marker.read_text(encoding="utf-8") == "unchanged"
+    assert runtime._read_state().installed is True
+    assert runtime._read_state().error == {"code": "runtime_identity_mismatch"}
+
+
+@pytest.mark.parametrize("changed_identity", ["manifest", "tree"])
+def test_uninstall_requires_current_manifest_and_tree_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed_identity: str,
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    manifest, _archive = _install_fakes(tmp_path, monkeypatch)
+    runtime.run_runtime_install("task-install")
+    _enable_strict_fixture_validation(monkeypatch)
+    final = runtime._version_root(manifest)
+    protected = storage.RUNTIME_DIR / "user-owned/marker.txt"
+    protected.parent.mkdir(parents=True)
+    protected.write_text("unchanged", encoding="utf-8")
+    if changed_identity == "manifest":
+        record = runtime._read_owned_installation_record(final)[0]
+        record.manifest_sha256 = "0" * 64
+        runtime._write_installation_record(final / "installation.json", record)
+    else:
+        (final / "source/main.py").write_text("changed\n", encoding="utf-8")
+
+    with pytest.raises(runtime.ComfyUIRuntimeError):
+        runtime.run_runtime_uninstall(f"task-uninstall-{changed_identity}")
+
+    assert final.is_dir()
+    assert protected.read_text(encoding="utf-8") == "unchanged"
 
 
 def test_controlled_dependency_command_is_actually_cancellable(tmp_path: Path) -> None:
@@ -439,6 +556,18 @@ def _prepare_fake_runtime(tmp_path: Path, monkeypatch) -> ComfyUIRuntimeManifest
         python_executable_sha256=runtime.sha256_file(python),
         environment_manager_version="test",
         platform_adapter="test_adapter",
+        managed_root_identity=runtime.RuntimeDirectoryIdentity(
+            device=runtime._managed_root().stat().st_dev,
+            inode=runtime._managed_root().stat().st_ino,
+        ),
+        parent_directory_identity=runtime.RuntimeDirectoryIdentity(
+            device=version.parent.stat().st_dev,
+            inode=version.parent.stat().st_ino,
+        ),
+        version_directory_identity=runtime.RuntimeDirectoryIdentity(
+            device=version.stat().st_dev,
+            inode=version.stat().st_ino,
+        ),
         installed_at=runtime._iso(),
     )
     runtime._write_installation_record(version / "installation.json", record)
