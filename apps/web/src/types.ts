@@ -192,8 +192,8 @@ export interface ProviderInstallLog {
   failure_code?: string | null;
 }
 
-export type ProviderHubStatus = "discovered" | "available" | "not_installed" | "installing" | "installed" | "not_configured" | "configured" | "checking" | "ready" | "degraded" | "incompatible" | "update_available" | "failed" | "disabled" | "unavailable";
-export type ProviderHubAction = "view_details" | "open_project" | "open_api_application" | "configure" | "delete_configuration" | "test_connection" | "install" | "cancel_install" | "repair" | "check_health" | "disable" | "enable" | "view_logs";
+export type ProviderHubStatus = "discovered" | "available" | "not_installed" | "installing" | "installed" | "not_configured" | "configured" | "checking" | "ready" | "degraded" | "incompatible" | "update_available" | "failed" | "disabled" | "unavailable" | "starting" | "runtime_ready" | "stopping" | "stopped" | "crashed" | "repair_required" | "unsupported_modified";
+export type ProviderHubAction = "view_details" | "open_project" | "open_api_application" | "configure" | "delete_configuration" | "test_connection" | "install" | "cancel_install" | "repair" | "check_health" | "disable" | "enable" | "view_logs" | "install_runtime" | "start_runtime" | "stop_runtime" | "force_stop_runtime" | "check_runtime" | "repair_runtime" | "uninstall_runtime" | "view_runtime_logs" | "open_runtime_directory";
 export type ProviderTrustLevel = "official_verified" | "community_verified" | "discovered_unverified" | "user_added" | "deprecated" | "blocked";
 export type ProviderCompatibility = "compatible" | "compatible_but_slow" | "unsupported" | "unknown";
 
@@ -267,6 +267,41 @@ export interface ProviderHubItem {
   capability_package?: ProviderCapabilityPackage | null;
   technical_error?: { code?: string; message?: string; [key: string]: unknown } | null;
   last_health_check_at?: string | null;
+  runtime_ready: boolean;
+  generation_ready: boolean;
+  runtime_details?: ProviderRuntimeSnapshot | null;
+}
+
+export interface ProviderRuntimeSnapshot {
+  runtime_id: "comfyui";
+  package_id: "hcs.comfyui-runtime";
+  name: string;
+  status: ProviderHubStatus;
+  installed: boolean;
+  runtime_ready: boolean;
+  generation_ready: false;
+  version: string;
+  source_commit: string;
+  platform_adapter: string;
+  platform_support: "experimental" | "contract_only" | "unavailable";
+  compatible: boolean;
+  available_actions: ProviderHubAction[];
+  actual_port?: number | null;
+  estimated_download_bytes: number;
+  no_model_message: string;
+  modified: boolean;
+  last_health?: {
+    healthy: boolean;
+    checked_at: string;
+    status: ProviderHubStatus;
+    version?: string | null;
+    port?: number | null;
+    core_api_available: boolean;
+    custom_nodes_pristine: boolean;
+    identity_verified: boolean;
+    error?: { code: string; message: string } | null;
+  } | null;
+  technical_error?: { code?: string; message?: string; [key: string]: unknown } | null;
 }
 
 export interface ProviderHubCatalog {
@@ -296,6 +331,7 @@ export interface ProviderRefreshTask {
 export interface ProviderHubInstallTask {
   task_id: string;
   package_id: string;
+  operation: "install" | "repair" | "uninstall";
   state: "queued" | "running" | "completed" | "failed" | "cancelled" | "partial";
   phase: string;
   progress: number;
@@ -316,6 +352,23 @@ export interface ProviderHubInstallTask {
 export interface ProviderHubInstallStartResponse {
   task: ProviderHubInstallTask;
   provider: ProviderHubItem;
+}
+
+export interface RuntimeOperationConfirmation {
+  summary: {
+    operation: "repair" | "uninstall";
+    runtime_id: "comfyui";
+    version: string;
+    installation_identity: string;
+    tree_identity: string;
+    modified: boolean;
+    replaces_runtime_files: boolean;
+    preserves_models: true;
+    preserves_runtime_data: true;
+    preserves_logs: true;
+  };
+  confirmation_token: string;
+  expires_at: string;
 }
 
 export interface PublicOnlineProviderConfig {

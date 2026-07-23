@@ -1,0 +1,1875 @@
+{
+  "schema": "hanclassstudio.comfyui_wheel_artifacts.v2",
+  "operating_system": "macos",
+  "architecture": "arm64",
+  "minimum_os_version": "14.0",
+  "python_version": "3.11.13",
+  "package_count": 83,
+  "total_size": 621931539,
+  "reviewed_at": "2026-07-23",
+  "review_status": "approved",
+  "source_allowlist": [
+    "https://files.pythonhosted.org/packages/"
+  ],
+  "wheels": [
+    {
+      "name": "aiohappyeyeballs",
+      "version": "2.7.1",
+      "filename": "aiohappyeyeballs-2.7.1-py3-none-any.whl",
+      "size": 15038,
+      "sha256": "9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472",
+      "source_url": "https://files.pythonhosted.org/packages/71/43/1947f06babed6b3f1d7f38b0c767f52df66bfb2bc10b468c4a7de9eceff2/aiohappyeyeballs-2.7.1-py3-none-any.whl",
+      "uploaded_at": "2026-07-01T17:11:54.055058Z",
+      "metadata_sha256": "e68d1bf48aec9dcc2767343dedec25e12860085cba180e10bc3d3bdd031602ba",
+      "license_expression": "PSF-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "aiohappyeyeballs-2.7.1.dist-info/licenses/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+        }
+      ]
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.2",
+      "filename": "aiohttp-3.14.2-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 514670,
+      "sha256": "1c05afdd28ecacce5a1f63275a2e3dce09efddd3a63d143ee9799fda83989c8d",
+      "source_url": "https://files.pythonhosted.org/packages/8f/bc/ad9b767785b014f2f57497a2ccf67e3d4316d153f7ed1c7715fbbd7573fe/aiohttp-3.14.2-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-07-20T19:50:10.325568Z",
+      "metadata_sha256": "e6bffdd41bfc7da03faeca7a6e59d88558c98a09e18d48a94781cc5c406401d1",
+      "license_expression": "Apache-2.0 AND MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "aiohttp-3.14.2.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "aiohttp-3.14.2.dist-info/licenses/LICENSE.txt",
+          "sha256": "2e4be5fc6c4c72a466fcb665d726e049a6891981fe536c4f04b6366749461d23"
+        },
+        {
+          "path": "aiohttp-3.14.2.dist-info/licenses/vendor/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "aiohttp-3.14.2.dist-info/licenses/vendor/llhttp/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "aiohttp-3.14.2.dist-info/licenses/vendor/llhttp/LICENSE",
+          "sha256": "628168d68bb5a8a17e0bbefb3bd74e326e1edc20583d76f52f457c82c921867d"
+        }
+      ]
+    },
+    {
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "filename": "aiosignal-1.4.0-py3-none-any.whl",
+      "size": 7490,
+      "sha256": "053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e",
+      "source_url": "https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl",
+      "uploaded_at": "2025-07-03T22:54:42.156277Z",
+      "metadata_sha256": "09247ef1da8bc696728d47130e702e4307f6f7d101d6c485bff9f3a71ce7008d",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "aiosignal-1.4.0.dist-info/licenses/LICENSE",
+          "sha256": "6fd5243e92dd7f98ec69c7ac377728e74905709ff527a5bf98d6d0263c04f5b6"
+        }
+      ]
+    },
+    {
+      "name": "alembic",
+      "version": "1.18.5",
+      "filename": "alembic-1.18.5-py3-none-any.whl",
+      "size": 264664,
+      "sha256": "06d8ba9d04558022f5395e9317de03d270f3dced49cee01f89fe7a13c26f14bc",
+      "source_url": "https://files.pythonhosted.org/packages/96/78/5fe6dc3a3a5b2f5a2a4faef8bfe336d5fa049a38884ab3172e0098160c01/alembic-1.18.5-py3-none-any.whl",
+      "uploaded_at": "2026-06-25T15:20:56.673419Z",
+      "metadata_sha256": "d7fd3308b0b854d58f6c3bddc2c8c8a841e13f45a90abeb02f5ebea70b008e09",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "alembic-1.18.5.dist-info/licenses/LICENSE",
+          "sha256": "6e68d94a03a0e3e327ddf3e86d1ebedc14eece3922022618fc246a36296fd0cc"
+        }
+      ]
+    },
+    {
+      "name": "annotated-doc",
+      "version": "0.0.4",
+      "filename": "annotated_doc-0.0.4-py3-none-any.whl",
+      "size": 5303,
+      "sha256": "571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320",
+      "source_url": "https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl",
+      "uploaded_at": "2025-11-10T22:07:40.673400Z",
+      "metadata_sha256": "22b9b9289b9adf7758daa28a02327e3a129a5415487f01467a3fdd49edd9d535",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "annotated_doc-0.0.4.dist-info/licenses/LICENSE",
+          "sha256": "fff170779a6acbf65abdb405c087f1cee1786691e4a96a4034517e4a504a0cdf"
+        }
+      ]
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.7.0",
+      "filename": "annotated_types-0.7.0-py3-none-any.whl",
+      "size": 13643,
+      "sha256": "1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53",
+      "source_url": "https://files.pythonhosted.org/packages/78/b6/6307fbef88d9b5ee7421e68d78a9f162e0da4900bc5f5793f6d3d0e34fb8/annotated_types-0.7.0-py3-none-any.whl",
+      "uploaded_at": "2024-05-20T21:33:24.100469Z",
+      "metadata_sha256": "ee5b6ac64b09274c026051813484025939564067801f485115d9cadc207cf791",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "annotated_types-0.7.0.dist-info/licenses/LICENSE",
+          "sha256": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d"
+        }
+      ]
+    },
+    {
+      "name": "anyio",
+      "version": "4.14.2",
+      "filename": "anyio-4.14.2-py3-none-any.whl",
+      "size": 125813,
+      "sha256": "9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494",
+      "source_url": "https://files.pythonhosted.org/packages/da/35/f2287558c17e29fafc8ef3daf819bb9834061cfa43bff8014f7df7f63bdc/anyio-4.14.2-py3-none-any.whl",
+      "uploaded_at": "2026-07-12T20:29:05.763870Z",
+      "metadata_sha256": "c5e6fc4dfd833319913b287be7a30d9935e9208c7ef917630621855aaac4d419",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "anyio-4.14.2.dist-info/licenses/LICENSE",
+          "sha256": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0"
+        }
+      ]
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "filename": "attrs-26.1.0-py3-none-any.whl",
+      "size": 67548,
+      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+      "source_url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+      "uploaded_at": "2026-03-19T14:22:23.645947Z",
+      "metadata_sha256": "4cd40e690f23bf37cbcad34efd6758e062df1df07c86833f7e3ce95bf1fa38cc",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "attrs-26.1.0.dist-info/licenses/LICENSE",
+          "sha256": "882115c95dfc2af1eeb6714f8ec6d5cbcabf667caff8729f42420da63f714e9f"
+        }
+      ]
+    },
+    {
+      "name": "av",
+      "version": "18.0.0",
+      "filename": "av-18.0.0-cp311-abi3-macosx_14_0_arm64.whl",
+      "size": 18175248,
+      "sha256": "35274c20d2ad3b4774fe632bcef2e34af79858ddf899352339cc3babbc13a484",
+      "source_url": "https://files.pythonhosted.org/packages/77/b3/2576a44b4f39c7462ced4c17fec04c756f7b0f3c5cb940d124173e417d6a/av-18.0.0-cp311-abi3-macosx_14_0_arm64.whl",
+      "uploaded_at": "2026-07-02T06:37:01.741806Z",
+      "metadata_sha256": "bbc86f9dc89765a50aa5d852f687f604bec77556868344e3180bfdf508beea21",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "av-18.0.0.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "av-18.0.0.dist-info/licenses/AUTHORS.py",
+          "sha256": "4ec6e0dca3d0703aebefb386d3eb6ed14a05d96fe8b0aa08b52c2d2951817fec"
+        },
+        {
+          "path": "av-18.0.0.dist-info/licenses/AUTHORS.rst",
+          "sha256": "adb3a9b35a8b74bb597326dec775d74a9f79b4decac54da266a9ddb20b5da142"
+        },
+        {
+          "path": "av-18.0.0.dist-info/licenses/LICENSE.txt",
+          "sha256": "76af0461ffb92e19f1c14449e95557d83a2dfaa1baf202d49e5f1d8746c0da19"
+        }
+      ]
+    },
+    {
+      "name": "blake3",
+      "version": "1.0.9",
+      "filename": "blake3-1.0.9-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 335497,
+      "sha256": "b5e1f21b49492d01fa5a02084894c491ab9e7a1867fced107f7126c80d067c94",
+      "source_url": "https://files.pythonhosted.org/packages/72/3a/820d2f729dfe152d5ebde16390f808c762dce3f21fb764ab033803ff2b1a/blake3-1.0.9-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-06-22T18:00:16.942023Z",
+      "metadata_sha256": "1208c64307205b7dd9b8e4720f104f970b7eedf8fce3d276dda061040652f487",
+      "license_expression": "CC0-1.0 OR Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "blake3-1.0.9.dist-info/licenses/LICENSE",
+          "sha256": "f1d7009e06288836c56e3b5d421b3b17f83572b780d49d70ded7b7945198a5e5"
+        }
+      ]
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "filename": "certifi-2026.7.22-py3-none-any.whl",
+      "size": 136983,
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+      "source_url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+      "uploaded_at": "2026-07-22T03:35:11.276376Z",
+      "metadata_sha256": "ef5af1638fbb23676ac3c5777dfcfc2cd9c348fe4172ed5ba3d277655b248090",
+      "license_expression": "MPL-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "certifi-2026.7.22.dist-info/licenses/LICENSE",
+          "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7"
+        }
+      ]
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.4.9",
+      "filename": "charset_normalizer-3.4.9-cp311-cp311-macosx_10_9_universal2.whl",
+      "size": 317075,
+      "sha256": "0e94703ec9684807f20cfb5eed95c70f67f2a8f21ad620146d7b5a13677b93e5",
+      "source_url": "https://files.pythonhosted.org/packages/0b/e3/85ec501f206fb049259288c1f3506e53876937fb00edb47009348e66756b/charset_normalizer-3.4.9-cp311-cp311-macosx_10_9_universal2.whl",
+      "uploaded_at": "2026-07-07T14:32:56.021195Z",
+      "metadata_sha256": "0dd3de17609b0db64bd1d4643c5bd0dd35b5eb3c5be77f8b17bc190f2f4a2ac0",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "charset_normalizer-3.4.9.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "charset_normalizer-3.4.9.dist-info/licenses/LICENSE",
+          "sha256": "6d0d41bfe170ac6c7dc248c9a63e254d0fb45a60d50a8257d0af92c6e249b887"
+        }
+      ]
+    },
+    {
+      "name": "click",
+      "version": "8.4.2",
+      "filename": "click-8.4.2-py3-none-any.whl",
+      "size": 119243,
+      "sha256": "e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76",
+      "source_url": "https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl",
+      "uploaded_at": "2026-06-24T17:45:13.730054Z",
+      "metadata_sha256": "194c9dd81d567f9081f026c7e401060fbafa7bc147c8e0a58b3668b40a64c031",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "click-8.4.2.dist-info/licenses/LICENSE.txt",
+          "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d"
+        }
+      ]
+    },
+    {
+      "name": "comfy-aimdo",
+      "version": "0.4.10",
+      "filename": "comfy_aimdo-0.4.10-py3-none-any.whl",
+      "size": 22454,
+      "sha256": "a06deb8258cc6c33ef8473b4bfb6c5bbe11676f88019baa841db6235ff3c9b90",
+      "source_url": "https://files.pythonhosted.org/packages/68/f4/9fc884854191a0d347e3b5bb185d68ea8099228ccb5b3116dd8aa43839e5/comfy_aimdo-0.4.10-py3-none-any.whl",
+      "uploaded_at": "2026-06-15T12:19:17.503688Z",
+      "metadata_sha256": "99922cc798c0c182fd64464a673631101deb0ded0071c6f4be3d89319e6e5df2",
+      "license_expression": "GPL-3.0-only",
+      "license_evidence": "pinned_upstream",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "comfy_aimdo-0.4.10.dist-info/licenses/LICENSE",
+          "sha256": "5b9abb7380da626bc62056645b8cb205a3e3721926a05bf390b8c9c64d71b25f"
+        }
+      ],
+      "license_source_url": "https://raw.githubusercontent.com/Comfy-Org/comfy-aimdo/ace72abefa1ede12a4b8a4e2c99919804e5f38e0/LICENSE",
+      "license_source_sha256": "5b9abb7380da626bc62056645b8cb205a3e3721926a05bf390b8c9c64d71b25f"
+    },
+    {
+      "name": "comfy-angle",
+      "version": "0.1.0",
+      "filename": "comfy_angle-0.1.0-py3-none-macosx_11_0_arm64.whl",
+      "size": 4839074,
+      "sha256": "a3ad2fe6f1f0a2cea6f33ec6eb1b34392e0e30eb323a43e06d8ced8c2f50c0f4",
+      "source_url": "https://files.pythonhosted.org/packages/d4/eb/f98f8aefcad8ec1a5ea55d8e83d2762a721bbc3fa625e54430776cf29a00/comfy_angle-0.1.0-py3-none-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-03-25T15:08:34.398320Z",
+      "metadata_sha256": "8a6d48c09d763b38df16b71c6be129910579cc38574cbfad1be0b6df1eb93c7e",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "comfy-kitchen",
+      "version": "0.2.20",
+      "filename": "comfy_kitchen-0.2.20-py3-none-any.whl",
+      "size": 119600,
+      "sha256": "ae3a43f7b6d83bce000f17c809e84a5521b1c941f750c63023b5fa1dd768813f",
+      "source_url": "https://files.pythonhosted.org/packages/0a/2d/0d7fac23b4284e3fa630accea21e72855f98722c24645c8cf13e3f2ddc92/comfy_kitchen-0.2.20-py3-none-any.whl",
+      "uploaded_at": "2026-07-14T19:59:07.920021Z",
+      "metadata_sha256": "7a340d1c1a4de60016504391a56234e60753942775130f56757c99edfc0fa5a2",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "comfy_kitchen-0.2.20.dist-info/licenses/LICENSE",
+          "sha256": "cd1c9ea1573c9047e9b5a3676ecc1c8f755e56f249ac1ebd8b5ceda7899037da"
+        },
+        {
+          "path": "comfy_kitchen-0.2.20.dist-info/licenses/NOTICE",
+          "sha256": "30612313355527d97697611f2b0fe58b6b6babe25d0460fe2580c35dfb7f8987"
+        }
+      ]
+    },
+    {
+      "name": "comfyui-embedded-docs",
+      "version": "0.5.8",
+      "filename": "comfyui_embedded_docs-0.5.8-py3-none-any.whl",
+      "size": 15511416,
+      "sha256": "4a79c52048aab36ae066683442bff4249e35a79b113d372bda2dd0fa60a3759b",
+      "source_url": "https://files.pythonhosted.org/packages/4b/da/b4f4fd8b9bd89b77670a69344be4147952caca57b8e96e0fc6090fbe31bc/comfyui_embedded_docs-0.5.8-py3-none-any.whl",
+      "uploaded_at": "2026-07-13T12:26:17.010129Z",
+      "metadata_sha256": "e93edaad74d1b8b0010276a25fd09a3a1574aa9b9df7a894409a07d394593419",
+      "license_expression": "GPL-3.0",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "comfyui_embedded_docs-0.5.8.dist-info/licenses/LICENSE",
+          "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+        }
+      ]
+    },
+    {
+      "name": "comfyui_frontend_package",
+      "version": "1.45.21",
+      "filename": "comfyui_frontend_package-1.45.21-py3-none-any.whl",
+      "size": 26662925,
+      "sha256": "8fbce63593bb5ee94c95bf966ddd4d7c35e7719c2bb755c6fb62ac81ca803ce2",
+      "source_url": "https://files.pythonhosted.org/packages/0e/18/53617540a21d9661eebe2d271042014e0c01166d3912532271f733bafccf/comfyui_frontend_package-1.45.21-py3-none-any.whl",
+      "uploaded_at": "2026-07-15T05:16:17.039687Z",
+      "metadata_sha256": "6bdd159896d68694a143ec346125b24a2d822783a8e9043d8d6cef36906ebd85",
+      "license_expression": "GPL-3.0-only",
+      "license_evidence": "pinned_upstream",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [],
+      "license_source_url": "https://raw.githubusercontent.com/Comfy-Org/ComfyUI_frontend/3f8dabb756e3428bc3686eccc38b9a2f468c0a2e/LICENSE",
+      "license_source_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "name": "comfyui_workflow_templates",
+      "version": "0.11.9",
+      "filename": "comfyui_workflow_templates-0.11.9-py3-none-any.whl",
+      "size": 10671,
+      "sha256": "4f894eaaf4fcd1d0beb56cbbcb8478c511180debb17d86b88a17fd1274c0d11d",
+      "source_url": "https://files.pythonhosted.org/packages/ce/0c/d6756656d8b81ca6ccb07a72854e84b869b491ff5aeb1a5a2174d8c9ef74/comfyui_workflow_templates-0.11.9-py3-none-any.whl",
+      "uploaded_at": "2026-07-13T18:23:48.600467Z",
+      "metadata_sha256": "ddcc476b3c4c8eff5f7fa737aa2288a70f8fdf75f486e3dc7b715048e34f055e",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "comfyui_workflow_templates-0.11.9.dist-info/licenses/LICENSE",
+          "sha256": "5dccd61c80c847cd6b22fa98124010163ab8646e573557a16a5cae31122f2056"
+        }
+      ]
+    },
+    {
+      "name": "comfyui-workflow-templates-core",
+      "version": "0.3.272",
+      "filename": "comfyui_workflow_templates_core-0.3.272-py3-none-any.whl",
+      "size": 64755,
+      "sha256": "313ce30885ba8651361fd2317a26812ac4ca61d895c2ae08e3dcfbd715b4f5bd",
+      "source_url": "https://files.pythonhosted.org/packages/b7/12/4c72f493f509c32d8fb4ba1417f89c32501e920261ab11686291445823eb/comfyui_workflow_templates_core-0.3.272-py3-none-any.whl",
+      "uploaded_at": "2026-07-13T18:23:24.270579Z",
+      "metadata_sha256": "f1fde840e4deccbfcaf125f24cf3bd4b6235fa6921a3dcc8aec7be6b2da9e458",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "comfyui-workflow-templates-json",
+      "version": "0.1.6",
+      "filename": "comfyui_workflow_templates_json-0.1.6-py3-none-any.whl",
+      "size": 2815499,
+      "sha256": "9e125d63633666c85d0d342886e806aef5340a0365271059ee269536f38f2408",
+      "source_url": "https://files.pythonhosted.org/packages/e8/5b/3f3400e6becfe6caf4600d0c0c908a5a2296031d756d56b26653dbe91afc/comfyui_workflow_templates_json-0.1.6-py3-none-any.whl",
+      "uploaded_at": "2026-07-13T18:23:33.034704Z",
+      "metadata_sha256": "34223e787294bd290003c716de300220c8faec1fce7b9d014e769bd018989b80",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "comfyui-workflow-templates-media-api",
+      "version": "0.3.84",
+      "filename": "comfyui_workflow_templates_media_api-0.3.84-py3-none-any.whl",
+      "size": 100148800,
+      "sha256": "c2d6a5999ac39e4f37f47ae231c92557defe5addb2cc6ab5c11410b4d5a2910a",
+      "source_url": "https://files.pythonhosted.org/packages/35/47/e4c723615b396f75893049af38a4b53bcb0e8944418819bb0e0d72f342e8/comfyui_workflow_templates_media_api-0.3.84-py3-none-any.whl",
+      "uploaded_at": "2026-06-30T21:14:32.562092Z",
+      "metadata_sha256": "dd0d06a73bcbc7a8f5dffbe09d96aa9cce396624ff38f1856ca194bd437b89e9",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "comfyui-workflow-templates-media-assets-01",
+      "version": "0.1.3",
+      "filename": "comfyui_workflow_templates_media_assets_01-0.1.3-py3-none-any.whl",
+      "size": 6798648,
+      "sha256": "94a20489644da35f877d2ab24989dc02fee08ba5bffdb3e930c7ea90c2d6d1af",
+      "source_url": "https://files.pythonhosted.org/packages/0a/69/d55da256f9ae3e6396dda83325d2866466998700fe90e30ea6a7e5d336b0/comfyui_workflow_templates_media_assets_01-0.1.3-py3-none-any.whl",
+      "uploaded_at": "2026-07-13T18:23:40.243299Z",
+      "metadata_sha256": "b11eb8191a233eb650313acc2f494bbfebed3acc94b19f9ba6a2bc0722373345",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "comfyui-workflow-templates-media-image",
+      "version": "0.3.160",
+      "filename": "comfyui_workflow_templates_media_image-0.3.160-py3-none-any.whl",
+      "size": 89401690,
+      "sha256": "d4a5c5541c7088f6adb1c7da41f5d7c1c14a037eda6a61cd8b4b76c251faaa93",
+      "source_url": "https://files.pythonhosted.org/packages/bd/2e/aa57dc75cc2a73921d8472a398678e1ac40c011756ad0ab2dfe41eb0ba15/comfyui_workflow_templates_media_image-0.3.160-py3-none-any.whl",
+      "uploaded_at": "2026-06-30T21:14:50.371671Z",
+      "metadata_sha256": "042daef6e310900e50194b49c4f7beb15a6ca6f418e86f7bb71aff4ab9fd6bd1",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "comfyui-workflow-templates-media-other",
+      "version": "0.3.229",
+      "filename": "comfyui_workflow_templates_media_other-0.3.229-py3-none-any.whl",
+      "size": 89097925,
+      "sha256": "ce3d98fa9d84b914c335fe5c9bc903cfefbe1932b1bc3cb6baef7f371b4bd435",
+      "source_url": "https://files.pythonhosted.org/packages/a7/46/feed5492a2def46fee71a52fcbb3b7443a048e402c40bedfaaebcc6fa234/comfyui_workflow_templates_media_other-0.3.229-py3-none-any.whl",
+      "uploaded_at": "2026-06-30T21:15:07.270912Z",
+      "metadata_sha256": "348fb4677ae8a3058b3c14a4de943aa5a5cce59f2ac02824b64cdc34619ba2c3",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "comfyui-workflow-templates-media-video",
+      "version": "0.3.101",
+      "filename": "comfyui_workflow_templates_media_video-0.3.101-py3-none-any.whl",
+      "size": 104342671,
+      "sha256": "6270fd61c8c3931b6f0031abac7d4c90ced624de6c7918bff85b89e6c3d7493c",
+      "source_url": "https://files.pythonhosted.org/packages/e5/9e/49e1fbe9f05df7e4410a8d485af2a2d6fe80b247d44b3bfa7166c54012ef/comfyui_workflow_templates_media_video-0.3.101-py3-none-any.whl",
+      "uploaded_at": "2026-06-30T21:15:25.107806Z",
+      "metadata_sha256": "5e3bf503651b6f85834318d845faf6eeba8ac6413fdc3f6f0a44a85c77fb78f9",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "einops",
+      "version": "0.8.2",
+      "filename": "einops-0.8.2-py3-none-any.whl",
+      "size": 65638,
+      "sha256": "54058201ac7087911181bfec4af6091bb59380360f069276601256a76af08193",
+      "source_url": "https://files.pythonhosted.org/packages/2a/09/f8d8f8f31e4483c10a906437b4ce31bdf3d6d417b73fe33f1a8b59e34228/einops-0.8.2-py3-none-any.whl",
+      "uploaded_at": "2026-01-26T04:13:18.546466Z",
+      "metadata_sha256": "0bd65db043688a44f4a29608c1cba521c932f7ff76f238bbd869441e15012653",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "einops-0.8.2.dist-info/licenses/LICENSE",
+          "sha256": "30d984364296f51ffaecad4b01ee127e95250c5068918d4b66fc96206723e434"
+        }
+      ]
+    },
+    {
+      "name": "filelock",
+      "version": "3.32.0",
+      "filename": "filelock-3.32.0-py3-none-any.whl",
+      "size": 97732,
+      "sha256": "d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3",
+      "source_url": "https://files.pythonhosted.org/packages/06/79/b4c714bef36bc4ec2beeae1e0c124f0223888cd8c6feb1cdc56038116920/filelock-3.32.0-py3-none-any.whl",
+      "uploaded_at": "2026-07-21T13:17:41.550913Z",
+      "metadata_sha256": "d964d7bb976411acbc7b7641476c55193c33b919956fdc8a183c0733cd2db660",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "filelock-3.32.0.dist-info/licenses/LICENSE",
+          "sha256": "608c89d5060ae9921adccf3236695bc654a9946e12323ef6c021dfa04e294d48"
+        }
+      ]
+    },
+    {
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "filename": "frozenlist-1.8.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 50119,
+      "sha256": "fa47e444b8ba08fffd1c18e8cdb9a75db1b6a27f17507522834ad13ed5922b93",
+      "source_url": "https://files.pythonhosted.org/packages/6e/ef/0e8f1fe32f8a53dd26bdd1f9347efe0778b0fddf62789ea683f4cc7d787d/frozenlist-1.8.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2025-10-06T05:35:48.380096Z",
+      "metadata_sha256": "946c22dc9f7e2c76f2d698f00a4306dbe49a820e2b3f1a0e22fe5286cbec35f1",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "frozenlist-1.8.0.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "frozenlist-1.8.0.dist-info/licenses/LICENSE",
+          "sha256": "6fd5243e92dd7f98ec69c7ac377728e74905709ff527a5bf98d6d0263c04f5b6"
+        }
+      ]
+    },
+    {
+      "name": "fsspec",
+      "version": "2026.6.0",
+      "filename": "fsspec-2026.6.0-py3-none-any.whl",
+      "size": 203949,
+      "sha256": "02e0b71817df9b2169dc30a16832045764def1191b43dcff5bb85bdee212d2a1",
+      "source_url": "https://files.pythonhosted.org/packages/e5/22/4222d7ddf3da30f363edaa98e329c2bce6c65497c9cb2810931c8b2c0fbc/fsspec-2026.6.0-py3-none-any.whl",
+      "uploaded_at": "2026-06-16T01:57:26.358592Z",
+      "metadata_sha256": "20c85c024a69a059237c3a7985d381a3745017ae1d634c554b0c5901dde81095",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "fsspec-2026.6.0.dist-info/licenses/LICENSE",
+          "sha256": "2dc35496ce53a7307915c008a844aad53e772b49b34cdd00445067691407ec94"
+        }
+      ]
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "filename": "h11-0.16.0-py3-none-any.whl",
+      "size": 37515,
+      "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+      "source_url": "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl",
+      "uploaded_at": "2025-04-24T03:35:24.344199Z",
+      "metadata_sha256": "28f326098ac09fcba79b8f180f96087c841fe2456215cb7b872a9c7d5cd19d64",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "h11-0.16.0.dist-info/licenses/LICENSE.txt",
+          "sha256": "37db5bb85926db28a427a25867f10b1232003aea1be69ccb851138adb8e6f361"
+        }
+      ]
+    },
+    {
+      "name": "hf-xet",
+      "version": "1.5.2",
+      "filename": "hf_xet-1.5.2-cp38-abi3-macosx_11_0_arm64.whl",
+      "size": 3841438,
+      "sha256": "045f84440c55cdeb659cf1a1dd48c77bcd0d2e93632e2fea8f2c3bdee79f38ed",
+      "source_url": "https://files.pythonhosted.org/packages/60/ac/b097a86a1e4a6098f3a79382643ab09d5733d87ccc864877ad1e12b49b70/hf_xet-1.5.2-cp38-abi3-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-07-16T17:29:45.539375Z",
+      "metadata_sha256": "56388269c9d1fb62d668bd240aa759ccb0176f52f665137921d4c8dba26c02f6",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "hf_xet-1.5.2.dist-info/licenses/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "filename": "httpcore-1.0.9-py3-none-any.whl",
+      "size": 78784,
+      "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55",
+      "source_url": "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl",
+      "uploaded_at": "2025-04-24T22:06:20.566605Z",
+      "metadata_sha256": "fe2d4fda6199128978779e0cf27f3c045c531863fcdd987eacc74f3a18d41c21",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "httpcore-1.0.9.dist-info/licenses/LICENSE.md",
+          "sha256": "fdcb59154c74cbaba16a11242f7740bea9f23d6feb5547917d8c5f94a80392a5"
+        }
+      ]
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "filename": "httpx-0.28.1-py3-none-any.whl",
+      "size": 73517,
+      "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad",
+      "source_url": "https://files.pythonhosted.org/packages/2a/39/e50c7c3a983047577ee07d2a9e53faf5a69493943ec3f6a384bdc792deb2/httpx-0.28.1-py3-none-any.whl",
+      "uploaded_at": "2024-12-06T15:37:21.509172Z",
+      "metadata_sha256": "febb9b0f8f3e80d57c8199c304f35c4336e8581d1d18d7983c92766b82793b25",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "httpx-0.28.1.dist-info/licenses/LICENSE.md",
+          "sha256": "4ec59d544f12b5f539a3a716fd321ac58ccd8030b465221f2c880200cdf28d8d"
+        }
+      ]
+    },
+    {
+      "name": "huggingface_hub",
+      "version": "1.24.0",
+      "filename": "huggingface_hub-1.24.0-py3-none-any.whl",
+      "size": 771904,
+      "sha256": "6ed4120a84a6beec900640aa7e346bd766a6b7341e41526fef5dc8bd81fb7d59",
+      "source_url": "https://files.pythonhosted.org/packages/5f/c3/aeaaf3911d2529614be18d1c8b5496afc185560e76568063d517283318af/huggingface_hub-1.24.0-py3-none-any.whl",
+      "uploaded_at": "2026-07-17T09:53:59.106649Z",
+      "metadata_sha256": "bfd35ce43e19acbde437cd5c36f77aea227524f77db8e904ed378b8fad5c8cc4",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "huggingface_hub-1.24.0.dist-info/licenses/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "name": "idna",
+      "version": "3.18",
+      "filename": "idna-3.18-py3-none-any.whl",
+      "size": 65455,
+      "sha256": "7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2",
+      "source_url": "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl",
+      "uploaded_at": "2026-06-02T14:34:06.319954Z",
+      "metadata_sha256": "46dfe6e5ac462d0f680ecd9abcf66e829b6a2334824b4d9e3979b31135caf281",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "idna-3.18.dist-info/licenses/LICENSE.md",
+          "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04"
+        }
+      ]
+    },
+    {
+      "name": "Jinja2",
+      "version": "3.1.6",
+      "filename": "jinja2-3.1.6-py3-none-any.whl",
+      "size": 134899,
+      "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+      "source_url": "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl",
+      "uploaded_at": "2025-03-05T20:05:00.369721Z",
+      "metadata_sha256": "68c5548fb67c4132a13898d9b31ec50c6bea2abdd915d921f214355c3a6499c8",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "jinja2-3.1.6.dist-info/licenses/LICENSE.txt",
+          "sha256": "3b49dcee4105eb37bac10faf1be260408fe85d252b8e9df2e0979fc1e094437b"
+        }
+      ]
+    },
+    {
+      "name": "kornia",
+      "version": "0.8.3",
+      "filename": "kornia-0.8.3-py3-none-any.whl",
+      "size": 1189381,
+      "sha256": "0b15f5d359aeafd7ff54ea631ed1943a3eb295c4a6dae3f745ddeada25e33289",
+      "source_url": "https://files.pythonhosted.org/packages/85/05/0c1cc486e87d2a5ad6649eb96a8ccaa7c6002d8d73d676c13e2102f286c1/kornia-0.8.3-py3-none-any.whl",
+      "uploaded_at": "2026-05-19T20:23:33.209146Z",
+      "metadata_sha256": "deea8b6770901889451553e04da09ecd7956f0b6172c01ff62298af7c88d3063",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "kornia-0.8.3.dist-info/licenses/LICENSE",
+          "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+        }
+      ]
+    },
+    {
+      "name": "kornia_rs",
+      "version": "0.1.14",
+      "filename": "kornia_rs-0.1.14-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 3351592,
+      "sha256": "e9d694526266252418084dca90814753eec43ff0194557b7824334c1e49bb9eb",
+      "source_url": "https://files.pythonhosted.org/packages/a0/48/8d68671fa7e1333f782016a01410be71cb796c3bcc844498e2c2bd6f1c12/kornia_rs-0.1.14-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-05-19T07:45:45.894248Z",
+      "metadata_sha256": "48900e099774eef88f36d752fdaf4766bb4ead71665be6f9b20a70534db741da",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "kornia_rs-0.1.14.dist-info/licenses/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "name": "Mako",
+      "version": "1.3.12",
+      "filename": "mako-1.3.12-py3-none-any.whl",
+      "size": 78521,
+      "sha256": "8f61569480282dbf557145ce441e4ba888be453c30989f879f0d652e39f53ea9",
+      "source_url": "https://files.pythonhosted.org/packages/bc/b1/a0ec7a5a9db730a08daef1fdfb8090435b82465abbf758a596f0ea88727e/mako-1.3.12-py3-none-any.whl",
+      "uploaded_at": "2026-04-28T19:01:10.393262Z",
+      "metadata_sha256": "a995943060e020563a46d7d3065aeeee144d189741c351d20abb5ce87d349759",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "mako-1.3.12.dist-info/licenses/LICENSE",
+          "sha256": "68d7064e53e3ffa8e9f420a9e604bd2e2059d9c330492fa6ebd4eb3d48111689"
+        }
+      ]
+    },
+    {
+      "name": "markdown-it-py",
+      "version": "4.2.0",
+      "filename": "markdown_it_py-4.2.0-py3-none-any.whl",
+      "size": 91687,
+      "sha256": "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a",
+      "source_url": "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl",
+      "uploaded_at": "2026-05-07T12:08:27.182789Z",
+      "metadata_sha256": "72c36ff516755443b1ecb61e17b2567a990230b49a504b0eb0c42d5f82448a9c",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "markdown_it_py-4.2.0.dist-info/licenses/LICENSE",
+          "sha256": "4a2260d6e2cd0f5a151a1e86dbfe7d3ed552b1e2beabf9941c1ba5c49cbce484"
+        },
+        {
+          "path": "markdown_it_py-4.2.0.dist-info/licenses/LICENSE.markdown-it",
+          "sha256": "792c48c5a849a15fdf9e37e8bcf9e6d1dd13b32b46c642a748a0a46a9919d473"
+        }
+      ]
+    },
+    {
+      "name": "MarkupSafe",
+      "version": "3.0.3",
+      "filename": "markupsafe-3.0.3-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 12058,
+      "sha256": "4bd4cd07944443f5a265608cc6aab442e4f74dff8088b0dfc8238647b8f6ae9a",
+      "source_url": "https://files.pythonhosted.org/packages/e1/2e/5898933336b61975ce9dc04decbc0a7f2fee78c30353c5efba7f2d6ff27a/markupsafe-3.0.3-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2025-09-27T18:36:19.444952Z",
+      "metadata_sha256": "12b4cc61a7fa288cf7667ee3f213786d9619db57fb33ff6f934afbcb5c12ec81",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "markupsafe-3.0.3.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "markupsafe-3.0.3.dist-info/licenses/LICENSE.txt",
+          "sha256": "489a8e1108509ed98a37bb983e11e0f7e1d31f0bd8f99a79c8448e7ff37d07ea"
+        }
+      ]
+    },
+    {
+      "name": "mdurl",
+      "version": "0.1.2",
+      "filename": "mdurl-0.1.2-py3-none-any.whl",
+      "size": 9979,
+      "sha256": "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8",
+      "source_url": "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl",
+      "uploaded_at": "2022-08-14T12:40:09.779676Z",
+      "metadata_sha256": "b53b29d48f499367053fda3c81e7ce27d2558380ebbf83e66023b02eb7ddd25d",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "mdurl-0.1.2.dist-info/LICENSE",
+          "sha256": "7c605df6e28667a9603118e98274f64a49ce3eed0d26fccce9534a345e0ef955"
+        }
+      ]
+    },
+    {
+      "name": "mpmath",
+      "version": "1.3.0",
+      "filename": "mpmath-1.3.0-py3-none-any.whl",
+      "size": 536198,
+      "sha256": "a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c",
+      "source_url": "https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl",
+      "uploaded_at": "2023-03-07T16:47:09.197171Z",
+      "metadata_sha256": "44b66ea444b9c0d19ae94815d356bf047ae6b680c19268b5c265687cd6a81406",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "mpmath-1.3.0.dist-info/LICENSE",
+          "sha256": "c26cae81da4508e5e249985777a33821f183223ebb74d7f8cfbf90fe7eef2fb7"
+        }
+      ]
+    },
+    {
+      "name": "multidict",
+      "version": "6.7.1",
+      "filename": "multidict-6.7.1-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 44356,
+      "sha256": "f2a0a924d4c2e9afcd7ec64f9de35fcd96915149b2216e1cb2c10a56df483855",
+      "source_url": "https://files.pythonhosted.org/packages/dd/a4/d45caf2b97b035c57267791ecfaafbd59c68212004b3842830954bb4b02e/multidict-6.7.1-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-01-26T02:43:28.661789Z",
+      "metadata_sha256": "4913fdaae936a309c29b89b98c2dbebd237203fb27ab9e68ae5e4ec17ba3024f",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "multidict-6.7.1.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "multidict-6.7.1.dist-info/licenses/LICENSE",
+          "sha256": "93d11a968e2f0f36373c40811ff6d20e173f58c3cab5884cd6617bbfd795492a"
+        }
+      ]
+    },
+    {
+      "name": "networkx",
+      "version": "3.6.1",
+      "filename": "networkx-3.6.1-py3-none-any.whl",
+      "size": 2068504,
+      "sha256": "d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762",
+      "source_url": "https://files.pythonhosted.org/packages/9e/c9/b2622292ea83fbb4ec318f5b9ab867d0a28ab43c5717bb85b0a5f6b3b0a4/networkx-3.6.1-py3-none-any.whl",
+      "uploaded_at": "2025-12-08T17:02:38.159362Z",
+      "metadata_sha256": "aca5d94a97d1f70f301d033addb635f6e66be8973a00aba4127637eed2ef316a",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "networkx-3.6.1.dist-info/licenses/LICENSE.txt",
+          "sha256": "3cf7c3a179d817b23b8b8568211769fefdf93797d207d984b8b2fa24d0220b33"
+        }
+      ]
+    },
+    {
+      "name": "numpy",
+      "version": "2.4.6",
+      "filename": "numpy-2.4.6-cp311-cp311-macosx_14_0_arm64.whl",
+      "size": 5469159,
+      "sha256": "4cfe66903cc32a9921a6733d96b19bb6abf310397581bbad89c228f5abaf0ee8",
+      "source_url": "https://files.pythonhosted.org/packages/ad/40/40a40ee0ddf7ceb782c49af278894b686e586d65d8c1889c8b5da01a3d7d/numpy-2.4.6-cp311-cp311-macosx_14_0_arm64.whl",
+      "uploaded_at": "2026-05-18T23:33:20.654003Z",
+      "metadata_sha256": "b082c52ccbe3b880bae177c35171b52ed6c947f3ad71e3762f2723f60a411de0",
+      "license_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/LICENSE.txt",
+          "sha256": "649a589ab31076e79e9ce62ba24eae9959598124176640dbc95f87bd10f34fcf"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/include/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/include/numpy/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/include/numpy/libdivide/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/include/numpy/libdivide/LICENSE.txt",
+          "sha256": "fbc539f47d0cf83bc61378080fb873d5c14630126cacbfe754035c3926daa5ec"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/common/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/common/pythoncapi-compat/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/common/pythoncapi-compat/COPYING",
+          "sha256": "3f2c1ffa76383a55ae0aac01c9737cd70050dff63e1f026694fbe9d662573c98"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/highway/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/highway/LICENSE",
+          "sha256": "e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/multiarray/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/multiarray/dragon4_LICENSE.txt",
+          "sha256": "f7b14309e5f54e5022b26448eefd419988ada2aec01d3c1162d84a0ea8f21f2c"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/npysort/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/npysort/x86-simd-sort/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/npysort/x86-simd-sort/LICENSE.md",
+          "sha256": "211e7d737d6179a08f791ebb0a99897ce7cd2457410c542876d125576edfe910"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/umath/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/umath/svml/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/_core/src/umath/svml/LICENSE",
+          "sha256": "c17011467b4fe6e20fbfbeda4df09e58c2bca5480a063e55735a4000a379aad9"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/fft/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/fft/pocketfft/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/fft/pocketfft/LICENSE.md",
+          "sha256": "a85ca13fdf90160b64a0698215868c13b74d835ad0a4e2ba44713b8c5058a056"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/linalg/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/linalg/lapack_lite/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/linalg/lapack_lite/LICENSE.txt",
+          "sha256": "a14cc25e10d40a3aa705b7de2fb764a6535d8ee9b2db4e1724900585457dfd55"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/ma/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/ma/LICENSE",
+          "sha256": "05f3b88351988ecfad10abe92c0c50e5875c6452d5009a0084cc291551ffcca6"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/LICENSE.md",
+          "sha256": "103166b62b80443afb9eb3488e052ea06be0cff566b908f199e561fde49af19f"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/distributions/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/distributions/LICENSE.md",
+          "sha256": "469778be8f33d54e1bcaab28c281cc472916d2d273f835e55bc487d30503face"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/mt19937/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/mt19937/LICENSE.md",
+          "sha256": "0e111337b25494a773106695f0e799f642b8567aaacca4f116a74a8177179156"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/pcg64/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/pcg64/LICENSE.md",
+          "sha256": "e7d4f4fb20358f314210a892ae17351e04993813646f697ec387385ca2a36918"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/philox/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/philox/LICENSE.md",
+          "sha256": "6f5828a57223d4cc7f8ea505a2623e7b978b242752c1515e355f46ba2cec1800"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/sfc64/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/sfc64/LICENSE.md",
+          "sha256": "9d4098846018319cd68e228ee6220361787f73bccbf00237a85e4fc9621b998f"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/splitmix64/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "numpy-2.4.6.dist-info/licenses/numpy/random/src/splitmix64/LICENSE.md",
+          "sha256": "268b0ca06759d31ea3ca68dd35f20e877916e927b1c2a835e4592a3c4354b1f9"
+        }
+      ]
+    },
+    {
+      "name": "packaging",
+      "version": "26.2",
+      "filename": "packaging-26.2-py3-none-any.whl",
+      "size": 100195,
+      "sha256": "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e",
+      "source_url": "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl",
+      "uploaded_at": "2026-04-24T20:15:22.081511Z",
+      "metadata_sha256": "4f9cbcd7933415a4793f7767c98a2b6a512c823fc81c87337815705f230ecabf",
+      "license_expression": "Apache-2.0 OR BSD-2-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "packaging-26.2.dist-info/licenses/LICENSE",
+          "sha256": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48"
+        },
+        {
+          "path": "packaging-26.2.dist-info/licenses/LICENSE.APACHE",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "packaging-26.2.dist-info/licenses/LICENSE.BSD",
+          "sha256": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5"
+        }
+      ]
+    },
+    {
+      "name": "pillow",
+      "version": "12.3.0",
+      "filename": "pillow-12.3.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 4785266,
+      "sha256": "37d6d0a00072fd2948eb22bce7e1475f34569d90c87c59f7a2ec59541b77f7a6",
+      "source_url": "https://files.pythonhosted.org/packages/b2/5b/a02d30018abd97ced9f5a6c63d28597694a00d066516b9c1c6de45859fc9/pillow-12.3.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-07-01T11:53:49.079382Z",
+      "metadata_sha256": "8fc07146cab33ef7582361dab6eac596d340b03ec648f18217da7894f73838c8",
+      "license_expression": "MIT-CMU",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "pillow-12.3.0.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "pillow-12.3.0.dist-info/licenses/LICENSE",
+          "sha256": "dda12a98c1979cf3d94df1cff45d27a4cb3f04a60c76f76902ac54cac03ec0ce"
+        }
+      ]
+    },
+    {
+      "name": "propcache",
+      "version": "0.5.2",
+      "filename": "propcache-0.5.2-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 52754,
+      "sha256": "c6844ba6364fb12f403928a82cfd295ab103a2b315c77c747b2dbe4a41894ea7",
+      "source_url": "https://files.pythonhosted.org/packages/15/a8/8ede85d6aa1f79fc7dc2f8fd2c8d65920b8272c3892903c8a1affde48cfb/propcache-0.5.2-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-05-08T20:59:49.202672Z",
+      "metadata_sha256": "f534495cdd2f915af8e649783d95fddcb1a05a1ac181850f0c973c0a78f7bbae",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "propcache-0.5.2.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "propcache-0.5.2.dist-info/licenses/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "propcache-0.5.2.dist-info/licenses/NOTICE",
+          "sha256": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838"
+        }
+      ]
+    },
+    {
+      "name": "psutil",
+      "version": "7.2.2",
+      "filename": "psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl",
+      "size": 129859,
+      "sha256": "1a7b04c10f32cc88ab39cbf606e117fd74721c831c98a27dc04578deb0c16979",
+      "source_url": "https://files.pythonhosted.org/packages/80/c4/f5af4c1ca8c1eeb2e92ccca14ce8effdeec651d5ab6053c589b074eda6e1/psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-01-28T18:15:23.795403Z",
+      "metadata_sha256": "525f8ba78523cf7bc3759d62a105e7c57fd679ea702402b9449fb0746aa0217f",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "psutil-7.2.2.dist-info/LICENSE",
+          "sha256": "b89c063b3786e28e0c0a38f1931db61fed35e69dd2a2966fbecffee0f46c8d10"
+        }
+      ]
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.4",
+      "filename": "pydantic-2.13.4-py3-none-any.whl",
+      "size": 472262,
+      "sha256": "45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba",
+      "source_url": "https://files.pythonhosted.org/packages/fd/7b/122376b1fd3c62c1ed9dc80c931ace4844b3c55407b6fb2d199377c9736f/pydantic-2.13.4-py3-none-any.whl",
+      "uploaded_at": "2026-05-06T13:43:02.641507Z",
+      "metadata_sha256": "d1e56c3412492512fb6b59a9dfc25ab7af2a8204585cd7bca000513023133394",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "pydantic-2.13.4.dist-info/licenses/LICENSE",
+          "sha256": "a9e186f3ca16b5eef84318e7a701721351a00cb7b8ae3a4394b67b49e3529ef3"
+        }
+      ]
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.46.4",
+      "filename": "pydantic_core-2.46.4-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 1948255,
+      "sha256": "e0d65b8c354be7fb5f720c3caa8bc940bc2d20ce749c8e06135f07f8ed95dd7c",
+      "source_url": "https://files.pythonhosted.org/packages/ae/6f/aa064a3e74b5745afbdf250594f38e7ead05e2d651bcb35994b9417a0d4d/pydantic_core-2.46.4-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-05-06T13:39:12.574673Z",
+      "metadata_sha256": "135fa8b2f89473e9191c7078c2164e3ec6c8927a61c2379c2fddcc07f11f3bae",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "pydantic_core-2.46.4.dist-info/licenses/LICENSE",
+          "sha256": "2afdd30d54b4d62b6f488a6bcc1546e84ec5061f13f4209c03d012348783795a"
+        }
+      ]
+    },
+    {
+      "name": "pydantic-settings",
+      "version": "2.14.2",
+      "filename": "pydantic_settings-2.14.2-py3-none-any.whl",
+      "size": 61715,
+      "sha256": "a20c97b37910b6550d5ea50fbcc2d4187defe58cd57070b73863d069419c9440",
+      "source_url": "https://files.pythonhosted.org/packages/77/c1/6e422f34e569cf8e18df68d1939c81c099d2b61e4f7d9621c8a77560799c/pydantic_settings-2.14.2-py3-none-any.whl",
+      "uploaded_at": "2026-06-19T13:44:55.020275Z",
+      "metadata_sha256": "c0f50f045d2f48268cd6c467bef348b5da6184f354c1f03e5fc9bdf78b4cbc32",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "pydantic_settings-2.14.2.dist-info/licenses/LICENSE",
+          "sha256": "eb355a753e020346d33d83bf9769135b89fc610568ac531a01c295bcee7fd998"
+        }
+      ]
+    },
+    {
+      "name": "Pygments",
+      "version": "2.20.0",
+      "filename": "pygments-2.20.0-py3-none-any.whl",
+      "size": 1231151,
+      "sha256": "81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176",
+      "source_url": "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl",
+      "uploaded_at": "2026-03-29T13:29:30.038266Z",
+      "metadata_sha256": "e0528f51b30427fae94723662ba622f8d8db2a4d8d3f1365698d67a52450a845",
+      "license_expression": "BSD-2-Clause",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "pygments-2.20.0.dist-info/licenses/AUTHORS",
+          "sha256": "0db603a5f4499f690c4425477ff664c166da325d3acc3b5a8d4de3db072443d0"
+        },
+        {
+          "path": "pygments-2.20.0.dist-info/licenses/LICENSE",
+          "sha256": "a9d66f1d526df02e29dce73436d34e56e8632f46c275bbdffc70569e882f9f17"
+        }
+      ]
+    },
+    {
+      "name": "PyOpenGL",
+      "version": "3.1.10",
+      "filename": "pyopengl-3.1.10-py3-none-any.whl",
+      "size": 3194996,
+      "sha256": "794a943daced39300879e4e47bd94525280685f42dbb5a998d336cfff151d74f",
+      "source_url": "https://files.pythonhosted.org/packages/de/e4/1ba6f44e491c4eece978685230dde56b14d51a0365bc1b774ddaa94d14cd/pyopengl-3.1.10-py3-none-any.whl",
+      "uploaded_at": "2025-08-18T02:32:59.902135Z",
+      "metadata_sha256": "d31bac2f803d3d353d37999423520dc7c208530e6d1cc452169b100aa900ea14",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.2",
+      "filename": "python_dotenv-1.2.2-py3-none-any.whl",
+      "size": 22101,
+      "sha256": "1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a",
+      "source_url": "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl",
+      "uploaded_at": "2026-03-01T16:00:25.090725Z",
+      "metadata_sha256": "59430a9dee8f8118dbf693e41c4a3e5150626d19901f4727503da9499f5a64a1",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "python_dotenv-1.2.2.dist-info/licenses/LICENSE",
+          "sha256": "80619b7049f08c81683ad0e01f08f257a840652dd71ee83146d36658c7d2c2b9"
+        }
+      ]
+    },
+    {
+      "name": "PyYAML",
+      "version": "6.0.3",
+      "filename": "pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 175577,
+      "sha256": "652cb6edd41e718550aad172851962662ff2681490a8a711af6a4d288dd96824",
+      "source_url": "https://files.pythonhosted.org/packages/16/19/13de8e4377ed53079ee996e1ab0a9c33ec2faf808a4647b7b4c0d46dd239/pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2025-09-25T21:32:00.088486Z",
+      "metadata_sha256": "03c3b415ed38d09faedc49360e930769b40c58f68585e6de00e2e4916a858d34",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "pyyaml-6.0.3.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "pyyaml-6.0.3.dist-info/licenses/LICENSE",
+          "sha256": "8d3928f9dc4490fd635707cb88eb26bd764102a7282954307d3e5167a577e8a4"
+        }
+      ]
+    },
+    {
+      "name": "regex",
+      "version": "2026.7.19",
+      "filename": "regex-2026.7.19-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 290615,
+      "sha256": "90c633e7e8d6bf4e992b8b36ce69e018f834b641dd6de8cea6d78c06ffa119c5",
+      "source_url": "https://files.pythonhosted.org/packages/41/2e/2360c41d8080a3d9ec7e5c90fad6eab3b50192869d10e9a5609e48c8177b/regex-2026.7.19-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-07-19T00:16:43.058784Z",
+      "metadata_sha256": "fd895ec7522cd0bbab71ee4826442162f3f408a5f8d92e759f4ddf1be60dcf73",
+      "license_expression": "Apache-2.0 AND CNRI-Python",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "regex-2026.7.19.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "regex-2026.7.19.dist-info/licenses/LICENSE.txt",
+          "sha256": "bff55ef4cdcc8c14ce259f8e8ab60e264418440d6335f4dc138273fbd506144d"
+        }
+      ]
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "filename": "requests-2.34.2-py3-none-any.whl",
+      "size": 73075,
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "source_url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+      "uploaded_at": "2026-05-14T19:25:26.443000Z",
+      "metadata_sha256": "8c384ba3e979480faae2859d3c5e6c1276dd2c3616e322e124d52c8cfc556f27",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "requests-2.34.2.dist-info/licenses/LICENSE",
+          "sha256": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b"
+        },
+        {
+          "path": "requests-2.34.2.dist-info/licenses/NOTICE",
+          "sha256": "f5110972dedad2b4e9d314518daf3b7d72d6e02e499acd802181de6f74571dcc"
+        }
+      ]
+    },
+    {
+      "name": "rich",
+      "version": "15.0.0",
+      "filename": "rich-15.0.0-py3-none-any.whl",
+      "size": 310654,
+      "sha256": "33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb",
+      "source_url": "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl",
+      "uploaded_at": "2026-04-12T08:24:02.830783Z",
+      "metadata_sha256": "fad34fc603fac4481bf81f8dd629492fc302c0ec31909c86644751512afb2e3b",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "rich-15.0.0.dist-info/licenses/LICENSE",
+          "sha256": "deed7c17a4318158190a3ea239cc879a5a50271cebb98ae7025f48fbe58dca15"
+        }
+      ]
+    },
+    {
+      "name": "safetensors",
+      "version": "0.8.0",
+      "filename": "safetensors-0.8.0-cp310-abi3-macosx_11_0_arm64.whl",
+      "size": 484562,
+      "sha256": "c80201d22cbf405b80647a60ada77bba06c8fba2da2743ba1e89cdcc39a81f25",
+      "source_url": "https://files.pythonhosted.org/packages/f5/b1/fa7c600e7dceae12e9606c7578cbc9ff1e1ed55844883ee5c92205e86226/safetensors-0.8.0-cp310-abi3-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-06-09T07:52:17.518936Z",
+      "metadata_sha256": "645be7b8d55e91534f991d144dc9e279581ea8dbea1a8c5b0be14e529d01e345",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "safetensors-0.8.0.dist-info/licenses/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "name": "scipy",
+      "version": "1.17.1",
+      "filename": "scipy-1.17.1-cp311-cp311-macosx_14_0_arm64.whl",
+      "size": 20334032,
+      "sha256": "a3472cfbca0a54177d0faa68f697d8ba4c80bbdc19908c3465556d9f7efce9ee",
+      "source_url": "https://files.pythonhosted.org/packages/6d/ee/18146b7757ed4976276b9c9819108adbc73c5aad636e5353e20746b73069/scipy-1.17.1-cp311-cp311-macosx_14_0_arm64.whl",
+      "uploaded_at": "2026-02-23T00:16:17.358480Z",
+      "metadata_sha256": "b1cd2c784f6e003c6c71af4c5ee57f6370ee467d17b656250d9fd38cf579d7d0",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "scipy-1.17.1.dist-info/LICENSE.txt",
+          "sha256": "60a7d05d729ed5c763852a324a1cb4223d665d4ad3f4b8a0c130ae5c60c93e49"
+        }
+      ]
+    },
+    {
+      "name": "sentencepiece",
+      "version": "0.2.2",
+      "filename": "sentencepiece-0.2.2-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 1346997,
+      "sha256": "443ac618c7a2a1377cf5c82581fbb849591d14e656d5e5a3e4682d4e36a34e4e",
+      "source_url": "https://files.pythonhosted.org/packages/2a/92/3a6ea4a2c6dd9e7062698a5a33534ca0e20844883338ae9c6b9c122c1a9f/sentencepiece-0.2.2-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-07-12T08:38:18.499904Z",
+      "metadata_sha256": "bb49c79797fff1b8f3048efd4849d86dce4adbe26f7f3f0a5b37239a59d88ee8",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "setuptools",
+      "version": "81.0.0",
+      "filename": "setuptools-81.0.0-py3-none-any.whl",
+      "size": 1062021,
+      "sha256": "fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6",
+      "source_url": "https://files.pythonhosted.org/packages/e1/e3/c164c88b2e5ce7b24d667b9bd83589cf4f3520d97cad01534cd3c4f55fdb/setuptools-81.0.0-py3-none-any.whl",
+      "uploaded_at": "2026-02-06T21:10:37.175649Z",
+      "metadata_sha256": "e3ca2edbff500ebe5ba650aa6d8f10249fb4ceae266029b160ce7058ef40df15",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "setuptools-81.0.0.dist-info/licenses/LICENSE",
+          "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741"
+        },
+        {
+          "path": "setuptools/_vendor/autocommand-2.2.2.dist-info/LICENSE",
+          "sha256": "ade78d04982d69972d444a8e14a94f87a2334dd3855cc80348ea8e240aa0df2d"
+        },
+        {
+          "path": "setuptools/_vendor/backports.tarfile-1.2.0.dist-info/LICENSE",
+          "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741"
+        },
+        {
+          "path": "setuptools/_vendor/importlib_metadata-8.7.1.dist-info/licenses/LICENSE",
+          "sha256": "458502e12d97bbf64438606a20044aa85eb05fb0a8a807bb35dbec253fd1fc04"
+        },
+        {
+          "path": "setuptools/_vendor/jaraco.text-4.0.0.dist-info/LICENSE",
+          "sha256": "86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741"
+        },
+        {
+          "path": "setuptools/_vendor/jaraco_context-6.1.0.dist-info/licenses/LICENSE",
+          "sha256": "9755a18519666e5f0f4cae3daad3d7012bcae48a600b31237d75e9fe134e6683"
+        },
+        {
+          "path": "setuptools/_vendor/jaraco_functools-4.4.0.dist-info/licenses/LICENSE",
+          "sha256": "5a57cb4db85e2a2dd88c290628908add57e3451449e0a9a71fdfb38776fd759d"
+        },
+        {
+          "path": "setuptools/_vendor/more_itertools-10.8.0.dist-info/licenses/LICENSE",
+          "sha256": "09f1c8c9e941af3e584d59641ea9b87d83c0cb0fd007eb5ef391a7e2643c1a46"
+        },
+        {
+          "path": "setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE",
+          "sha256": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48"
+        },
+        {
+          "path": "setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.APACHE",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+        },
+        {
+          "path": "setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE.BSD",
+          "sha256": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5"
+        },
+        {
+          "path": "setuptools/_vendor/platformdirs-4.4.0.dist-info/licenses/LICENSE",
+          "sha256": "29e0fd62e929850e86eb28c3fdccf0cefdf4fa94879011cffb3d0d4bed6d4db6"
+        },
+        {
+          "path": "setuptools/_vendor/tomli-2.4.0.dist-info/licenses/LICENSE",
+          "sha256": "b80816b0d530b8accb4c2211783790984a6e3b61922c2b5ee92f3372ab2742fe"
+        },
+        {
+          "path": "setuptools/_vendor/wheel-0.46.3.dist-info/licenses/LICENSE.txt",
+          "sha256": "30c23618679108f3e8ea1d2a658c7ca417bdfc891c98ef1a89fa4ff0c9828654"
+        },
+        {
+          "path": "setuptools/_vendor/zipp-3.23.0.dist-info/licenses/LICENSE",
+          "sha256": "5a57cb4db85e2a2dd88c290628908add57e3451449e0a9a71fdfb38776fd759d"
+        }
+      ]
+    },
+    {
+      "name": "shellingham",
+      "version": "1.5.4",
+      "filename": "shellingham-1.5.4-py2.py3-none-any.whl",
+      "size": 9755,
+      "sha256": "7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686",
+      "source_url": "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl",
+      "uploaded_at": "2023-10-24T04:13:38.866125Z",
+      "metadata_sha256": "183d80220a37493262795739dd357cc5bb3f49bd390cc9198d5180e5451a07fa",
+      "license_expression": "ISC",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "shellingham-1.5.4.dist-info/LICENSE",
+          "sha256": "f388fd38cad13112c1dc0f669bbe80e7f84541edbafb72f3030d2ca7642c3c9d"
+        }
+      ]
+    },
+    {
+      "name": "simpleeval",
+      "version": "1.0.7",
+      "filename": "simpleeval-1.0.7-py3-none-any.whl",
+      "size": 18792,
+      "sha256": "97ac271bfd8f2af9e7b9a36ceea67617f26fa873f9d5ae1922f64d4c1442534b",
+      "source_url": "https://files.pythonhosted.org/packages/0f/2f/f32aa85591882378bb43caa09363f3ed97df399369a5144c7f19f2275bc0/simpleeval-1.0.7-py3-none-any.whl",
+      "uploaded_at": "2026-03-16T10:53:02.103062Z",
+      "metadata_sha256": "0244f7d155246179f70c939302b3db0466ac40c9215de681459fbb811a68932c",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "simpleeval-1.0.7.dist-info/licenses/LICENCE",
+          "sha256": "482b4c83a3f019088cf3739351565dccd6d475fce224eecccd0344bbd0b770dd"
+        }
+      ]
+    },
+    {
+      "name": "spandrel",
+      "version": "0.4.2",
+      "filename": "spandrel-0.4.2-py3-none-any.whl",
+      "size": 320811,
+      "sha256": "6c93e3ecbeb0e548fd2df45a605472b34c1614287c56b51bb33cdef7ae5235b5",
+      "source_url": "https://files.pythonhosted.org/packages/74/31/411ea965835534c43d4b98d451968354876e0e867ea1fd42669e4cca0732/spandrel-0.4.2-py3-none-any.whl",
+      "uploaded_at": "2026-02-21T01:52:25.015769Z",
+      "metadata_sha256": "6706bbfde6ae90fb90a0c48d3cb7130d30e6ef8a0df7da24468de24c9d4b457e",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "SQLAlchemy",
+      "version": "2.0.51",
+      "filename": "sqlalchemy-2.0.51-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 2161838,
+      "sha256": "1aa10c0daee6705294d181daadaa793221e1a59ed55000a3fab1d42b088ce4ba",
+      "source_url": "https://files.pythonhosted.org/packages/3a/69/a67c69e5f28fc9c99d6f7bd60bd50e91f2fed2423e3b30fb228fa00e51f3/sqlalchemy-2.0.51-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-06-15T16:05:17.144955Z",
+      "metadata_sha256": "6fea45e57dc5b5b1c4ad7bed68a2cca0895b66d3be6a8f7c451d3ad09e937776",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "sqlalchemy-2.0.51.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "sqlalchemy-2.0.51.dist-info/licenses/LICENSE",
+          "sha256": "e862bb5b904fb5513c3e14288d7a25a12eb0ecc7847a0a965d310e9a955e7cb9"
+        }
+      ]
+    },
+    {
+      "name": "sympy",
+      "version": "1.14.0",
+      "filename": "sympy-1.14.0-py3-none-any.whl",
+      "size": 6299353,
+      "sha256": "e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5",
+      "source_url": "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl",
+      "uploaded_at": "2025-04-27T18:04:59.103806Z",
+      "metadata_sha256": "b756c2fbfd5be05ac5bdb0ebca61f55618f30f633ed92d88a5687429313a7595",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "sympy-1.14.0.dist-info/licenses/AUTHORS",
+          "sha256": "82b1038521b0696c63c90b31ed4a0a2c9c4c16871c648b157b07ca44b6f18f8d"
+        },
+        {
+          "path": "sympy-1.14.0.dist-info/licenses/LICENSE",
+          "sha256": "07a5e9819f727b4986ad2829c7a29a6320d42575f720eb24d71b7fef573a0286"
+        }
+      ]
+    },
+    {
+      "name": "tokenizers",
+      "version": "0.22.2",
+      "filename": "tokenizers-0.22.2-cp39-abi3-macosx_11_0_arm64.whl",
+      "size": 2981472,
+      "sha256": "1e418a55456beedca4621dbab65a318981467a2b188e982a23e117f115ce5001",
+      "source_url": "https://files.pythonhosted.org/packages/2e/47/174dca0502ef88b28f1c9e06b73ce33500eedfac7a7692108aec220464e7/tokenizers-0.22.2-cp39-abi3-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-01-05T10:41:00.276204Z",
+      "metadata_sha256": "15a5ddaf489f592b77e0a934c0eeb46b51130a94064ca129232afdb0a3868efc",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "torch",
+      "version": "2.11.0",
+      "filename": "torch-2.11.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 80529712,
+      "sha256": "7b6a60d48062809f58595509c524b88e6ddec3ebe25833d6462eeab81e5f2ce4",
+      "source_url": "https://files.pythonhosted.org/packages/ae/0d/98b410492609e34a155fa8b121b55c7dca229f39636851c3a9ec20edea21/torch-2.11.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-03-23T18:12:02.608057Z",
+      "metadata_sha256": "d65e0ab5a65ced0dce799a2f6f32bff57b3d3e9d050069f607ef71eb24dd9976",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "torch-2.11.0.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "torch-2.11.0.dist-info/licenses/LICENSE",
+          "sha256": "b24fc699faf5696eacf1ba3404c09f9a90462f41ef27b5d753e75fa9cb2f83b5"
+        },
+        {
+          "path": "torch-2.11.0.dist-info/licenses/NOTICE",
+          "sha256": "c2cc7bf0caec7652c2b460a8a470bea1677f241e4ab8e431df34cf17f5a9fec0"
+        }
+      ]
+    },
+    {
+      "name": "torchaudio",
+      "version": "2.11.0",
+      "filename": "torchaudio-2.11.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 684142,
+      "sha256": "492dd64645e9d0bb843e94f1d9a4d1e31426262ffc594fafecc1697df9df5eb9",
+      "source_url": "https://files.pythonhosted.org/packages/94/77/0eec7f175d88f312296bd5b11c23bd58da37c1021f53da3db4df449ce3ee/torchaudio-2.11.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-03-23T18:13:36.805722Z",
+      "metadata_sha256": "1ac77b6a77750febc5fe4921ac29d43b3cebf5b191d03c0e1413cab7e343ac31",
+      "license_expression": "BSD-2-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "torchaudio-2.11.0.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "torchaudio-2.11.0.dist-info/licenses/LICENSE",
+          "sha256": "93a58861a858cc108e6b6b833e08e76e8b2a66339e4a8007c8a5a8c1ff9c40d6"
+        }
+      ]
+    },
+    {
+      "name": "torchsde",
+      "version": "0.2.6",
+      "filename": "torchsde-0.2.6-py3-none-any.whl",
+      "size": 61232,
+      "sha256": "19bf7ff02eec7e8e46ba1cdb4aa0f9db1c51d492524a16975234b467f7fc463b",
+      "source_url": "https://files.pythonhosted.org/packages/dd/1f/b67ebd7e19ffe259f05d3cf4547326725c3113d640c277030be3e9998d6f/torchsde-0.2.6-py3-none-any.whl",
+      "uploaded_at": "2023-09-26T21:52:19.274118Z",
+      "metadata_sha256": "07c6420d208308af6ca8c02d36d6143c8966d49c521f58f320f93a1e0e7a7b8d",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "torchsde-0.2.6.dist-info/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "name": "torchvision",
+      "version": "0.26.0",
+      "filename": "torchvision-0.26.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 1863499,
+      "sha256": "55bd6ad4ae77be01ba67a410b05b51f53b0d0ee45f146eb6a0dfb9007e70ab3c",
+      "source_url": "https://files.pythonhosted.org/packages/b4/bd/d552a2521bade3295b2c6e7a4a0d1022261cab7ca7011f4e2a330dbb3caa/torchvision-0.26.0-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-03-23T18:12:58.696745Z",
+      "metadata_sha256": "a973d62f050ca0cf294e2b73469ab586c0f4fc4c4bd2e0a304ac4f2abb7f14fc",
+      "license_expression": "BSD-3-Clause",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "torchvision-0.26.0.dist-info/LICENSE",
+          "sha256": "6502f676851cfe25f8af75531dfb32375b7325b73c37e7b43741fa422893e71d"
+        }
+      ]
+    },
+    {
+      "name": "tqdm",
+      "version": "4.69.0",
+      "filename": "tqdm-4.69.0-py3-none-any.whl",
+      "size": 676680,
+      "sha256": "9979978912be667a6ef21fd5d8abf54e324e63d82f7f43c360792ebc2bc4e622",
+      "source_url": "https://files.pythonhosted.org/packages/fe/21/99a0cdaf54eb35e77623c41b5a2c9472ee4404bba687052791fe2aba6773/tqdm-4.69.0-py3-none-any.whl",
+      "uploaded_at": "2026-07-17T18:09:04.172996Z",
+      "metadata_sha256": "a0406c7575adf27f56a09afa6fbcdcd8d9951d12ca219698baa5627351b0d9a1",
+      "license_expression": "MPL-2.0 AND MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "tqdm-4.69.0.dist-info/licenses/LICENCE",
+          "sha256": "fcff87c3a47ce8028a8512aa182d4fcf0ad1c90544ee75cf9b343684cac194de"
+        }
+      ]
+    },
+    {
+      "name": "trampoline",
+      "version": "0.1.2",
+      "filename": "trampoline-0.1.2-py3-none-any.whl",
+      "size": 5173,
+      "sha256": "36cc9a4ff9811843d177fc0e0740efbd7da39eadfe6e50c9e2937cbc06d899d9",
+      "source_url": "https://files.pythonhosted.org/packages/73/54/d2805324fb746d8da86d3844bee4f55c0cfd6c136de61b713772d44c5bea/trampoline-0.1.2-py3-none-any.whl",
+      "uploaded_at": "2018-08-18T01:00:41.215852Z",
+      "metadata_sha256": "50538036430f2de46e94fa5aed3d8b1c4c5876483b9e5576accd558053972865",
+      "license_expression": "MIT",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": []
+    },
+    {
+      "name": "transformers",
+      "version": "5.14.1",
+      "filename": "transformers-5.14.1-py3-none-any.whl",
+      "size": 11625234,
+      "sha256": "9db974c4079ede2d1a3ea7ca5a240df33f2cc26fc2b36ba64c5f2a4f43b6e725",
+      "source_url": "https://files.pythonhosted.org/packages/6f/67/8d85ca2323233ae3c0365a659c4e52ee1f587b440e4bc577e7d8e4416d0f/transformers-5.14.1-py3-none-any.whl",
+      "uploaded_at": "2026-07-16T09:41:54.143394Z",
+      "metadata_sha256": "be47444bbcf63c6813decf9509d4076972f261699bbddd8c0fdf53fb73b09307",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "transformers-5.14.1.dist-info/licenses/LICENSE",
+          "sha256": "77fd4710def9ec3c0f6225800e0235f15a425abd4a8b03559127fcd782612049"
+        }
+      ]
+    },
+    {
+      "name": "typer",
+      "version": "0.27.0",
+      "filename": "typer-0.27.0-py3-none-any.whl",
+      "size": 122716,
+      "sha256": "6f4b27631e47f077871b7dc30e933ec0131c1390fbe0e387ea5574b5bac9ccf1",
+      "source_url": "https://files.pythonhosted.org/packages/40/03/26a383c9e58c213199d1aad1c3d353cfc22d4444ec6d2c0bf8ad02523843/typer-0.27.0-py3-none-any.whl",
+      "uploaded_at": "2026-07-15T19:21:05.553825Z",
+      "metadata_sha256": "2a14ebc37e8aef52d20c8bf4f7d5caa3874e7e8dc0d476f9f6ef5bc6c2f47efd",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "typer-0.27.0.dist-info/licenses/LICENSE",
+          "sha256": "58992cebcf8dfb6e40c4e2112ed12126c243666dca3912a3d78b7ecac4859d49"
+        }
+      ]
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+      "size": 45571,
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "source_url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+      "uploaded_at": "2026-07-02T08:40:04.659120Z",
+      "metadata_sha256": "b05084ca1d50879865178d9fff9fabeab61bdfb1f361bfbde95421ffc8f9be46",
+      "license_expression": "PSF-2.0",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "typing_extensions-4.16.0.dist-info/licenses/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+        }
+      ]
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.2",
+      "filename": "typing_inspection-0.4.2-py3-none-any.whl",
+      "size": 14611,
+      "sha256": "4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7",
+      "source_url": "https://files.pythonhosted.org/packages/dc/9b/47798a6c91d8bdb567fe2698fe81e0c6b7cb7ef4d13da4114b41d239f65d/typing_inspection-0.4.2-py3-none-any.whl",
+      "uploaded_at": "2025-10-01T02:14:40.154613Z",
+      "metadata_sha256": "61096cd0bfe3c7040b6f98c22b02d190fe01936d0ff7616c5134fed02891953a",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "typing_inspection-0.4.2.dist-info/licenses/LICENSE",
+          "sha256": "804b59b25f2c31bd278f9202a19ae49a3945aa2664387e2d0a128c7cacc61ec3"
+        }
+      ]
+    },
+    {
+      "name": "urllib3",
+      "version": "2.7.0",
+      "filename": "urllib3-2.7.0-py3-none-any.whl",
+      "size": 131087,
+      "sha256": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
+      "source_url": "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl",
+      "uploaded_at": "2026-05-07T16:13:17.151740Z",
+      "metadata_sha256": "66147856d30bbb6bed01c6ce3326d0f48d84ed5f286ac177633a1486b82eace5",
+      "license_expression": "MIT",
+      "license_evidence": "core_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "urllib3-2.7.0.dist-info/licenses/LICENSE.txt",
+          "sha256": "130e3a64d5fdd5d096a752694634a7d9df284469de86e5732100268041e3d686"
+        }
+      ]
+    },
+    {
+      "name": "yarl",
+      "version": "1.24.5",
+      "filename": "yarl-1.24.5-cp311-cp311-macosx_11_0_arm64.whl",
+      "size": 97046,
+      "sha256": "709f1efed56c4a145793c046cd4939f9959bcd818979a787b77d8e09c57a0840",
+      "source_url": "https://files.pythonhosted.org/packages/ce/97/10b939c44d7b28d1dbc389cfc7012306d1ea8dba01eaef44b39fffaee52a/yarl-1.24.5-cp311-cp311-macosx_11_0_arm64.whl",
+      "uploaded_at": "2026-07-20T02:04:56.638315Z",
+      "metadata_sha256": "0fd7b817553598246289189dfb95b425a15c9319d1bae355a38860419937e1c7",
+      "license_expression": "Apache-2.0",
+      "license_evidence": "reviewed_legacy_metadata",
+      "license_review": "approved_for_gpl3_runtime",
+      "license_files": [
+        {
+          "path": "yarl-1.24.5.dist-info/licenses/",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "yarl-1.24.5.dist-info/licenses/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "yarl-1.24.5.dist-info/licenses/NOTICE",
+          "sha256": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838"
+        }
+      ]
+    }
+  ]
+}

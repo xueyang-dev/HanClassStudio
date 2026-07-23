@@ -29,6 +29,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import storage
 from .ffmpeg_video import FfmpegCapability, probe_ffmpeg
+from .comfyui_archive import ComfyUIArchiveError
+from .comfyui_runtime import (
+    ComfyUIRuntimeError,
+    RuntimeOperation,
+    RuntimeOperationConfirmation,
+    RuntimeOperationSummary,
+    RuntimeSnapshot,
+    check_runtime_health,
+    consume_runtime_operation_confirmation,
+    log_summary as comfyui_log_summary,
+    prepare_runtime_operation,
+    recover_installations as recover_comfyui_installations,
+    run_runtime_install,
+    run_runtime_uninstall,
+    runtime_directory_contract,
+    runtime_snapshot,
+    runtime_transaction_phase,
+    start_runtime,
+    stop_runtime,
+)
 from .models import ImageProviderSettings
 from .provider_registry import (
     ProviderRegistryError,
@@ -44,11 +64,16 @@ HubStatus = Literal[
     "discovered", "available", "not_installed", "installing", "installed",
     "not_configured", "configured", "checking", "ready", "degraded",
     "incompatible", "update_available", "failed", "disabled", "unavailable",
+    "starting", "runtime_ready", "stopping", "stopped", "crashed",
+    "repair_required", "unsupported_modified",
 ]
 HubAction = Literal[
     "view_details", "open_project", "open_api_application", "configure",
     "delete_configuration", "test_connection", "install", "cancel_install",
     "repair", "check_health", "disable", "enable", "view_logs",
+    "install_runtime", "start_runtime", "stop_runtime", "force_stop_runtime",
+    "check_runtime", "repair_runtime", "uninstall_runtime", "view_runtime_logs",
+    "open_runtime_directory",
 ]
 TrustLevel = Literal[
     "official_verified", "community_verified", "discovered_unverified",
@@ -60,6 +85,9 @@ InstallPhase = Literal[
     "preflight", "resolving", "downloading", "verifying", "extracting",
     "installing_runtime", "installing_model", "installing_workflow", "starting",
     "health_check", "smoke_test", "completed", "failed", "cancelled", "rolling_back",
+    "verifying_download", "inspecting_archive", "verifying_extracted_tree",
+    "creating_python_environment", "installing_dependencies", "validating_runtime",
+    "publishing_runtime", "uninstalling_runtime",
 ]
 ErrorCode = Literal[
     "network_error", "authentication_error", "rate_limited", "invalid_manifest",
@@ -80,6 +108,7 @@ _ONLINE_PROVIDER_ID = "openai_images"
 _ONLINE_PACKAGE_ID = "hcs.online-image-high-quality"
 _LOCAL_PACKAGE_ID = "hcs.local-image-basic"
 _VIDEO_PACKAGE_ID = "hcs.teaching-video-basic"
+_COMFYUI_PACKAGE_ID = "hcs.comfyui-runtime"
 _VIDEO_PROBE_TTL_SECONDS = 15 * 60
 _ONLINE_HOSTS = {"api.openai.com"}
 
@@ -249,6 +278,9 @@ class ProviderHubItem(BaseModel):
     capability_package: CapabilityPackageSpec | None = None
     technical_error: dict[str, Any] | None = None
     last_health_check_at: str | None = None
+    runtime_ready: bool = False
+    generation_ready: bool = False
+    runtime_details: RuntimeSnapshot | None = None
 
 
 class ProviderHubCatalog(BaseModel):
@@ -291,6 +323,7 @@ class ProviderRefreshTask(BaseModel):
 class ProviderInstallTask(BaseModel):
     task_id: str
     package_id: str
+    operation: Literal["install", "repair", "uninstall"] = "install"
     state: TaskState = "queued"
     phase: InstallPhase = "preflight"
     progress: int = Field(default=0, ge=0, le=100)
@@ -311,6 +344,29 @@ class ProviderInstallTask(BaseModel):
 class ProviderInstallStartResponse(BaseModel):
     task: ProviderInstallTask
     provider: ProviderHubItem
+
+
+class RuntimeLogsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    package_id: Literal["hcs.comfyui-runtime"]
+    install: list[str]
+    runtime: list[str]
+
+
+class RuntimeDirectoryAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["open_managed_runtime_directory"]
+    runtime_id: Literal["comfyui"]
+
+
+class RuntimeMutationConfirmationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation_token: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_runtime_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    preserve_models: Literal[True] = True
 
 
 def _normalize_online_model(value: str) -> str:
@@ -590,6 +646,103 @@ def _local_package_item(hardware: HardwareCapability) -> ProviderHubItem:
     )
 
 
+def _comfyui_package_item(hardware: HardwareCapability) -> ProviderHubItem:
+    try:
+        snapshot = runtime_snapshot()
+        latest = latest_install_task(_COMFYUI_PACKAGE_ID, recover_interrupted=True)
+        mutating = bool(latest and latest.state in {"queued", "running"})
+        status: HubStatus = "installing" if mutating else snapshot.status
+        actions: list[HubAction]
+        if mutating:
+            actions = ["cancel_install", "view_runtime_logs"]
+        else:
+            actions = list(snapshot.available_actions)
+        compatible: Compatibility = hardware.status
+        if not snapshot.compatible:
+            compatible = "unsupported"
+        return ProviderHubItem(
+            id=_COMFYUI_PACKAGE_ID,
+            provider_id="comfyui_runtime",
+            name="ComfyUI 本地运行环境",
+            description="为本地 AI 图片模型提供运行基础；安装后仍需另行安装图片模型。",
+            provider_type="offline",
+            capabilities=["local_image_runtime"],
+            trust_level="official_verified",
+            registry_source="builtin",
+            status=status,
+            installed=snapshot.installed,
+            configured=snapshot.installed,
+            ready=False,
+            runtime_ready=snapshot.runtime_ready,
+            generation_ready=False,
+            runtime_details=snapshot,
+            compatible=compatible,
+            available_actions=actions,
+            recommended=True,
+            requires_download=True,
+            runs_locally=True,
+            uploads_data=False,
+            version=snapshot.version,
+            update_channel="experimental",
+            publisher="Comfy Org",
+            third_party_executable_code=True,
+            redistributed_by_hanclassstudio=False,
+            source_links=SourceLinks(
+                official_website_url="https://www.comfy.org/",
+                project_url="https://github.com/Comfy-Org/ComfyUI",
+                license_url="https://github.com/Comfy-Org/ComfyUI/blob/700821e1364eaab0e8f21c538a2131719fec57bf/LICENSE",
+            ),
+            license=LicenseInfo(
+                name="GPL-3.0-only",
+                url="https://github.com/Comfy-Org/ComfyUI/blob/700821e1364eaab0e8f21c538a2131719fec57bf/LICENSE",
+                redistribution_allowed=True,
+                clear=True,
+            ),
+            capability_package=CapabilityPackageSpec(
+                id=_COMFYUI_PACKAGE_ID,
+                name="ComfyUI 本地运行环境",
+                description="固定官方源码、隔离依赖、loopback 进程和真实 API 健康检查。",
+                runtime=RuntimeSpec(
+                    id="comfyui",
+                    name="ComfyUI",
+                    version=snapshot.version,
+                    execution="managed_loopback_process",
+                ),
+                model_packages=[],
+                workflow_packs=[],
+                healthcheck="managed process ownership + /system_stats + /object_info + pristine custom_nodes",
+            ),
+            technical_error=snapshot.technical_error,
+            last_health_check_at=(snapshot.last_health.checked_at if snapshot.last_health else None),
+        )
+    except (ComfyUIRuntimeError, ComfyUIArchiveError) as exc:
+        return ProviderHubItem(
+            id=_COMFYUI_PACKAGE_ID,
+            provider_id="comfyui_runtime",
+            name="ComfyUI 本地运行环境",
+            description="为本地 AI 图片模型提供运行基础；当前受控 Runtime manifest 无法验证。",
+            provider_type="offline",
+            capabilities=["local_image_runtime"],
+            trust_level="official_verified",
+            registry_source="builtin",
+            status="repair_required",
+            installed=False,
+            configured=False,
+            ready=False,
+            runtime_ready=False,
+            generation_ready=False,
+            compatible="unknown",
+            available_actions=["view_runtime_logs"],
+            recommended=True,
+            requires_download=True,
+            runs_locally=True,
+            uploads_data=False,
+            update_channel="experimental",
+            publisher="Comfy Org",
+            technical_error={"code": exc.code, "message": exc.message},
+        )
+
+
 def _video_probe_environment_fingerprint() -> str:
     def executable_identity(name: str) -> dict[str, str | int | None]:
         path = shutil.which(name)
@@ -817,7 +970,12 @@ def _adapt_existing_providers(existing_ids: set[str]) -> tuple[list[ProviderHubI
 
 def hub_catalog() -> ProviderHubCatalog:
     hardware = detect_hardware()
-    featured = [_video_package_item(hardware), _local_package_item(hardware), _online_package_item(hardware)]
+    featured = [
+        _comfyui_package_item(hardware),
+        _video_package_item(hardware),
+        _local_package_item(hardware),
+        _online_package_item(hardware),
+    ]
     adapted, errors = _adapt_existing_providers({item.id for item in featured})
     providers = [*featured, *adapted]
     return ProviderHubCatalog(providers=providers, hardware=hardware, last_refresh_at=_last_refresh_at(), isolated_errors=errors)
@@ -839,6 +997,13 @@ def get_install_task(task_id: str) -> ProviderInstallTask:
     return ProviderInstallTask.model_validate(raw)
 
 
+def get_latest_install_task(package_id: str) -> ProviderInstallTask:
+    task = latest_install_task(package_id, recover_interrupted=True)
+    if task is None:
+        raise ProviderHubError("task_not_found", "Installation task was not found")
+    return task
+
+
 def latest_install_task(package_id: str, *, recover_interrupted: bool = False) -> ProviderInstallTask | None:
     tasks: list[ProviderInstallTask] = []
     for raw in _read_mapping(_INSTALL_TASK_FILE).values():
@@ -853,10 +1018,33 @@ def latest_install_task(package_id: str, *, recover_interrupted: bool = False) -
         return None
     task = max(tasks, key=lambda item: item.started_at)
     if recover_interrupted and task.state in {"queued", "running"} and task.task_id not in _install_threads:
-        task.state, task.phase, task.cancellable = "failed", "failed", False
+        if package_id == _COMFYUI_PACKAGE_ID:
+            try:
+                recover_comfyui_installations()
+                snapshot = runtime_snapshot(recover=False)
+                transaction_phase = runtime_transaction_phase(task.task_id)
+                completed = transaction_phase == "completed" or (
+                    task.operation == "uninstall"
+                    and transaction_phase is None
+                    and not snapshot.installed
+                )
+            except (ComfyUIRuntimeError, ComfyUIArchiveError):
+                completed = False
+            if completed:
+                task.state, task.phase, task.progress = "completed", "completed", 100
+                task.message = "中断的 Runtime 事务已恢复完成"
+                task.error = None
+                task.recoverable_actions = []
+            else:
+                task.state, task.phase = "failed", "failed"
+                task.error = {"code": "installation_failed", "message": "Runtime mutation was interrupted and safely recovered."}
+                task.recoverable_actions = ["repair_runtime"]
+        else:
+            task.state, task.phase = "failed", "failed"
+            task.error = {"code": "installation_failed", "message": "Installation was interrupted; start again."}
+            task.recoverable_actions = ["repair"]
+        task.cancellable = False
         task.finished_at = task.updated_at = _iso()
-        task.error = {"code": "installation_failed", "message": "Installation was interrupted; start again."}
-        task.recoverable_actions = ["repair"]
         _save_install_task(task)
     return task
 
@@ -1025,7 +1213,154 @@ def _run_fixture_install(task_id: str) -> None:
             _cancelled_tasks.discard(task_id)
 
 
+def _run_comfyui_mutation(
+    task_id: str,
+    confirmation: RuntimeOperationSummary | None = None,
+) -> None:
+    task = get_install_task(task_id)
+
+    def cancel() -> None:
+        _check_cancelled(task_id)
+
+    def progress(
+        phase: str,
+        percent: int,
+        message: str,
+        current: int | None,
+        total: int | None,
+    ) -> None:
+        _check_cancelled(task_id)
+        kwargs: dict[str, Any] = {
+            "state": "running",
+            "phase": phase,
+            "progress": percent,
+            "message": message,
+        }
+        if current is not None:
+            kwargs["downloaded_bytes"] = current
+        if total is not None:
+            kwargs["total_bytes"] = total
+            kwargs["current_file_progress"] = int(current * 100 / total) if current is not None and total else 0
+        _update_install_task(task_id, **kwargs)
+
+    try:
+        if task.operation == "uninstall":
+            run_runtime_uninstall(
+                task_id, progress=progress, cancel=cancel, confirmation=confirmation
+            )
+        else:
+            run_runtime_install(
+                task_id,
+                operation=task.operation,
+                progress=progress,
+                cancel=cancel,
+                confirmation=confirmation,
+            )
+        _update_install_task(
+            task_id,
+            state="completed",
+            phase="completed",
+            progress=100,
+            current_file_progress=100,
+            message=(
+                "ComfyUI 运行环境已卸载"
+                if task.operation == "uninstall"
+                else "ComfyUI 运行环境已安装；尚未安装图片模型"
+            ),
+        )
+    except ComfyUIRuntimeError as exc:
+        state: TaskState = "cancelled" if exc.code == "cancelled" else "failed"
+        phase: InstallPhase = "cancelled" if exc.code == "cancelled" else "failed"
+        _update_install_task(
+            task_id,
+            state=state,
+            phase=phase,
+            message=exc.message,
+            error={"code": exc.code, "message": exc.message},
+        )
+    except Exception:
+        _update_install_task(
+            task_id,
+            state="failed",
+            phase="failed",
+            message="Runtime mutation failed unexpectedly",
+            error={"code": "internal_error", "message": "Runtime mutation failed unexpectedly"},
+        )
+    finally:
+        with _install_lock:
+            _install_threads.pop(task_id, None)
+            _cancelled_tasks.discard(task_id)
+
+
+def prepare_comfyui_mutation(
+    operation: Literal["repair", "uninstall"],
+) -> RuntimeOperationConfirmation:
+    try:
+        return prepare_runtime_operation(operation)
+    except ComfyUIRuntimeError as exc:
+        raise ProviderHubError(exc.code, exc.message) from exc
+
+
+def start_comfyui_mutation(
+    operation: RuntimeOperation,
+    *,
+    confirmation_token: str | None = None,
+    expected_runtime_identity: str | None = None,
+) -> ProviderInstallStartResponse:
+    with _install_lock:
+        active = latest_install_task(_COMFYUI_PACKAGE_ID)
+        if active and active.state in {"queued", "running"} and active.task_id in _install_threads:
+            raise ProviderHubError("task_conflict", "A ComfyUI Runtime mutation is already running")
+        snapshot = runtime_snapshot()
+        if operation == "install" and snapshot.installed:
+            raise ProviderHubError("task_conflict", "ComfyUI Runtime is already installed; use repair")
+        if operation in {"repair", "uninstall"} and not snapshot.installed:
+            raise ProviderHubError("runtime_not_installed", "ComfyUI Runtime is not installed")
+        confirmation: RuntimeOperationSummary | None = None
+        if operation in {"repair", "uninstall"}:
+            if not confirmation_token or not expected_runtime_identity:
+                raise ProviderHubError(
+                    "confirmation_invalid", "A backend Runtime confirmation is required"
+                )
+            try:
+                confirmation = consume_runtime_operation_confirmation(
+                    operation, confirmation_token, expected_runtime_identity
+                )
+            except ComfyUIRuntimeError as exc:
+                raise ProviderHubError(exc.code, exc.message) from exc
+        now = _iso()
+        messages = {
+            "install": "ComfyUI Runtime 安装任务已排队",
+            "repair": "ComfyUI Runtime 修复任务已排队",
+            "uninstall": "ComfyUI Runtime 卸载任务已排队",
+        }
+        task = ProviderInstallTask(
+            task_id=uuid.uuid4().hex,
+            package_id=_COMFYUI_PACKAGE_ID,
+            operation=operation,
+            state="queued",
+            phase="preflight",
+            message=messages[operation],
+            started_at=now,
+            updated_at=now,
+            log_ref="provider-hub-runtime:comfyui",
+        )
+        _save_install_task(task)
+        thread = threading.Thread(
+            target=_run_comfyui_mutation,
+            args=(task.task_id, confirmation),
+            daemon=True,
+            name=f"hcs-comfyui-{operation}-{task.task_id[:8]}",
+        )
+        _install_threads[task.task_id] = thread
+        provider = _comfyui_package_item(detect_hardware())
+        thread.start()
+        return ProviderInstallStartResponse(task=task, provider=provider)
+
+
 def start_fixture_install(package_id: str) -> ProviderInstallStartResponse:
+    if package_id == _COMFYUI_PACKAGE_ID:
+        return start_comfyui_mutation("install")
     if package_id != _LOCAL_PACKAGE_ID:
         raise ProviderHubError("installation_failed", "This capability package does not have an installer")
     with _install_lock:
@@ -1056,11 +1391,21 @@ def cancel_fixture_install(task_id: str) -> ProviderInstallStartResponse:
         task.message = "正在安全取消安装"
         task.updated_at = _iso()
         _save_install_task(task)
-        provider = _local_package_item(detect_hardware())
+        provider = (
+            _comfyui_package_item(detect_hardware())
+            if task.package_id == _COMFYUI_PACKAGE_ID
+            else _local_package_item(detect_hardware())
+        )
         return ProviderInstallStartResponse(task=task, provider=provider)
 
 
 def check_local_health(package_id: str) -> ProviderHubItem:
+    if package_id == _COMFYUI_PACKAGE_ID:
+        try:
+            check_runtime_health()
+        except ComfyUIRuntimeError as exc:
+            raise ProviderHubError(exc.code, exc.message) from exc
+        return _comfyui_package_item(detect_hardware())
     if package_id == _VIDEO_PACKAGE_ID:
         return _video_package_item(detect_hardware(), force_refresh=True)
     if package_id != _LOCAL_PACKAGE_ID:
@@ -1074,6 +1419,42 @@ def check_local_health(package_id: str) -> ProviderHubItem:
         _update_hub_state("local_image", {"installed": target.exists(), "ready": False, "checked_at": checked_at, "error": {"code": "health_check_failed", "message": "Installed fixture is missing or invalid"}})
         raise ProviderHubError("health_check_failed", "Installed fixture is missing or invalid")
     return _local_package_item(detect_hardware())
+
+
+def start_comfyui_runtime_package(package_id: str) -> ProviderHubItem:
+    if package_id != _COMFYUI_PACKAGE_ID:
+        raise ProviderHubError("runtime_not_found", "Runtime package was not found")
+    try:
+        start_runtime()
+    except ComfyUIRuntimeError as exc:
+        raise ProviderHubError(exc.code, exc.message) from exc
+    return _comfyui_package_item(detect_hardware())
+
+
+def stop_comfyui_runtime_package(package_id: str, *, force: bool = False) -> ProviderHubItem:
+    if package_id != _COMFYUI_PACKAGE_ID:
+        raise ProviderHubError("runtime_not_found", "Runtime package was not found")
+    try:
+        stop_runtime(force=force)
+    except ComfyUIRuntimeError as exc:
+        raise ProviderHubError(exc.code, exc.message) from exc
+    return _comfyui_package_item(detect_hardware())
+
+
+def comfyui_runtime_logs(package_id: str) -> RuntimeLogsResponse:
+    if package_id != _COMFYUI_PACKAGE_ID:
+        raise ProviderHubError("runtime_not_found", "Runtime package was not found")
+    return RuntimeLogsResponse(**{
+        "package_id": package_id,
+        "install": comfyui_log_summary("install"),
+        "runtime": comfyui_log_summary("runtime"),
+    })
+
+
+def comfyui_runtime_directory(package_id: str) -> RuntimeDirectoryAction:
+    if package_id != _COMFYUI_PACKAGE_ID:
+        raise ProviderHubError("runtime_not_found", "Runtime package was not found")
+    return RuntimeDirectoryAction.model_validate(runtime_directory_contract())
 
 
 _refresh_lock = threading.Lock()

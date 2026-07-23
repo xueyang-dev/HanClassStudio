@@ -67,8 +67,8 @@
 .provider-hub-content section > h3 { margin: 0 0 12px; font-size: 1.08rem; }
 .provider-hub-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .provider-hub-card { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface, #fff); box-shadow: 0 8px 24px rgb(15 23 42 / 5%); }
-.provider-hub-card.status-ready { border-color: color-mix(in srgb, #16a34a 45%, var(--line)); }
-.provider-hub-card.status-failed, .provider-hub-card.status-degraded { border-color: color-mix(in srgb, #dc2626 40%, var(--line)); }
+.provider-hub-card.status-ready, .provider-hub-card.status-runtime_ready { border-color: color-mix(in srgb, #16a34a 45%, var(--line)); }
+.provider-hub-card.status-failed, .provider-hub-card.status-degraded, .provider-hub-card.status-crashed, .provider-hub-card.status-repair_required, .provider-hub-card.status-unsupported_modified { border-color: color-mix(in srgb, #dc2626 40%, var(--line)); }
 .provider-hub-card > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: start; }
 .provider-hub-card h4 { margin: 0 0 5px; overflow-wrap: anywhere; }
 .provider-hub-card header p { margin: 0; color: var(--muted); line-height: 1.48; }
@@ -89,6 +89,14 @@
 .provider-hub-task p { margin: 0; color: var(--muted); }
 .provider-hub-task-technical { color: var(--muted); font-size: .78rem; }
 .provider-hub-task-technical summary { cursor: pointer; }
+.provider-hub-runtime-summary { display: grid; gap: 5px; margin: 12px 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line)); border-radius: 11px; background: color-mix(in srgb, var(--primary) 5%, var(--surface, #fff)); }
+.provider-hub-runtime-summary p { margin: 0; line-height: 1.48; }
+.provider-hub-runtime-summary p:not(:first-child) { color: var(--muted); font-size: .82rem; }
+.provider-hub-runtime-summary .provider-hub-phase2c { color: var(--primary); font-weight: 650; }
+.provider-hub-runtime-notice { margin: 10px 0; color: var(--muted); font-size: .82rem; }
+.provider-hub-runtime-logs { margin: 10px 0; }
+.provider-hub-runtime-logs summary { cursor: pointer; color: var(--primary); }
+.provider-hub-runtime-logs pre { max-height: 190px; overflow: auto; padding: 10px; border-radius: 9px; background: #111827; color: #e5e7eb; font-size: .72rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .provider-hub-error-detail { color: #b91c1c !important; }
 .provider-hub-details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
 .provider-hub-details summary { cursor: pointer; color: var(--primary); }

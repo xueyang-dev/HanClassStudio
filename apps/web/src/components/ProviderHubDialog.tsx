@@ -8,12 +8,20 @@ import {
   fetchOnlineProviderConfig,
   fetchProviderHub,
   fetchProviderHubInstall,
+  fetchProviderHubLatestInstall,
   fetchProviderHubRefresh,
+  fetchProviderRuntimeDirectoryAction,
+  fetchProviderRuntimeLogs,
+  prepareProviderRuntimeMutation,
+  repairProviderRuntime,
   saveOnlineProviderConfig,
   setOnlineProviderEnabled,
   startProviderHubInstall,
   startProviderHubRefresh,
+  startProviderRuntime,
+  stopProviderRuntime,
   testOnlineProviderConnection,
+  uninstallProviderRuntime,
 } from "../api";
 import { localizedApiError } from "../api-errors";
 import { useI18n } from "../i18n";
@@ -89,10 +97,27 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
   const [endpoint, setEndpoint] = useState("https://api.openai.com/v1");
   const [model, setModel] = useState("gpt-image-2");
   const [configBusy, setConfigBusy] = useState(false);
+  const [runtimeLogs, setRuntimeLogs] = useState<Record<string, { install: string[]; runtime: string[] }>>({});
+  const [runtimeNotices, setRuntimeNotices] = useState<Record<string, string>>({});
 
   async function reload(): Promise<void> {
     const next = await fetchProviderHub();
-    if (mountedRef.current) setHubState((current) => ({ ...current, catalog: next }));
+    const recovered = await Promise.all(next.providers
+      .filter((item) => item.status === "installing")
+      .map(async (item) => {
+        try {
+          return [item.id, await fetchProviderHubLatestInstall(item.id)] as const;
+        } catch {
+          return null;
+        }
+      }));
+    if (mountedRef.current) setHubState((current) => ({
+      catalog: next,
+      installTasks: {
+        ...current.installTasks,
+        ...Object.fromEntries(recovered.filter((item): item is readonly [string, ProviderHubInstallTask] => item !== null)),
+      },
+    }));
   }
 
   function beginMutation(packageId: string): boolean {
@@ -149,15 +174,36 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
     }
   }
 
-  async function install(item: ProviderHubItem): Promise<void> {
+  async function mutateRuntime(item: ProviderHubItem, operation: "install" | "repair" | "uninstall"): Promise<void> {
     if (!beginMutation(item.id)) return;
     setError("");
     try {
-      const started = await startProviderHubInstall(item.id);
+      const confirmation = operation === "install"
+        ? null
+        : await prepareProviderRuntimeMutation(item.id, operation);
+      if (
+        operation === "repair"
+        && !window.confirm(t("provider.hub.runtimeRepairConfirm"))
+      ) {
+        endMutation(item.id);
+        return;
+      }
+      if (
+        operation === "uninstall"
+        && !window.confirm(t("provider.hub.runtimeUninstallConfirm"))
+      ) {
+        endMutation(item.id);
+        return;
+      }
+      const started = operation === "repair"
+        ? await repairProviderRuntime(item.id, confirmation!)
+        : operation === "uninstall"
+          ? await uninstallProviderRuntime(item.id, confirmation!)
+          : await startProviderHubInstall(item.id);
       let task = started.task;
       setHubState((current) => applyProviderHubInstallStart(current.catalog, current.installTasks, started));
       endMutation(item.id);
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + (item.id === "hcs.comfyui-runtime" ? 60 * 60_000 : 60_000);
       while (!TERMINAL_TASKS.has(task.state)) {
         if (Date.now() >= deadline) throw new Error(t("provider.hub.installTimeout"));
         await wait(120);
@@ -175,6 +221,45 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
         // Keep the old install/repair action disabled until an authoritative
         // snapshot can resolve an ambiguous start response.
       }
+    }
+  }
+
+  async function install(item: ProviderHubItem): Promise<void> {
+    return mutateRuntime(item, "install");
+  }
+
+  async function runtimeLifecycle(item: ProviderHubItem, action: "start" | "stop" | "force-stop"): Promise<void> {
+    if (!beginMutation(item.id)) return;
+    setError("");
+    try {
+      if (action === "start") await startProviderRuntime(item.id);
+      else await stopProviderRuntime(item.id, action === "force-stop");
+      await reload();
+    } catch (nextError) {
+      setError(errorText(nextError, t, t(`provider.hub.runtime${action === "start" ? "Start" : "Stop"}Failed`)));
+      await reload().catch(() => undefined);
+    } finally {
+      endMutation(item.id);
+    }
+  }
+
+  async function showRuntimeLogs(item: ProviderHubItem): Promise<void> {
+    setError("");
+    try {
+      const next = await fetchProviderRuntimeLogs(item.id);
+      setRuntimeLogs((current) => ({ ...current, [item.id]: { install: next.install, runtime: next.runtime } }));
+    } catch (nextError) {
+      setError(errorText(nextError, t, t("provider.hub.runtimeLogsFailed")));
+    }
+  }
+
+  async function requestRuntimeDirectory(item: ProviderHubItem): Promise<void> {
+    setError("");
+    try {
+      await fetchProviderRuntimeDirectoryAction(item.id);
+      setRuntimeNotices((current) => ({ ...current, [item.id]: t("provider.hub.runtimeDirectoryNotice") }));
+    } catch (nextError) {
+      setError(errorText(nextError, t, t("provider.hub.runtimeDirectoryFailed")));
     }
   }
 
@@ -289,6 +374,8 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
     const copy = lang === "zh" ? ADVANCED_PROVIDER_COPY[item.id] : undefined;
     const displayName = copy ? t(`provider.hub.advancedProvider.${copy.name}`) : item.name;
     const displayDescription = copy ? t(`provider.hub.advancedProvider.${copy.description}`) : item.description;
+    const logs = runtimeLogs[item.id];
+    const runtimeNotice = runtimeNotices[item.id];
     return (
       <article className={`provider-hub-card status-${item.status}`} key={item.id}>
         <header>
@@ -315,14 +402,39 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
             {task.error && <p className="provider-hub-error-detail">{localizedTaskError === taskErrorKey ? task.error.message : localizedTaskError}</p>}
           </section>
         )}
+        {item.runtime_details && (
+          <section className="provider-hub-runtime-summary" aria-label={t("provider.hub.runtimeSummary")}>
+            <p><strong>{t("provider.hub.runtimeBoundary")}</strong> {item.runtime_details.no_model_message}</p>
+            <p>{t("provider.hub.runtimeDownload", { size: formatBytes(item.runtime_details.estimated_download_bytes) })}</p>
+            <p>{t("provider.hub.runtimePlatform", { support: item.runtime_details.platform_support })}</p>
+            {item.runtime_details.modified && <p className="provider-hub-warning"><AlertTriangle size={16} aria-hidden="true" />{t("provider.hub.runtimeModified")}</p>}
+            <p className="provider-hub-phase2c">{t("provider.hub.runtimeNextStep")}</p>
+          </section>
+        )}
+        {runtimeNotice && <p className="provider-hub-runtime-notice" role="status">{runtimeNotice}</p>}
+        {logs && (
+          <details className="provider-hub-runtime-logs" open>
+            <summary>{t("provider.hub.runtimeLogs")}</summary>
+            <pre>{[...logs.install, ...logs.runtime].join("\n") || t("provider.hub.runtimeLogsEmpty")}</pre>
+          </details>
+        )}
         {!item.license.clear && <p className="provider-hub-warning"><AlertTriangle size={16} aria-hidden="true" />{t("provider.hub.licenseUnknown")}</p>}
         <div className="action-row provider-hub-actions">
           {hasProviderHubAction(item, "install") && <button type="button" className="primary" disabled={pendingMutationIds.has(item.id) || Boolean(task && !TERMINAL_TASKS.has(task.state))} onClick={() => void install(item)}><Download size={16} />{t("provider.hub.install")}</button>}
           {hasProviderHubAction(item, "repair") && <button type="button" className="primary" disabled={pendingMutationIds.has(item.id) || Boolean(task && !TERMINAL_TASKS.has(task.state))} onClick={() => void install(item)}>{t("provider.hub.repair")}</button>}
+          {hasProviderHubAction(item, "install_runtime") && <button type="button" className="primary" disabled={pendingMutationIds.has(item.id)} onClick={() => void mutateRuntime(item, "install")}><Download size={16} />{t("provider.hub.runtimeInstall")}</button>}
+          {hasProviderHubAction(item, "start_runtime") && <button type="button" className="primary" disabled={pendingMutationIds.has(item.id)} onClick={() => void runtimeLifecycle(item, "start")}>{t("provider.hub.runtimeStart")}</button>}
+          {hasProviderHubAction(item, "stop_runtime") && <button type="button" className="secondary" disabled={pendingMutationIds.has(item.id)} onClick={() => void runtimeLifecycle(item, "stop")}>{t("provider.hub.runtimeStop")}</button>}
+          {hasProviderHubAction(item, "force_stop_runtime") && <button type="button" className="danger-button" disabled={pendingMutationIds.has(item.id)} onClick={() => void runtimeLifecycle(item, "force-stop")}>{t("provider.hub.runtimeForceStop")}</button>}
+          {hasProviderHubAction(item, "repair_runtime") && <button type="button" className="secondary" disabled={pendingMutationIds.has(item.id)} onClick={() => void mutateRuntime(item, "repair")}>{t("provider.hub.runtimeRepair")}</button>}
+          {hasProviderHubAction(item, "uninstall_runtime") && <button type="button" className="danger-button" disabled={pendingMutationIds.has(item.id)} onClick={() => void mutateRuntime(item, "uninstall")}>{t("provider.hub.runtimeUninstall")}</button>}
           {hasProviderHubAction(item, "cancel_install") && task && !TERMINAL_TASKS.has(task.state) && <button type="button" className="secondary" disabled={!task.cancellable || task.cancel_requested} onClick={() => void cancel(item)}>{t("provider.hub.cancel")}</button>}
           {hasProviderHubAction(item, "configure") && <button type="button" className="primary" onClick={() => item.id === "hcs.online-image-high-quality" ? void openOnlineConfig() : (onClose(), onOpenSettings())}>{t("provider.hub.configure")}</button>}
           {hasProviderHubAction(item, "test_connection") && item.id === "hcs.online-image-high-quality" && <button type="button" className="secondary" disabled={configBusy} onClick={() => void testConnection()}>{t("provider.hub.test")}</button>}
           {hasProviderHubAction(item, "check_health") && <button type="button" className="secondary" onClick={() => void health(item)}>{t("provider.hub.health")}</button>}
+          {hasProviderHubAction(item, "check_runtime") && <button type="button" className="secondary" disabled={pendingMutationIds.has(item.id)} onClick={() => void health(item)}>{t("provider.hub.runtimeCheck")}</button>}
+          {hasProviderHubAction(item, "view_runtime_logs") && <button type="button" className="secondary" onClick={() => void showRuntimeLogs(item)}>{t("provider.hub.runtimeViewLogs")}</button>}
+          {hasProviderHubAction(item, "open_runtime_directory") && <button type="button" className="secondary" onClick={() => void requestRuntimeDirectory(item)}>{t("provider.hub.runtimeDirectory")}</button>}
           {hasProviderHubAction(item, "disable") && item.id === "hcs.online-image-high-quality" && <button type="button" className="secondary" onClick={() => void toggleOnline(item, false)}>{t("provider.hub.disable")}</button>}
           {hasProviderHubAction(item, "enable") && item.id === "hcs.online-image-high-quality" && <button type="button" className="secondary" onClick={() => void toggleOnline(item, true)}>{t("provider.hub.enable")}</button>}
           {projectUrl && hasProviderHubAction(item, "open_project") && <a className="secondary button-link" href={projectUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} />{t("provider.hub.project")} · {targetHost(projectUrl)}</a>}
@@ -335,6 +447,8 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
             {copy && <div><dt>{t("provider.hub.originalDescription")}</dt><dd>{item.description}</dd></div>}
             <div><dt>{t("provider.hub.type")}</dt><dd>{item.provider_type}</dd></div>
             <div><dt>{t("provider.hub.version")}</dt><dd>{item.version ?? "—"} · {item.update_channel}</dd></div>
+            {item.publisher && <div><dt>{t("provider.hub.publisher")}</dt><dd>{item.publisher}</dd></div>}
+            {item.runtime_details && <div><dt>{t("provider.hub.runtimeCommit")}</dt><dd>{item.runtime_details.source_commit}</dd></div>}
             <div><dt>{t("provider.hub.capabilities")}</dt><dd>{item.capabilities.join(", ")}</dd></div>
             <div><dt>{t("provider.hub.license")}</dt><dd>{licenseUrl ? <a href={licenseUrl} target="_blank" rel="noopener noreferrer">{item.license.name ?? t("provider.hub.licenseUnknownShort")} · {targetHost(licenseUrl)}</a> : item.license.name ?? t("provider.hub.licenseUnknownShort")}</dd></div>
             <div><dt>{t("provider.hub.registrySource")}</dt><dd>{item.registry_source}</dd></div>
@@ -352,6 +466,7 @@ export function ProviderHubDialog({ onClose, onOpenSettings }: { onClose: () => 
               <span>Health Check · {item.capability_package.healthcheck}</span>
             </div>
           )}
+          {item.id === "hcs.comfyui-runtime" && <p className="provider-hub-runtime-notice">{t("provider.hub.runtimeAttribution")}</p>}
           {item.technical_error && <pre>{JSON.stringify(item.technical_error, null, 2)}</pre>}
         </details>
       </article>

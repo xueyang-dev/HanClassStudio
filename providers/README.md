@@ -17,3 +17,14 @@ checksum. The real Hub task runner copies it through isolated staging, validates
 its Runtime/Model Package/Workflow Pack declarations, commits it atomically,
 and runs deterministic health/smoke checks. It is not an image model and its
 successful installation must not be presented as third-party model execution.
+
+`comfyui/runtime-manifest.v1.json` is a different, code-owned Phase 2B Runtime
+contract. It pins the official ComfyUI project to a full commit, exact archive
+URL/size/SHA-256/root, full extracted-tree and critical-file identities,
+license, archive budgets, fixed launch boundary, platform matrix, and an
+isolated dependency lock. The
+manifest contains data only and cannot add commands, models, workflows, custom
+nodes, or remote sources. `comfyui/locks/comfyui-macos-arm64-py311.lock` is the
+generated dependency inventory for the single experimental macOS Apple Silicon
+adapter. See `docs/comfyui-runtime-phase-2b.md` for source attribution, GPL
+obligations, security, lifecycle, testing, and explicit non-goals.

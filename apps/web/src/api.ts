@@ -17,6 +17,7 @@ import type {
   ProviderHubInstallStartResponse,
   ProviderHubInstallTask,
   ProviderHubItem,
+  RuntimeOperationConfirmation,
   ProviderRefreshTask,
   PublicOnlineProviderConfig,
   ProjectState,
@@ -363,8 +364,72 @@ export async function startProviderHubInstall(packageId: string): Promise<Provid
   return request<ProviderHubInstallStartResponse>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install`, { method: "POST" });
 }
 
+export async function prepareProviderRuntimeMutation(
+  packageId: string,
+  operation: "repair" | "uninstall"
+): Promise<RuntimeOperationConfirmation> {
+  return request<RuntimeOperationConfirmation>(
+    `/api/providers/hub/packages/${encodeURIComponent(packageId)}/prepare-${operation}`,
+    { method: "POST" }
+  );
+}
+
+async function mutateProviderRuntime(
+  packageId: string,
+  operation: "repair" | "uninstall",
+  confirmation: RuntimeOperationConfirmation
+): Promise<ProviderHubInstallStartResponse> {
+  return request<ProviderHubInstallStartResponse>(
+    `/api/providers/hub/packages/${encodeURIComponent(packageId)}/${operation}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmation_token: confirmation.confirmation_token,
+        expected_runtime_identity: confirmation.summary.installation_identity,
+        preserve_models: true
+      })
+    }
+  );
+}
+
+export async function repairProviderRuntime(
+  packageId: string,
+  confirmation: RuntimeOperationConfirmation
+): Promise<ProviderHubInstallStartResponse> {
+  return mutateProviderRuntime(packageId, "repair", confirmation);
+}
+
+export async function uninstallProviderRuntime(
+  packageId: string,
+  confirmation: RuntimeOperationConfirmation
+): Promise<ProviderHubInstallStartResponse> {
+  return mutateProviderRuntime(packageId, "uninstall", confirmation);
+}
+
+export async function startProviderRuntime(packageId: string): Promise<ProviderHubItem> {
+  return request<ProviderHubItem>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/start`, { method: "POST" });
+}
+
+export async function stopProviderRuntime(packageId: string, force = false): Promise<ProviderHubItem> {
+  const action = force ? "force-stop" : "stop";
+  return request<ProviderHubItem>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/${action}`, { method: "POST" });
+}
+
+export async function fetchProviderRuntimeLogs(packageId: string): Promise<{ package_id: string; install: string[]; runtime: string[] }> {
+  return request<{ package_id: string; install: string[]; runtime: string[] }>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/logs`);
+}
+
+export async function fetchProviderRuntimeDirectoryAction(packageId: string): Promise<{ action: string; runtime_id: string }> {
+  return request<{ action: string; runtime_id: string }>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/directory`);
+}
+
 export async function fetchProviderHubInstall(taskId: string): Promise<ProviderHubInstallTask> {
   return request<ProviderHubInstallTask>(`/api/providers/hub/install-tasks/${encodeURIComponent(taskId)}`);
+}
+
+export async function fetchProviderHubLatestInstall(packageId: string): Promise<ProviderHubInstallTask> {
+  return request<ProviderHubInstallTask>(`/api/providers/hub/packages/${encodeURIComponent(packageId)}/install-task`);
 }
 
 export async function cancelProviderHubInstall(taskId: string): Promise<ProviderHubInstallStartResponse> {

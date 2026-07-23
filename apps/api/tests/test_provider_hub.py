@@ -19,6 +19,13 @@ import hcs_api.provider_hub as hub
 import hcs_api.provider_registry as registry
 import hcs_api.storage as storage
 from hcs_api.ffmpeg_video import FfmpegCapability
+from hcs_api.comfyui_runtime import (
+    ComfyUIRuntimeError,
+    RuntimeHealthSnapshot,
+    RuntimeOperationConfirmation,
+    RuntimeOperationSummary,
+    RuntimeSnapshot,
+)
 from hcs_api.main import app
 from hcs_api.models import ImageProviderSettings, ProviderSettings, SafeValidationErrorEnvelope
 
@@ -61,14 +68,37 @@ def _wait_refresh(client: TestClient, task_id: str, timeout: float = 5) -> dict:
     raise AssertionError("refresh task did not finish")
 
 
+def _runtime_snapshot(status: str, *, installed: bool) -> RuntimeSnapshot:
+    if not installed:
+        actions = ["install_runtime", "view_runtime_logs", "open_runtime_directory"]
+    elif status == "runtime_ready":
+        actions = ["stop_runtime", "force_stop_runtime", "check_runtime", "view_runtime_logs", "open_runtime_directory"]
+    else:
+        actions = ["start_runtime", "check_runtime", "repair_runtime", "uninstall_runtime", "view_runtime_logs", "open_runtime_directory"]
+    return RuntimeSnapshot(
+        status=status,
+        installed=installed,
+        runtime_ready=status == "runtime_ready",
+        version="0.28.0",
+        source_commit="700821e1364eaab0e8f21c538a2131719fec57bf",
+        platform_adapter="test_adapter",
+        platform_support="experimental",
+        compatible=True,
+        available_actions=actions,
+        estimated_download_bytes=11611291,
+    )
+
+
 def test_hub_catalog_separates_domain_layers_and_actions(tmp_path, monkeypatch) -> None:
     client = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(hub, "runtime_snapshot", lambda **_kwargs: _runtime_snapshot("not_installed", installed=False))
     response = client.get("/api/providers/hub")
     assert response.status_code == 200
     body = response.json()
     assert body["schema"] == "hanclassstudio.provider_hub.v1"
     featured = {item["id"]: item for item in body["providers"] if item["recommended"]}
     assert set(featured) == {
+        "hcs.comfyui-runtime",
         "hcs.teaching-video-basic",
         "hcs.local-image-basic",
         "hcs.online-image-high-quality",
@@ -83,6 +113,230 @@ def test_hub_catalog_separates_domain_layers_and_actions(tmp_path, monkeypatch) 
     assert online["status"] == "not_configured"
     assert "test_connection" not in online["available_actions"]
     assert online["source_links"]["api_application_url"].startswith("https://")
+    comfyui = featured["hcs.comfyui-runtime"]
+    assert comfyui["status"] == "not_installed"
+    assert comfyui["ready"] is False
+    assert comfyui["runtime_ready"] is False
+    assert comfyui["generation_ready"] is False
+    assert comfyui["capabilities"] == ["local_image_runtime"]
+    assert comfyui["capability_package"]["model_packages"] == []
+    assert comfyui["capability_package"]["workflow_packs"] == []
+    assert "install_runtime" in comfyui["available_actions"]
+
+
+def test_comfyui_runtime_install_task_and_failure_are_backend_authoritative(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    state = {"status": "not_installed", "installed": False}
+    monkeypatch.setattr(hub, "runtime_snapshot", lambda **_kwargs: _runtime_snapshot(state["status"], installed=state["installed"]))
+
+    def install(_task_id, *, operation, progress, cancel, confirmation):
+        assert operation == "install"
+        assert confirmation is None
+        cancel()
+        progress("inspecting_archive", 32, "safe scan", None, None)
+        progress("installing_dependencies", 78, "fixed dependencies", None, None)
+        state.update(status="stopped", installed=True)
+
+    monkeypatch.setattr(hub, "run_runtime_install", install)
+    started = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/install")
+    assert started.status_code == 200
+    assert started.json()["task"]["operation"] == "install"
+    assert started.json()["provider"]["status"] == "installing"
+    assert started.json()["provider"]["available_actions"] == ["cancel_install", "view_runtime_logs"]
+    task = _wait_install(client, started.json()["task"]["task_id"])
+    assert task["state"] == "completed"
+    assert task["phase"] == "completed"
+    item = next(item for item in client.get("/api/providers/hub").json()["providers"] if item["id"] == "hcs.comfyui-runtime")
+    assert item["status"] == "stopped"
+    assert item["installed"] is True
+    assert item["ready"] is False
+    assert item["runtime_ready"] is False
+    assert item["generation_ready"] is False
+    assert "start_runtime" in item["available_actions"]
+
+    state.update(status="not_installed", installed=False)
+
+    def unsafe(_task_id, **_kwargs):
+        raise ComfyUIRuntimeError("unsafe_archive", "archive was rejected")
+
+    monkeypatch.setattr(hub, "run_runtime_install", unsafe)
+    failed_start = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/install")
+    failed = _wait_install(client, failed_start.json()["task"]["task_id"])
+    assert failed["state"] == "failed"
+    assert failed["error"]["code"] == "unsafe_archive"
+    assert state["installed"] is False
+
+
+def test_comfyui_runtime_lifecycle_repair_uninstall_logs_and_directory_contract(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    state = {"status": "stopped", "installed": True}
+    monkeypatch.setattr(hub, "runtime_snapshot", lambda **_kwargs: _runtime_snapshot(state["status"], installed=state["installed"]))
+    monkeypatch.setattr(hub, "start_runtime", lambda: state.update(status="runtime_ready"))
+    monkeypatch.setattr(hub, "stop_runtime", lambda **_kwargs: state.update(status="stopped"))
+    monkeypatch.setattr(hub, "check_runtime_health", lambda: RuntimeHealthSnapshot(
+        healthy=state["status"] == "runtime_ready",
+        checked_at="2026-07-22T00:00:00+00:00",
+        status=state["status"],
+    ))
+    monkeypatch.setattr(hub, "comfyui_log_summary", lambda kind: [f"{kind} log"])
+    monkeypatch.setattr(hub, "runtime_directory_contract", lambda: {"action": "open_managed_runtime_directory", "runtime_id": "comfyui"})
+    summaries = {
+        operation: RuntimeOperationSummary(
+            operation=operation,
+            version="0.28.0",
+            installation_identity=("a" if operation == "repair" else "b") * 64,
+            tree_identity="c" * 64,
+            modified=False,
+            replaces_runtime_files=operation == "repair",
+        )
+        for operation in ("repair", "uninstall")
+    }
+
+    def prepare(operation):
+        return RuntimeOperationConfirmation(
+            summary=summaries[operation],
+            confirmation_token=("d" if operation == "repair" else "e") * 64,
+            expires_at="2026-07-22T00:05:00+00:00",
+        )
+
+    monkeypatch.setattr(hub, "prepare_runtime_operation", prepare)
+    monkeypatch.setattr(
+        hub,
+        "consume_runtime_operation_confirmation",
+        lambda operation, _token, _identity: summaries[operation],
+    )
+
+    started = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/start")
+    assert started.status_code == 200
+    assert started.json()["status"] == "runtime_ready"
+    assert started.json()["runtime_ready"] is True
+    assert started.json()["generation_ready"] is False
+    checked = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/health")
+    assert checked.status_code == 200
+    stopped = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/stop")
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "stopped"
+
+    def repair(_task_id, *, operation, progress, cancel, confirmation):
+        assert operation == "repair"
+        assert confirmation == summaries["repair"]
+        cancel()
+        progress("validating_runtime", 86, "validated", None, None)
+
+    monkeypatch.setattr(hub, "run_runtime_install", repair)
+    missing_confirmation = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/repair")
+    assert missing_confirmation.status_code == 422
+    repair_confirmation = client.post(
+        "/api/providers/hub/packages/hcs.comfyui-runtime/prepare-repair"
+    ).json()
+    repaired = client.post(
+        "/api/providers/hub/packages/hcs.comfyui-runtime/repair",
+        json={
+            "confirmation_token": repair_confirmation["confirmation_token"],
+            "expected_runtime_identity": repair_confirmation["summary"]["installation_identity"],
+            "preserve_models": True,
+        },
+    )
+    assert _wait_install(client, repaired.json()["task"]["task_id"])["state"] == "completed"
+
+    def uninstall(_task_id, *, progress, cancel, confirmation):
+        assert confirmation == summaries["uninstall"]
+        cancel()
+        progress("uninstalling_runtime", 55, "managed runtime only", None, None)
+        state.update(status="not_installed", installed=False)
+
+    monkeypatch.setattr(hub, "run_runtime_uninstall", uninstall)
+    uninstall_confirmation = client.post(
+        "/api/providers/hub/packages/hcs.comfyui-runtime/prepare-uninstall"
+    ).json()
+    removed = client.post(
+        "/api/providers/hub/packages/hcs.comfyui-runtime/uninstall",
+        json={
+            "confirmation_token": uninstall_confirmation["confirmation_token"],
+            "expected_runtime_identity": uninstall_confirmation["summary"]["installation_identity"],
+            "preserve_models": True,
+        },
+    )
+    assert _wait_install(client, removed.json()["task"]["task_id"])["state"] == "completed"
+    assert state["installed"] is False
+
+    logs = client.get("/api/providers/hub/packages/hcs.comfyui-runtime/logs")
+    assert logs.json() == {"package_id": "hcs.comfyui-runtime", "install": ["install log"], "runtime": ["runtime log"]}
+    directory = client.get("/api/providers/hub/packages/hcs.comfyui-runtime/directory")
+    assert directory.json() == {"action": "open_managed_runtime_directory", "runtime_id": "comfyui"}
+
+
+def test_comfyui_runtime_rejects_parallel_mutations(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    state = {"status": "not_installed", "installed": False}
+    release = threading.Event()
+    monkeypatch.setattr(hub, "runtime_snapshot", lambda **_kwargs: _runtime_snapshot(state["status"], installed=state["installed"]))
+
+    def blocked(_task_id, *, operation, progress, cancel, confirmation):
+        assert confirmation is None
+        progress("downloading", 8, "waiting", 0, 100)
+        release.wait(2)
+        cancel()
+
+    monkeypatch.setattr(hub, "run_runtime_install", blocked)
+    first = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/install")
+    assert first.status_code == 200
+    recovered = client.get("/api/providers/hub/packages/hcs.comfyui-runtime/install-task")
+    assert recovered.status_code == 200
+    assert recovered.json()["task_id"] == first.json()["task"]["task_id"]
+    assert recovered.json()["state"] in {"queued", "running"}
+    duplicate = client.post("/api/providers/hub/packages/hcs.comfyui-runtime/install")
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "task_conflict"
+    release.set()
+    assert _wait_install(client, first.json()["task"]["task_id"])["state"] == "completed"
+
+
+def test_interrupted_repair_rollback_is_not_reported_as_completed(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    now = "2026-07-22T00:00:00+00:00"
+    task = hub.ProviderInstallTask(
+        task_id="interrupted-repair",
+        package_id="hcs.comfyui-runtime",
+        operation="repair",
+        state="running",
+        phase="publishing_runtime",
+        message="repairing",
+        started_at=now,
+        updated_at=now,
+        log_ref="provider-hub-runtime:comfyui",
+    )
+    hub._save_install_task(task)
+    monkeypatch.setattr(hub, "recover_comfyui_installations", lambda: ["transaction"])
+    monkeypatch.setattr(hub, "runtime_snapshot", lambda **_kwargs: _runtime_snapshot("stopped", installed=True))
+    monkeypatch.setattr(hub, "runtime_transaction_phase", lambda _task_id: "rolled_back")
+
+    recovered = hub.latest_install_task("hcs.comfyui-runtime", recover_interrupted=True)
+
+    assert recovered is not None
+    assert recovered.state == "failed"
+    assert recovered.phase == "failed"
+    assert recovered.recoverable_actions == ["repair_runtime"]
+
+
+def test_comfyui_runtime_openapi_matches_lifecycle_responses(tmp_path, monkeypatch) -> None:
+    client = _isolate(tmp_path, monkeypatch)
+    spec = client.get("/openapi.json").json()
+    paths = spec["paths"]
+
+    for path, method, schema in (
+        ("/api/providers/hub/packages/{package_id}/runtime", "get", "ProviderHubItem"),
+        ("/api/providers/hub/packages/{package_id}/start", "post", "ProviderHubItem"),
+        ("/api/providers/hub/packages/{package_id}/stop", "post", "ProviderHubItem"),
+        ("/api/providers/hub/packages/{package_id}/force-stop", "post", "ProviderHubItem"),
+        ("/api/providers/hub/packages/{package_id}/repair", "post", "ProviderInstallStartResponse"),
+        ("/api/providers/hub/packages/{package_id}/uninstall", "post", "ProviderInstallStartResponse"),
+        ("/api/providers/hub/packages/{package_id}/install-task", "get", "ProviderInstallTask"),
+        ("/api/providers/hub/packages/{package_id}/logs", "get", "RuntimeLogsResponse"),
+        ("/api/providers/hub/packages/{package_id}/directory", "get", "RuntimeDirectoryAction"),
+    ):
+        response_schema = paths[path][method]["responses"]["200"]["content"]["application/json"]["schema"]
+        assert response_schema["$ref"] == f"#/components/schemas/{schema}"
 
 
 def test_video_package_uses_full_capability_probe_not_executable_presence(monkeypatch) -> None:

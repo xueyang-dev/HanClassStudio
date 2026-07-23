@@ -1,0 +1,194 @@
+{
+  "schema": "hanclassstudio.comfyui_runtime_manifest.v1",
+  "package_id": "hcs.comfyui-runtime",
+  "runtime_id": "comfyui",
+  "version": "0.28.0",
+  "release_tag": "v0.28.0",
+  "source_commit": "700821e1364eaab0e8f21c538a2131719fec57bf",
+  "publisher": "Comfy Org",
+  "source": {
+    "project_url": "https://github.com/Comfy-Org/ComfyUI",
+    "release_url": "https://github.com/Comfy-Org/ComfyUI/releases/tag/v0.28.0",
+    "archive_url": "https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/700821e1364eaab0e8f21c538a2131719fec57bf",
+    "archive_sha256": "326eb47c6f8f2bdd61a87095238250953f0e5bae61fbae13b68a8eec00e45c7a",
+    "source_tree_sha256": "9a0930b7b26cf02e9a6392d340309f35ce88f4506d365374c95cd1f98caaa5a6",
+    "archive_size": 11611291,
+    "archive_type": "tar.gz",
+    "archive_root": "ComfyUI-700821e1364eaab0e8f21c538a2131719fec57bf"
+  },
+  "license": {
+    "spdx": "GPL-3.0-only",
+    "name": "GNU General Public License v3.0",
+    "url": "https://github.com/Comfy-Org/ComfyUI/blob/700821e1364eaab0e8f21c538a2131719fec57bf/LICENSE",
+    "bundled_file": "LICENSE",
+    "bundled_file_sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "redistribution_review": "approved_with_gpl_obligations"
+  },
+  "archive_policy": {
+    "max_compressed_bytes": 16777216,
+    "max_entries": 5000,
+    "max_total_file_bytes": 268435456,
+    "max_file_bytes": 67108864,
+    "max_path_bytes": 512,
+    "max_depth": 12,
+    "max_compression_ratio": 100,
+    "reject_links": true,
+    "reject_special_files": true,
+    "reject_nested_archives": true,
+    "require_nfc_names": true,
+    "reject_casefold_collisions": true
+  },
+  "critical_files": {
+    "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    "requirements.txt": "9b70c3536a599720335e1c175f4f02fe819781d209cc504525bfe4322e7f746b",
+    "pyproject.toml": "5041c36309166798ad5cd071ec9ac30e2d9ec1b35a526868eddc1eda5a35cb9c",
+    "main.py": "0ef328f3a6694d800789200e64c3852f38e1a7318bd02588fbf718431905f02c",
+    "comfy/cli_args.py": "720b4773a3de843ff18383a45b9d580dc87474e6f71af4070f70af620fd28d81",
+    "comfyui_version.py": "c1b9262c85717d019e3e6f1a08a59a199dcd1ebf16912bb29307b3dbc1088d80"
+  },
+  "custom_node_baseline": {
+    "custom_nodes/example_node.py.example": "e8058ca7a48710f3973fcfb6815607262100e7e94a00240244ebbaafc875c7e6",
+    "custom_nodes/websocket_image_save.py": "3727e903705dba69924c390775a0d6aedfeb717400800e08793fcb77a8c331da"
+  },
+  "python": {
+    "implementation": "cpython",
+    "version": "3.11.13",
+    "environment_manager": "uv",
+    "environment_manager_version": "0.11.26",
+    "lock_file": "providers/comfyui/locks/comfyui-macos-arm64-py311.lock",
+    "lock_sha256": "926e90e5a1cb0bd81c783061880fd74ff35ded94c3132bda9862fd9e3fb61df0",
+    "requirements_sha256": "9b70c3536a599720335e1c175f4f02fe819781d209cc504525bfe4322e7f746b",
+    "toolchain_status": "ready",
+    "uv_artifact": {
+      "relative_path": "uv",
+      "source_url": "https://github.com/astral-sh/uv/releases/download/0.11.26/uv-aarch64-apple-darwin.tar.gz",
+      "archive_size": 21974303,
+      "archive_sha256": "8f7fbf1708399b921857bce71e1d60f0d3ccf52a30caebc1c1a2f175dce13ab6",
+      "archive_type": "tar.gz",
+      "archive_root": "uv-aarch64-apple-darwin",
+      "operating_system": "macos",
+      "architecture": "arm64",
+      "license_expression": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "source_url": "https://raw.githubusercontent.com/astral-sh/uv/0.11.26/LICENSE-MIT",
+          "sha256": "860e3d7a86b84e6a7012c7a635fc64df475cebc6cce34dfeb73a5982ec58176c"
+        },
+        {
+          "source_url": "https://raw.githubusercontent.com/astral-sh/uv/0.11.26/LICENSE-APACHE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ],
+      "license_review": "approved",
+      "version": "0.11.26",
+      "executable_relative_path": "uv",
+      "executable_size": 50659616,
+      "executable_sha256": "c9300ed8425e2c85230259a172066a32b475bc56f7ebe907783b2459159ea554"
+    },
+    "python_runtime": {
+      "relative_path": "python",
+      "source_url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250712/cpython-3.11.13%2B20250712-aarch64-apple-darwin-install_only.tar.gz",
+      "archive_size": 18065921,
+      "archive_sha256": "882f3735f7c2c856aa004879d7b7e07250df67acc297f578206aba0d46582b57",
+      "archive_type": "tar.gz",
+      "archive_root": "python",
+      "operating_system": "macos",
+      "architecture": "arm64",
+      "license_expression": "MPL-2.0 AND PSF-2.0",
+      "license_files": [
+        {
+          "source_url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20250712/LICENSE",
+          "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        },
+        {
+          "source_url": "https://raw.githubusercontent.com/python/cpython/v3.11.13/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+        }
+      ],
+      "license_review": "approved",
+      "implementation": "cpython",
+      "version": "3.11.13",
+      "executable_relative_path": "bin/python3.11",
+      "executable_size": 50152,
+      "executable_sha256": "7d9408933a180d67ea91b84700a5059002e8fa50f729a4ff68f2f3e87daf4e82",
+      "tree_size": 50573291,
+      "tree_sha256": "c44da18b9d77d2cc7c14d6ad3ac62906a77f51080051c30e6567dba2c26ea4fa",
+      "ignored_symlinks": {
+        "bin/2to3": "2to3-3.11",
+        "bin/idle3": "idle3.11",
+        "bin/pydoc3": "pydoc3.11",
+        "bin/python": "python3.11",
+        "bin/python3": "python3.11",
+        "bin/python3-config": "python3.11-config",
+        "lib/pkgconfig/python3-embed.pc": "python-3.11-embed.pc",
+        "lib/pkgconfig/python3.pc": "python-3.11.pc",
+        "share/man/man1/python3.1": "python3.11.1"
+      }
+    },
+    "wheelhouse": {
+      "relative_path": "wheels",
+      "artifact_lock_file": "providers/comfyui/locks/comfyui-macos-arm64-py311-wheels.json",
+      "artifact_lock_sha256": "bc0599f1953a502359490698d601427eb0875970aa6e93d8f22b700c6902b076",
+      "package_count": 83,
+      "size": 621931539,
+      "tree_sha256": "8f8e0a3f582a49d93b29e9a87d2b51357b9910480b8c9eb8a1432f04dd6c76cb",
+      "source_allowlist": [
+        "https://files.pythonhosted.org/packages/"
+      ],
+      "download_policy": "strict_allowlist",
+      "wheel_only": true,
+      "allow_sdist": false,
+      "allow_editable": false,
+      "allow_build_backend": false,
+      "allow_dependency_resolution": false
+    }
+  },
+  "launch": {
+    "entrypoint": "main.py",
+    "listen_host": "127.0.0.1",
+    "port_min": 8188,
+    "port_max": 8288,
+    "fixed_arguments": [
+      "--listen",
+      "127.0.0.1",
+      "--disable-auto-launch",
+      "--disable-all-custom-nodes",
+      "--disable-api-nodes",
+      "--disable-metadata"
+    ],
+    "health_path": "/system_stats",
+    "startup_timeout_seconds": 120,
+    "shutdown_timeout_seconds": 15
+  },
+  "platforms": [
+    {
+      "operating_system": "macos",
+      "architecture": "arm64",
+      "adapter": "macos_apple_silicon",
+      "support": "experimental",
+      "install_enabled": true,
+      "minimum_os_version": "14.0"
+    },
+    {
+      "operating_system": "windows",
+      "architecture": "x86_64",
+      "adapter": "windows_nvidia_or_cpu",
+      "support": "contract_only",
+      "install_enabled": false
+    },
+    {
+      "operating_system": "linux",
+      "architecture": "x86_64",
+      "adapter": "linux_nvidia_or_cpu",
+      "support": "contract_only",
+      "install_enabled": false
+    }
+  ],
+  "capability_boundary": {
+    "runtime_only": true,
+    "downloads_models": false,
+    "includes_workflows": false,
+    "allows_custom_nodes": false,
+    "generation_ready": false
+  }
+}
