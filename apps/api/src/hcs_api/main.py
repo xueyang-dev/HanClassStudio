@@ -117,7 +117,6 @@ from .pipeline import render_and_check, run_full_pipeline, write_blueprint_artif
 from .pptx_exporter import export_editable_pptx
 from .storage import (
     PROJECTS_DIR,
-    RUNTIME_DIR,
     bump_project_revision,
     project_revision,
     clear_stale_state,
@@ -1782,7 +1781,7 @@ def render_project(project_id: str, expected_revision: int | None = Query(defaul
             ) from exc
         write_model(project_id, "asset_manifest.json", manifest)
     clear_stale_state(project_id, stages={"profile", "design", "presentation", "media"})
-    report = render_and_check(project_id, root, profile, blueprint, manifest)
+    render_and_check(project_id, root, profile, blueprint, manifest)
     export_created = False
     # A fresh render replaces the render and quality dependencies.  The
     # delivery marker can be cleared only when all four authoritative gate
@@ -1815,7 +1814,7 @@ def run_project_pipeline(project_id: str, expected_revision: int | None = Query(
     try:
         _assert_llm_provider_supported(read_provider_settings())
         _assert_media_provider_ready(read_provider_settings())
-        state = run_full_pipeline(project_id, root, read_provider_settings())
+        run_full_pipeline(project_id, root, read_provider_settings())
         gate_paths = (
             "quality/evidence_alignment_report.json",
             "quality/presentation_readiness_report.json",
@@ -1916,7 +1915,6 @@ def export_project_editable_pptx(project_id: str, force: bool = Query(default=Fa
     bump_project_revision(project_id)
     state = get_project_state(project_id)
     # Read classroom quality report for classroom mode
-    classroom_report = None
     from .storage import read_model as _read
     from .models import ClassroomQualityReport as _CQR
     try:

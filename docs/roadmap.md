@@ -82,18 +82,18 @@ Provider Hub media capability status:
 
 Provider Hub local Runtime status:
 
-- Phase 2B adds a commit- and SHA-256-pinned official ComfyUI `v0.28.0`
-  Runtime with a strict data-only manifest, safe tar boundary, uv-managed
-  CPython 3.11.13 environment, generated hash lock, durable install/repair/
-  uninstall journal, and idempotent crash recovery;
+- Phase 2B defines a commit- and SHA-256-pinned official ComfyUI `v0.28.0`
+  Runtime with a strict data-only manifest, directory-fd safe tar boundary,
+  fixed wheel-only toolchain contract, durable install/repair/uninstall journal,
+  and idempotent crash recovery;
 - the managed process binds only `127.0.0.1`, selects a port in a fixed range,
   persists PID/start-token/executable/argv/nonce ownership, refuses PID-reuse
   mismatches, captures bounded redacted logs, and validates `/system_stats`,
   API-reported identity, reviewed core nodes, and the official custom-node
   baseline;
-- macOS Apple Silicon is the only enabled and still `experimental` adapter;
-  Windows/Linux declarations are contract-only and are not presented as
-  verified;
+- no adapter is currently install-enabled: macOS Apple Silicon remains
+  `experimental` until complete reviewed uv/Python/wheel artifacts are bundled;
+  Windows/Linux declarations are contract-only;
 - Provider Hub keeps Runtime readiness separate from generation readiness:
   no model, workflow, image generation, custom node, ComfyUI Manager, LAN
   binding, arbitrary repository, or system-driver installation is enabled;

@@ -249,7 +249,36 @@ test("ComfyUI Runtime installs, starts, stays model-incomplete, stops, and unins
     status = "stopped";
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(provider()) });
   });
+  const uninstallIdentity = "a".repeat(64);
+  const uninstallToken = "b".repeat(64);
+  await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/prepare-uninstall", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        summary: {
+          operation: "uninstall",
+          runtime_id: "comfyui",
+          version: "0.28.0",
+          installation_identity: uninstallIdentity,
+          tree_identity: "c".repeat(64),
+          modified: false,
+          replaces_runtime_files: false,
+          preserves_models: true,
+          preserves_runtime_data: true,
+          preserves_logs: true,
+        },
+        confirmation_token: uninstallToken,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    });
+  });
   await page.route("**/api/providers/hub/packages/hcs.comfyui-runtime/uninstall", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      confirmation_token: uninstallToken,
+      expected_runtime_identity: uninstallIdentity,
+      preserve_models: true,
+    });
     activeTask = task("comfy-uninstall-e2e", "uninstall", "queued", "preflight", 0);
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ task: activeTask, provider: { ...provider(), status: "installing", available_actions: ["cancel_install", "view_runtime_logs"] } }) });
   });
@@ -281,7 +310,7 @@ test("ComfyUI Runtime installs, starts, stays model-incomplete, stops, and unins
 });
 
 
-test("ComfyUI unsafe archive failure never renders Runtime ready", async ({ page }) => {
+test("ComfyUI archive security fixture never renders Runtime ready", async ({ page }) => {
   const catalog = await (await page.request.get("http://127.0.0.1:8012/api/providers/hub")).json();
   const provider = catalog.providers.find((item) => item.id === "hcs.comfyui-runtime");
   const installableProvider = {

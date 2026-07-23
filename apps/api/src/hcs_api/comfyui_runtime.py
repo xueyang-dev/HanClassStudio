@@ -1047,8 +1047,18 @@ def _run_controlled(
     except OSError as exc:
         raise ComfyUIRuntimeError(error_code, "Controlled ComfyUI environment command failed") from exc
     if persist_ownership:
-        token = _process_start_token(process.pid)
-        group_identity = _process_group_identity(process.pid)
+        token = None
+        group_identity = None
+        identity_deadline = time.monotonic() + 3
+        while (
+            (token is None or group_identity is None)
+            and process.poll() is None
+            and time.monotonic() < identity_deadline
+        ):
+            token = _process_start_token(process.pid)
+            group_identity = _process_group_identity(process.pid)
+            if token is None or group_identity is None:
+                time.sleep(0.02)
         try:
             relative_cwd = cwd.relative_to(_managed_root()).as_posix() or "."
             executable = Path(argv[0])

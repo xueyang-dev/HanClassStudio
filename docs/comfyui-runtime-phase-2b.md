@@ -1,12 +1,14 @@
 # Controlled ComfyUI Runtime — Phase 2B
 
-Phase 2B adds a controlled local ComfyUI **Runtime** to HanClassStudio. It is
+Phase 2B defines a controlled local ComfyUI **Runtime** for HanClassStudio. It is
 infrastructure for a future fixed image Model Package; it is not an image
-generator by itself.
+generator by itself. The current manifest deliberately exposes no installable
+platform because the reviewed uv/Python/wheel artifact set is incomplete.
 
 ```text
 Provider Hub
-→ teacher starts an install task
+→ reviewed adapter/toolchain gate
+→ teacher starts an install task when enabled
 → pinned official source download
 → SHA-256 and archive safety gates
 → isolated fixed Python environment
@@ -61,38 +63,43 @@ source-offer obligations must remain part of release packaging review.
 
 | Platform adapter | Manifest status | Install enabled | Evidence |
 | --- | --- | --- | --- |
-| macOS Apple Silicon | `experimental` | yes | Fixture coverage plus the opt-in real validation recorded below |
+| macOS Apple Silicon | `experimental` | no | Lifecycle and security fixtures only; fixed toolchain artifacts are incomplete |
 | Windows x86_64 NVIDIA/CPU | `contract_only` | no | Contract only; not represented as verified |
 | Linux x86_64 NVIDIA/CPU | `contract_only` | no | Contract only; not represented as verified |
 | Other OS/architecture | `unavailable` | no | No reviewed adapter |
 
-The architecture keeps platform selection explicit, but Phase 2B deliberately
-enables only the platform exercised in the development environment. It does not
+The architecture keeps platform selection explicit. No adapter is currently
+install-enabled. It does not
 install GPU drivers, CUDA Toolkit, DirectML, Homebrew packages, or system
 components. Unsupported platforms receive a stable error and no install action.
 
 ## Isolated Python and dependency policy
 
-The reviewed macOS adapter uses:
+The macOS contract requires:
 
-- uv-managed CPython `3.11.13` under the HanClassStudio Runtime root;
-- uv `0.11.0` or newer, with the actual manager version recorded in the
-  installation provenance;
-- a relocatable virtual environment published with the Runtime;
+- an exact application-bundled uv artifact, including version, source URL,
+  byte length, and SHA-256; `PATH` lookup is forbidden;
+- an exact application-bundled CPython `3.11.13` tree, including platform,
+  architecture, source URL, byte length, tree identity, and executable path;
+- a complete wheelhouse plus an artifact lock containing one exact filename,
+  byte length, and SHA-256 for every direct and transitive dependency;
 - the generated lock
   `providers/comfyui/locks/comfyui-macos-arm64-py311.lock`;
 - lock SHA-256
   `926e90e5a1cb0bd81c783061880fd74ff35ded94c3132bda9862fd9e3fb61df0`;
-- `--require-hashes` and the explicit `https://pypi.org/simple` index;
+- offline, no-index installation with `--require-hashes`,
+  `--only-binary=:all:`, `--no-build-isolation`, and `--no-deps`;
 - a configuration-free uv environment and a small environment-variable
   allowlist;
-- exact post-install Python and package-version comparison with the lock.
+- `UV_PYTHON_DOWNLOADS=never`; no sdist, editable, direct-URL fallback, build
+  backend, or dependency re-resolution;
+- exact post-install Python and package-version comparison with the lock;
 - the installed Python executable SHA-256 recorded and rechecked before start.
 
-The lock was generated from the pinned upstream `requirements.txt` for CPython
-3.11.13 on `aarch64-apple-darwin`. It is the dependency inventory and includes
-artifact hashes. Runtime installation logs record the resolved package names and
-versions without logging the user's environment or private absolute paths.
+The requirements lock is an inventory, not by itself an install authorization.
+Until the separate complete wheel artifact lock and bundled toolchain exist,
+`toolchain_status=unavailable`, macOS installation remains disabled, and no
+online or source-build fallback is permitted.
 
 The installer never uses or modifies the user's global Python, HanClassStudio's
 API virtual environment, or system packages. Repair rebuilds this managed
@@ -120,7 +127,9 @@ before creating archive contents and enforces:
 - no nested archive suffixes;
 - limits on compressed bytes, entries, individual files, expanded bytes, and
   compression ratio;
-- exclusive `O_EXCL`/`O_NOFOLLOW` file creation in a `0700` staging directory;
+- directory-fd-relative traversal from an opened trusted staging root;
+- every directory opened with `O_DIRECTORY | O_NOFOLLOW`, and every output
+  created with dir-fd-relative `O_NOFOLLOW | O_CREAT | O_EXCL`;
 - written byte counts equal to inspected sizes;
 - a second complete `lstat` traversal after extraction;
 - exact critical-file, upstream-license, requirements, and official baseline
@@ -128,10 +137,10 @@ before creating archive contents and enforces:
 - archive hash and size verification again after extraction.
 - exact full extracted-tree fingerprint bound to the reviewed manifest.
 
-The private staging directory and exclusive creation close the relevant
-same-user check/use window; the post-walk and second archive hash detect
-replacement before publication. Any failure removes staging and never marks the
-Runtime installed.
+No extraction write re-resolves an absolute string path. Platforms without the
+required directory-fd semantics are disabled rather than using an unsafe
+fallback. Post-extraction checks are defense in depth, not the control that
+prevents parent-directory replacement.
 
 ## Install journal and crash recovery
 
@@ -163,8 +172,8 @@ Recovery is idempotent and distinguishes the publish crash windows:
   revalidated and state commit is completed;
 - invalid published data restores the previous version or marks
   `repair_required`;
-- an interrupted uninstall resumes deletion of only managed Runtime data and
-  clears its state/journal/logs;
+- an interrupted uninstall resumes deletion only when the installation record,
+  manifest, tree, trusted parent, and directory identities still agree;
 - repeated recovery makes no additional changes.
 
 HTTP Range/resumable download is not implemented. An interrupted download is
@@ -172,9 +181,10 @@ discarded and a retry starts from byte zero.
 
 ## Managed process and network boundary
 
-The Process Supervisor persists `ComfyUIRuntimeProcess`, process state, and
-ownership facts: PID, OS process-start token, exact executable SHA-256, Runtime
-version/root, actual port, one-time nonce, fixed argv digest, and start time.
+The Process Supervisor persists PID, OS process-start token, process-group and
+session IDs, executable and supervisor hashes, working directory, installation
+identity, Runtime version/root, actual port, one-time nonce, supervisor/runtime
+argv digests, listener PID/start token, and start time.
 
 Start is permitted only after full source, custom-node, Python-version, and
 locked-dependency validation. HanClassStudio builds an argv array and uses
@@ -204,21 +214,21 @@ selected port, and waits for identity health before returning ready. The small
 bind/start race is handled by process-exit and API identity checks; a foreign
 service can never satisfy the complete identity contract.
 
-Stop/force-stop requires the PID to match its original start token, exact HCS
-argv, executable hash, Runtime root, port, and nonce. POSIX signals target only
-the owned process group. PID reuse or an edited process record produces
+ComfyUI runs as a child of a small code-owned supervisor that remains the
+independent session/process-group leader. Stop/force-stop requires its PID,
+start token, PGID/SID, cwd, installation and source identities, exact argv,
+executable/supervisor hashes, port, and nonce to agree. POSIX signals target
+only that revalidated group. PID reuse or an edited process record produces
 `runtime_identity_mismatch`; HanClassStudio does not send a signal. It never
 uses process-name matching, `killall`, or another user's ComfyUI process.
 
-Dependency/Python subprocesses also run in their own process group. Task
-cancellation, timeout, and parent-process exceptions terminate that exact group
-before journal recovery proceeds, so an interrupted installer cannot keep
-writing into staging after the API worker exits.
-
-The current shutdown policy permits an owned Runtime to survive an API process
-restart. The next API process can recover it only after the persisted ownership
-checks. Unexpected exit becomes `crashed`; stale/mismatched identity becomes
-`repair_required` and is never silently killed.
+Dependency/Python subprocesses run in their own session and persist a separate
+worker ownership record. Cancellation, timeout, and parent exceptions terminate
+that exact group. On restart, recovery revalidates PID/start token, PGID/SID,
+cwd, executable, argv, and managed-root identity before reclaiming it; a
+mismatch is never signalled. If the Runtime supervisor exits while an owned
+child remains, the next health/snapshot/start path revalidates and reclaims only
+that recorded group. Adjacent processes are outside this contract.
 
 Runtime stdout/stderr is captured by a bounded rotating log. Logs redact the
 HanClassStudio Runtime root, home directory, and common credential forms. APIs
@@ -231,13 +241,16 @@ An explicit health check is more than PID, port, or HTTP 200. It verifies:
 
 1. installation record, manifest-bound full source tree, exact Python, and every locked package;
 2. official baseline `custom_nodes` content and no additions;
-3. live PID ownership and start token;
-4. `/system_stats` JSON shape;
-5. `comfyui_version == 0.28.0`;
-6. API-reported argv equals the nonce-bearing managed argv;
-7. `/object_info` exposes reviewed core nodes `KSampler`,
+3. supervisor PID/start token, PGID/SID, cwd, executable, argv, source, and
+   installation identity;
+4. the target listener is owned by the same process group/session and listens
+   only on `127.0.0.1`, never `0.0.0.0`, `::`, or another interface;
+5. listener PID/start token, cwd, managed-Python identity, and argv;
+6. `/system_stats` JSON shape and `comfyui_version == 0.28.0`;
+7. API-reported argv equals the nonce-bearing managed argv;
+8. `/object_info` exposes reviewed core nodes `KSampler`,
    `CheckpointLoaderSimple`, and `SaveImage`;
-8. actual service port is the persisted managed loopback port.
+9. actual service port is the persisted managed loopback port.
 
 The upstream source at this commit contains two official baseline files in
 `custom_nodes`; “empty directory” would be an incorrect policy. Their exact
@@ -256,8 +269,13 @@ The card's backend-authoritative states include `not_installed`, `installing`,
 `available_actions` is the only action authority.
 
 Lifecycle endpoints cover Runtime detail, install/task/cancel, start, stop,
-force stop, health, repair, uninstall, redacted logs, and the opaque local
-directory action. Install/repair/uninstall/cancel use the common asynchronous
+force stop, health, prepare-repair, prepare-uninstall, repair, uninstall,
+redacted logs, and the opaque local directory action. Repair and uninstall
+require a short-lived one-time backend token bound to operation, Runtime ID,
+installation identity, full current tree identity, modified state, nonce, and
+expiry. Identity changes after preparation invalidate the token. The operations
+then revalidate the same identity inside the mutation lock. Install/repair/
+uninstall/cancel use the common asynchronous
 `{task, provider}` response. Start/stop/health return the updated Provider item.
 OpenAPI response models match these payloads.
 
@@ -268,65 +286,45 @@ technical data. It never embeds the ComfyUI node editor.
 
 ## Repair and uninstall
 
-Repair stops only an owned Runtime, downloads and verifies the pinned source
+When an adapter has a complete reviewed toolchain, repair stops only an owned Runtime, downloads and verifies the pinned source
 again, rebuilds the isolated environment, revalidates it, atomically publishes
 the replacement, runs through the same journal, and retains the previous valid
 version until commit. It does not modify the separate future model directory.
 
-Uninstall verifies/stops the owned process, removes the managed Runtime version,
-managed Python, uv cache, Runtime logs, state, and journal. It deliberately
+Uninstall verifies/stops the owned process and removes only paths authorized by
+the installation record. Runtime logs and data are retained because they are
+outside that record. It deliberately
 preserves project assets, uploads, exports, other ComfyUI installations, user
 Python, and `provider-models/comfyui`. An interrupted uninstall is resumed
 idempotently.
 
 ## Test layers
 
-- Archive unit tests use tiny tar fixtures and cover normal extraction,
-  traversal, absolute/drive/UNC paths, symbolic and hard links, FIFO/special
-  entries, duplicate/case/Unicode collisions, non-NFC names, nested archives,
-  depth/entry/file/expanded/compression limits, hash/size failure, and existing
-  staging refusal.
+- Archive unit tests use project-controlled security regression fixtures and
+  verify rejection plus containment, collision, link/special-file, nesting,
+  depth/entry/file/expanded/compression, identity, and staging invariants.
 - Installer tests cover publish journal phases, cancellation, concurrency,
-  checksum/unsafe failure, backup recovery, published-state reconciliation,
+  checksum/security-invariant failure, backup recovery, published-state reconciliation,
   interrupted uninstall, model/project preservation, and bounded/redacted logs.
-- Process tests use a clearly named fake ComfyUI HTTP server and cover start,
-  loopback/API identity, nonce, core nodes, stop, crash, occupied/full port
-  range, PID reuse protection, external modification, and log rotation.
+- Process tests use a project-controlled ComfyUI HTTP fixture and cover
+  supervisor/group ownership, orphan and worker recovery, adjacent-process
+  preservation, listener ownership/address identity, nonce, core nodes, stop,
+  crash, port conflicts, PID reuse protection, and log rotation.
 - API/UI tests cover action gating and `runtime_ready`/`generation_ready`
   separation.
-- Playwright covers the complete fixture lifecycle and unsafe-archive failure at
+- Playwright covers the complete fixture lifecycle and archive security rejection at
   390 px, including the absence of a generation button.
-- `test_comfyui_real_opt_in.py` is skipped in normal CI. It requires
-  `HCS_RUN_REAL_COMFYUI_RUNTIME=1`, macOS Apple Silicon, uv, network, and 8 GB
-  free disk.
+- `test_comfyui_real_opt_in.py` remains skipped in normal CI. The current
+  manifest disables installation, so it cannot pass until the fixed bundled
+  uv/Python/wheel artifacts are supplied and reviewed.
 
 ## Real validation
 
-The code-frozen opt-in test completed on 2026-07-22. It downloaded the pinned
-official archive, created the fixed environment, started real ComfyUI, verified
-the live API and listener, stopped the owned process, and uninstalled the
-managed Runtime. It did not download a model or generate an image.
-
-| Evidence | Result |
-| --- | --- |
-| Command | `HCS_RUN_REAL_COMFYUI_RUNTIME=1 HCS_COMFYUI_REAL_REPORT=/tmp/hcs-comfyui-real-validation.json PYTHONPATH=apps/api/src apps/api/.venv/bin/python -m pytest apps/api/tests/test_comfyui_real_opt_in.py -vv -s` |
-| Test result | `1 passed in 646.28s` |
-| Platform | macOS arm64, Apple M4 (10-core CPU, integrated 8-core GPU) |
-| Managed Python | CPython `3.11.13` |
-| Environment manager | uv `0.11.26` |
-| Install time | 578.707 seconds |
-| Installed version-directory bytes | 1,260,509,761 |
-| Startup time | 62.981 seconds |
-| Listener | `127.0.0.1:8188` only |
-| API health | healthy; identity, core API, official custom-node baseline, and ComfyUI `0.28.0` verified |
-| Stop | `stopped` |
-| Uninstall | `not_installed`; managed version directory absent |
-| Skip/degradation | none |
-
-The report contains hashes and generic hardware facts but no personal absolute
-paths. The adapter remains `experimental`: one development-machine run is real
-evidence, not a claim of broad macOS compatibility. A skipped opt-in run is
-reported as a skip, never as a pass.
+A 2026-07-22 run exercised the earlier, less strict implementation. It is
+historical evidence only and does not validate the current fixed-artifact,
+supervisor/listener, ownership, or confirmation contracts. Current-code real
+install/start/stop/repair/uninstall validation is blocked by the intentionally
+unavailable toolchain and must be rerun before any adapter is enabled.
 
 ## Deliberately not implemented
 

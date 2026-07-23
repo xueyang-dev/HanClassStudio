@@ -65,7 +65,7 @@ The first featured entries are:
 
 | ID | Type | Current behavior |
 | --- | --- | --- |
-| `hcs.comfyui-runtime` | local Runtime | Installs and supervises a fixed official ComfyUI Runtime on the reviewed macOS Apple Silicon adapter. It contains no model or workflow and never becomes image-generation ready in Phase 2B. |
+| `hcs.comfyui-runtime` | local Runtime | Defines and supervises a fixed official ComfyUI Runtime contract. Installation currently fails closed because the complete reviewed uv/Python/wheel artifact set is not bundled. It contains no model or workflow. |
 | `hcs.teaching-video-basic` | local | Probes system FFmpeg/ffprobe, required encoders/decoders, subtitle filter, and a usable CJK font. It does not install FFmpeg. |
 | `hcs.local-image-basic` | local | Installs a bundled, checksum-pinned JSON fixture through the real asynchronous task pipeline. It is a safe lifecycle proof, not a generative model. |
 | `hcs.online-image-high-quality` | online | Configures and tests the user's OpenAI image API credentials. The default is `gpt-image-2`; generation/editing still uses the existing media pipeline adapter. |
@@ -178,16 +178,21 @@ view_runtime_logs / open_runtime_directory
 ```
 
 Install, repair, and uninstall return the common asynchronous `{task,
-provider}` shape. Start, stop, and health return a current Provider snapshot.
+provider}` shape. Repair and uninstall first require a backend prepare call and
+a short-lived one-time confirmation token bound to the current installation,
+tree identity, modified state, operation, and expiry; execution revalidates the
+identity. Start, stop, and health return a current Provider snapshot.
 The directory endpoint returns an opaque desktop action rather than a machine
 path. A normal catalog read uses persisted Runtime/process state and the
 manifest-bound source-tree identity; it does not start the Runtime, make a
 health HTTP call, or run the full dependency probe. Start and explicit health
 perform the deep source/Python/lock/custom-node and ComfyUI API checks.
 
-The only enabled adapter is macOS Apple Silicon and remains `experimental`.
-Windows/Linux adapters are `contract_only`; unsupported platforms receive no
-install action. Source, dependencies, archive policy, process ownership,
+No adapter is currently install-enabled. The macOS Apple Silicon declaration
+remains `experimental` but is unavailable until exact bundled uv, CPython, and
+complete wheel artifacts are reviewed. Windows/Linux adapters are
+`contract_only`; unsupported platforms receive no install action. Source,
+dependencies, archive policy, process and listener ownership,
 loopback networking, recovery, repair/uninstall, test evidence, attribution,
 and limits are documented in
 [Controlled ComfyUI Runtime — Phase 2B](comfyui-runtime-phase-2b.md).
