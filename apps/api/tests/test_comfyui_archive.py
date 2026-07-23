@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import tarfile
 from pathlib import Path
 
@@ -12,11 +13,13 @@ import pytest
 from hcs_api.comfyui_archive import (
     ComfyUIArchiveError,
     ComfyUIRuntimeManifest,
+    extract_pinned_tool_archive,
     extract_tar_gz,
     inspect_tar_gz,
     load_runtime_manifest,
 )
 from hcs_api import comfyui_archive as archive_module
+from hcs_api import comfyui_runtime as runtime_module
 
 
 def _sha(data: bytes) -> str:
@@ -102,8 +105,42 @@ def test_bundled_manifest_is_strict_commit_pinned_and_lock_verified() -> None:
     assert manifest.capability_boundary.generation_ready is False
     assert "--disable-all-custom-nodes" in manifest.launch.fixed_arguments
     assert "--disable-api-nodes" in manifest.launch.fixed_arguments
-    assert manifest.python.toolchain_status == "unavailable"
-    assert not [item for item in manifest.platforms if item.install_enabled]
+    assert manifest.python.toolchain_status == "ready"
+    assert manifest.python.uv_artifact is not None
+    assert manifest.python.python_runtime is not None
+    assert manifest.python.wheelhouse is not None
+    assert manifest.python.wheelhouse.package_count == 83
+    assert manifest.python.wheelhouse.download_policy == "strict_allowlist"
+    enabled = [item for item in manifest.platforms if item.install_enabled]
+    assert [(item.operating_system, item.architecture, item.minimum_os_version) for item in enabled] == [
+        ("macos", "arm64", "14.0")
+    ]
+
+
+def test_reviewed_wheel_lock_is_complete_allowlisted_and_license_bound() -> None:
+    manifest = load_runtime_manifest()
+    wheelhouse = manifest.python.wheelhouse
+    assert wheelhouse is not None
+    lock_path = archive_module.storage.ROOT_DIR / wheelhouse.artifact_lock_file
+    lock = runtime_module._read_wheel_artifact_lock(lock_path)
+    expected = runtime_module._expected_dependencies(
+        archive_module.storage.ROOT_DIR / manifest.python.lock_file
+    )
+    actual = {
+        re.sub(r"[-_.]+", "-", wheel.name).lower(): wheel.version
+        for wheel in lock.wheels
+    }
+
+    assert actual == expected
+    assert lock.package_count == len(lock.wheels) == 83
+    assert lock.total_size == wheelhouse.size
+    assert all(wheel.source_url.startswith(lock.source_allowlist[0]) for wheel in lock.wheels)
+    assert all(wheel.license_expression and wheel.license_review == "approved_for_gpl3_runtime" for wheel in lock.wheels)
+    assert all(
+        (wheel.license_evidence == "pinned_upstream")
+        == (wheel.license_source_url is not None and wheel.license_source_sha256 is not None)
+        for wheel in lock.wheels
+    )
 
 
 def test_manifest_rejects_floating_source_and_unknown_fields(tmp_path: Path) -> None:
@@ -132,6 +169,63 @@ def test_safe_archive_extracts_only_verified_regular_tree(tmp_path: Path) -> Non
     assert inspection.file_count == 8
     assert (destination / "main.py").read_bytes() == b"print('fixture')\n"
     assert not (tmp_path / "outside").exists()
+
+
+def test_fixed_toolchain_archive_extracts_regular_files_and_skips_only_declared_aliases(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "toolchain.tar.gz"
+    entries = [
+        ("python", None, "dir"),
+        ("python/bin", None, "dir"),
+        ("python/bin/python3.11", b"controlled-python", "file"),
+        ("python/bin/python", b"python3.11", "symlink"),
+    ]
+    _write_tar(archive, entries)
+    destination = tmp_path / "toolchain"
+
+    inspection = extract_pinned_tool_archive(
+        archive,
+        destination,
+        archive_size=archive.stat().st_size,
+        archive_sha256=_sha(archive.read_bytes()),
+        archive_root="python",
+        ignored_symlinks={"bin/python": "python3.11"},
+        executable_paths={"bin/python3.11"},
+    )
+
+    assert inspection.file_count == 1
+    assert (destination / "bin/python3.11").read_bytes() == b"controlled-python"
+    assert not (destination / "bin/python").exists()
+    assert not [item for item in tmp_path.rglob("*") if item.is_symlink()]
+
+
+def test_fixed_toolchain_archive_rejects_unapproved_link_without_external_change(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "toolchain.tar.gz"
+    entries = [
+        ("python", None, "dir"),
+        ("python/bin", None, "dir"),
+        ("python/bin/python3.11", b"controlled-python", "file"),
+        ("python/bin/python", b"unexpected", "symlink"),
+    ]
+    _write_tar(archive, entries)
+    marker = tmp_path / "external-marker"
+    marker.write_bytes(b"unchanged")
+
+    with pytest.raises(ComfyUIArchiveError):
+        extract_pinned_tool_archive(
+            archive,
+            tmp_path / "toolchain",
+            archive_size=archive.stat().st_size,
+            archive_sha256=_sha(archive.read_bytes()),
+            archive_root="python",
+            ignored_symlinks={"bin/python": "python3.11"},
+            executable_paths={"bin/python3.11"},
+        )
+
+    assert marker.read_bytes() == b"unchanged"
 
 
 def test_parent_directory_replacement_cannot_write_outside_staging(

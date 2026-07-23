@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -27,12 +28,14 @@ from typing import Any, Callable, Iterator, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+import truststore
 
 from . import storage
 from .comfyui_archive import (
     ComfyUIArchiveError,
     ComfyUIRuntimeManifest,
     custom_node_tree_is_pristine,
+    extract_pinned_tool_archive,
     extract_tar_gz,
     load_runtime_manifest,
     secure_dirfd_extraction_supported,
@@ -107,12 +110,26 @@ class RuntimeDirectoryIdentity(_StrictModel):
     inode: int = Field(gt=0)
 
 
+class LockedLicenseFile(_StrictModel):
+    path: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class LockedWheel(_StrictModel):
     name: str
     version: str
     filename: str
     size: int = Field(gt=0)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_url: str
+    uploaded_at: str
+    metadata_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    license_expression: str = Field(min_length=1, max_length=256)
+    license_evidence: Literal["core_metadata", "reviewed_legacy_metadata", "pinned_upstream"]
+    license_review: Literal["approved_for_gpl3_runtime"]
+    license_files: list[LockedLicenseFile]
+    license_source_url: str | None = None
+    license_source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("filename")
     @classmethod
@@ -126,12 +143,32 @@ class LockedWheel(_StrictModel):
             raise ValueError("dependency artifact must be one wheel filename")
         return value
 
-
+    @field_validator("source_url")
+    @classmethod
+    def _source_url(cls, value: str) -> str:
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "files.pythonhosted.org"
+            or parsed.username
+            or parsed.password
+            or parsed.port
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("wheel source must be one exact files.pythonhosted.org URL")
+        return value
 class WheelArtifactLock(_StrictModel):
-    schema_: Literal["hanclassstudio.comfyui_wheel_artifacts.v1"] = Field(alias="schema")
+    schema_: Literal["hanclassstudio.comfyui_wheel_artifacts.v2"] = Field(alias="schema")
     operating_system: Literal["macos"]
     architecture: Literal["arm64"]
+    minimum_os_version: Literal["14.0"]
     python_version: str
+    package_count: int = Field(gt=0)
+    total_size: int = Field(gt=0)
+    reviewed_at: str
+    review_status: Literal["approved"]
+    source_allowlist: list[Literal["https://files.pythonhosted.org/packages/"]]
     wheels: list[LockedWheel]
 
 
@@ -446,7 +483,7 @@ def _environment_root(manifest: ComfyUIRuntimeManifest) -> Path:
 
 
 def _environment_python(environment: Path) -> Path:
-    return environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    return environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python3.11")
 
 
 def _models_root() -> Path:
@@ -687,6 +724,27 @@ def _secure_replace_managed(
                 raise ComfyUIRuntimeError("runtime_identity_mismatch", "Managed Runtime publish failed safely") from exc
 
 
+def _secure_unlink_managed_regular(
+    path: Path,
+    *,
+    root_identity: RuntimeDirectoryIdentity,
+) -> None:
+    with _open_managed_parent(path, root_identity=root_identity) as (parent_fd, name):
+        try:
+            info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                raise ComfyUIRuntimeError(
+                    "runtime_identity_mismatch", "Managed Runtime cleanup file is not regular"
+                )
+            os.unlink(name, dir_fd=parent_fd)
+        except ComfyUIRuntimeError:
+            raise
+        except OSError as exc:
+            raise ComfyUIRuntimeError(
+                "runtime_identity_mismatch", "Managed Runtime cleanup file changed"
+            ) from exc
+
+
 def _assert_safe_removal_tree(directory_fd: int) -> None:
     try:
         for _root, directory_names, file_names, current_fd in os.fwalk(
@@ -846,7 +904,19 @@ def platform_adapter(manifest: ComfyUIRuntimeManifest) -> tuple[str, str, bool]:
     )
     for item in manifest.platforms:
         if item.operating_system == system and item.architecture == architecture:
-            return item.adapter, item.support, item.install_enabled and secure_dirfd_extraction_supported()
+            version_supported = True
+            if item.minimum_os_version is not None:
+                try:
+                    current = tuple(int(part) for part in platform.mac_ver()[0].split(".")[:2])
+                    required = tuple(int(part) for part in item.minimum_os_version.split("."))
+                    version_supported = current >= required
+                except ValueError:
+                    version_supported = False
+            return (
+                item.adapter,
+                item.support,
+                item.install_enabled and version_supported and secure_dirfd_extraction_supported(),
+            )
     return "unsupported", "unavailable", False
 
 
@@ -891,20 +961,174 @@ def log_summary(kind: Literal["install", "runtime"], *, max_lines: int = 120) ->
     return [_redact(line) for line in lines[-max(1, min(max_lines, 500)):]]
 
 
-def _validate_public_host(hostname: str) -> None:
+def _public_addresses(hostname: str) -> tuple[str, ...]:
     try:
         addresses = socket.getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise ComfyUIRuntimeError("download_failed", "The official ComfyUI source could not be reached") from exc
+        raise ComfyUIRuntimeError("download_failed", "A pinned artifact source could not be reached") from exc
     if not addresses:
-        raise ComfyUIRuntimeError("download_failed", "The official ComfyUI source could not be reached")
+        raise ComfyUIRuntimeError("download_failed", "A pinned artifact source could not be reached")
+    public: list[str] = []
     for address in addresses:
         try:
             resolved = ipaddress.ip_address(address[4][0])
         except ValueError as exc:
-            raise ComfyUIRuntimeError("download_source_untrusted", "ComfyUI source resolved unexpectedly") from exc
+            raise ComfyUIRuntimeError("download_source_untrusted", "A pinned artifact source resolved unexpectedly") from exc
         if not resolved.is_global:
-            raise ComfyUIRuntimeError("download_source_untrusted", "ComfyUI source resolved to a non-public address")
+            raise ComfyUIRuntimeError("download_source_untrusted", "A pinned artifact source resolved to a non-public address")
+        canonical = str(resolved)
+        if canonical not in public:
+            public.append(canonical)
+    return tuple(public)
+
+
+def _pinned_https_connection(hostname: str) -> http.client.HTTPSConnection:
+    addresses = _public_addresses(hostname)
+    context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    connection = http.client.HTTPSConnection(
+        hostname,
+        443,
+        timeout=_CONNECT_TIMEOUT_SECONDS,
+        context=context,
+    )
+
+    def connect_resolved(
+        _address: tuple[str, int],
+        timeout: float = _CONNECT_TIMEOUT_SECONDS,
+        source_address: tuple[str, int] | None = None,
+    ) -> socket.socket:
+        last_error: OSError | None = None
+        for address in addresses:
+            try:
+                return socket.create_connection(
+                    (address, 443),
+                    timeout=timeout,
+                    source_address=source_address,
+                )
+            except OSError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise OSError("no approved address")
+
+    connection._create_connection = connect_resolved  # type: ignore[method-assign]
+    return connection
+
+
+def _download_exact_artifact(
+    destination: Path,
+    *,
+    source_url: str,
+    expected_size: int,
+    expected_sha256: str,
+    allowed_redirect_hosts: frozenset[str],
+    progress: Callable[[int, int], None],
+    cancel: CancellationCheck,
+    size_error_code: str,
+    checksum_error_code: str,
+    require_content_length: bool = True,
+    managed_root_identity: RuntimeDirectoryIdentity | None = None,
+) -> None:
+    current_url = source_url
+    response: http.client.HTTPResponse | None = None
+    connection: http.client.HTTPSConnection | None = None
+    started = time.monotonic()
+    try:
+        for hop in range(4):
+            parsed = urlparse(current_url)
+            if (
+                parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.port
+                or parsed.fragment
+                or (hop == 0 and current_url != source_url)
+                or (hop > 0 and parsed.hostname not in allowed_redirect_hosts)
+            ):
+                raise ComfyUIRuntimeError("download_source_untrusted", "Pinned artifact redirect left its approved origins")
+            connection = _pinned_https_connection(parsed.hostname)
+            target = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+            connection.request(
+                "GET",
+                target,
+                headers={"Host": parsed.hostname, "User-Agent": "HanClassStudio-ComfyUIRuntime/1"},
+            )
+            response = connection.getresponse()
+            if 300 <= response.status < 400:
+                location = response.headers.get("Location")
+                response.close()
+                connection.close()
+                response = None
+                connection = None
+                if not location or not location.startswith("https://") or hop == 3:
+                    raise ComfyUIRuntimeError("download_source_untrusted", "Pinned artifact redirect was invalid")
+                current_url = location
+                continue
+            if response.status != 200:
+                raise ComfyUIRuntimeError("download_failed", "A pinned artifact could not be downloaded")
+            declared = response.headers.get("Content-Length")
+            if declared is None and require_content_length:
+                raise ComfyUIRuntimeError("download_failed", "Pinned artifact response omitted its exact size")
+            if declared is not None:
+                try:
+                    declared_size = int(declared)
+                except ValueError as exc:
+                    raise ComfyUIRuntimeError("download_failed", "Pinned artifact response size was invalid") from exc
+                if declared_size != expected_size:
+                    raise ComfyUIRuntimeError(size_error_code, "Pinned artifact response size differs from its manifest")
+            if connection.sock is not None:
+                connection.sock.settimeout(_READ_TIMEOUT_SECONDS)
+            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            digest = hashlib.sha256()
+            received = 0
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            if managed_root_identity is None:
+                fd = os.open(destination, flags, 0o600)
+            else:
+                with _open_managed_parent(
+                    destination, root_identity=managed_root_identity
+                ) as (parent_fd, name):
+                    fd = os.open(name, flags, 0o600, dir_fd=parent_fd)
+            try:
+                with os.fdopen(fd, "wb", closefd=False) as output:
+                    while True:
+                        cancel()
+                        if time.monotonic() - started > _MAX_DOWNLOAD_SECONDS:
+                            raise ComfyUIRuntimeError("download_failed", "Pinned artifact download timed out")
+                        chunk = response.read(64 * 1024)
+                        if not chunk:
+                            break
+                        received += len(chunk)
+                        if received > expected_size:
+                            raise ComfyUIRuntimeError(size_error_code, "Pinned artifact exceeded its manifest size")
+                        digest.update(chunk)
+                        output.write(chunk)
+                        progress(received, expected_size)
+                    output.flush()
+                    os.fsync(output.fileno())
+            finally:
+                os.close(fd)
+            if received != expected_size:
+                raise ComfyUIRuntimeError(size_error_code, "Pinned artifact size differs from its manifest")
+            if digest.hexdigest() != expected_sha256:
+                raise ComfyUIRuntimeError(checksum_error_code, "Pinned artifact SHA-256 differs from its manifest")
+            return
+        raise ComfyUIRuntimeError("download_source_untrusted", "Pinned artifact exceeded its redirect limit")
+    except ComfyUIRuntimeError:
+        destination.unlink(missing_ok=True)
+        raise
+    except (OSError, TimeoutError, http.client.HTTPException) as exc:
+        destination.unlink(missing_ok=True)
+        raise ComfyUIRuntimeError("download_failed", "Pinned artifact download failed") from exc
+    finally:
+        if response is not None:
+            response.close()
+        if connection is not None:
+            connection.close()
 
 
 def download_official_archive(
@@ -921,69 +1145,19 @@ def download_official_archive(
         or parsed.query or parsed.fragment
     ):
         raise ComfyUIRuntimeError("download_source_untrusted", "ComfyUI source URL is not an approved commit-pinned origin")
-    _validate_public_host(parsed.hostname)
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    started = time.monotonic()
-    connection = http.client.HTTPSConnection(
-        parsed.hostname,
-        443,
-        timeout=_CONNECT_TIMEOUT_SECONDS,
-        context=ssl.create_default_context(),
+    _download_exact_artifact(
+        destination,
+        source_url=manifest.source.archive_url,
+        expected_size=manifest.source.archive_size,
+        expected_sha256=manifest.source.archive_sha256,
+        allowed_redirect_hosts=frozenset(),
+        progress=progress,
+        cancel=cancel,
+        size_error_code="archive_size_mismatch",
+        checksum_error_code="checksum_mismatch",
+        require_content_length=False,
+        managed_root_identity=_current_managed_root_identity(),
     )
-    try:
-        connection.request("GET", parsed.path, headers={"User-Agent": "HanClassStudio-ComfyUIRuntime/1"})
-        response = connection.getresponse()
-        if 300 <= response.status < 400:
-            raise ComfyUIRuntimeError("download_source_untrusted", "ComfyUI archive download refused an unexpected redirect")
-        if response.status != 200:
-            raise ComfyUIRuntimeError("download_failed", "The official ComfyUI archive could not be downloaded")
-        declared = response.headers.get("Content-Length")
-        if declared:
-            try:
-                declared_size = int(declared)
-            except ValueError as exc:
-                raise ComfyUIRuntimeError("download_failed", "ComfyUI archive response metadata was invalid") from exc
-            if declared_size != manifest.source.archive_size:
-                raise ComfyUIRuntimeError("archive_size_mismatch", "ComfyUI archive response size differs from the manifest")
-        if connection.sock is not None:
-            connection.sock.settimeout(_READ_TIMEOUT_SECONDS)
-        digest = hashlib.sha256()
-        received = 0
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        fd = os.open(destination, flags, 0o600)
-        try:
-            with os.fdopen(fd, "wb", closefd=False) as output:
-                while True:
-                    cancel()
-                    if time.monotonic() - started > _MAX_DOWNLOAD_SECONDS:
-                        raise ComfyUIRuntimeError("download_failed", "ComfyUI archive download timed out")
-                    chunk = response.read(64 * 1024)
-                    if not chunk:
-                        break
-                    received += len(chunk)
-                    if received > manifest.archive_policy.max_compressed_bytes:
-                        raise ComfyUIRuntimeError("archive_too_large", "ComfyUI archive exceeded its size limit")
-                    digest.update(chunk)
-                    output.write(chunk)
-                    progress(received, manifest.source.archive_size)
-                output.flush()
-                os.fsync(output.fileno())
-        finally:
-            os.close(fd)
-        if received != manifest.source.archive_size:
-            raise ComfyUIRuntimeError("archive_size_mismatch", "Downloaded ComfyUI archive size differs from the manifest")
-        if digest.hexdigest() != manifest.source.archive_sha256:
-            raise ComfyUIRuntimeError("checksum_mismatch", "Downloaded ComfyUI archive SHA-256 differs from the manifest")
-    except ComfyUIRuntimeError:
-        destination.unlink(missing_ok=True)
-        raise
-    except (OSError, TimeoutError, http.client.HTTPException) as exc:
-        destination.unlink(missing_ok=True)
-        raise ComfyUIRuntimeError("download_failed", "The official ComfyUI archive download failed") from exc
-    finally:
-        connection.close()
 
 
 ARCHIVE_DOWNLOADER = download_official_archive
@@ -999,7 +1173,7 @@ def _controlled_environment() -> dict[str, str]:
         "PYTHONDONTWRITEBYTECODE": "1",
         "UV_NO_CONFIG": "1",
         "UV_PYTHON_PREFERENCE": "only-managed",
-        "UV_PYTHON_DOWNLOADS": "automatic",
+        "UV_PYTHON_DOWNLOADS": "never",
         "UV_CACHE_DIR": str(_managed_root() / "uv-cache"),
         "UV_PYTHON_INSTALL_DIR": str(_managed_root() / "python"),
     })
@@ -1243,7 +1417,274 @@ def _read_wheel_artifact_lock(path: Path) -> WheelArtifactLock:
         ) from exc
 
 
-def verify_python_toolchain(manifest: ComfyUIRuntimeManifest) -> VerifiedPythonToolchain:
+def _verify_locked_wheel_metadata(path: Path, wheel: LockedWheel) -> None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            if len(names) > 100_000:
+                raise ValueError
+            metadata_names = [
+                name
+                for name in names
+                if name.endswith(".dist-info/METADATA") and name.count("/") == 1
+            ]
+            if len(metadata_names) != 1:
+                raise ValueError
+            if hashlib.sha256(archive.read(metadata_names[0])).hexdigest() != wheel.metadata_sha256:
+                raise ValueError
+            expected_licenses = {item.path: item.sha256 for item in wheel.license_files}
+            actual_license_names = {
+                name
+                for name in names
+                if ".dist-info/licenses/" in name.lower()
+                or name.lower().endswith((".dist-info/license", ".dist-info/license.txt", ".dist-info/copying"))
+            }
+            if set(expected_licenses) != actual_license_names:
+                raise ValueError
+            for name, expected_sha256 in expected_licenses.items():
+                if hashlib.sha256(archive.read(name)).hexdigest() != expected_sha256:
+                    raise ValueError
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+        raise ComfyUIRuntimeError(
+            "dependency_lock_mismatch", "A fixed wheel license or metadata identity does not match"
+        ) from exc
+
+
+def _toolchain_path(root: Path, relative_name: str, *, directory: bool) -> Path:
+    target = root.joinpath(*PurePosixPath(relative_name).parts)
+    try:
+        current = root
+        if not stat.S_ISDIR(current.lstat().st_mode):
+            raise OSError
+        for part in PurePosixPath(relative_name).parts:
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise OSError
+        final = target.lstat()
+        if directory and not stat.S_ISDIR(final.st_mode):
+            raise OSError
+        if not directory and not stat.S_ISREG(final.st_mode):
+            raise OSError
+    except OSError as exc:
+        raise ComfyUIRuntimeError(
+            "python_environment_failed", "A fixed Python toolchain artifact is unavailable"
+        ) from exc
+    return target
+
+
+def _validate_toolchain_source_contract(manifest: ComfyUIRuntimeManifest) -> None:
+    uv_artifact = manifest.python.uv_artifact
+    python_artifact = manifest.python.python_runtime
+    wheelhouse = manifest.python.wheelhouse
+    if uv_artifact is None or python_artifact is None or wheelhouse is None:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python toolchain is incomplete")
+    expected_uv_url = (
+        f"https://github.com/astral-sh/uv/releases/download/{uv_artifact.version}/"
+        "uv-aarch64-apple-darwin.tar.gz"
+    )
+    expected_python_url = (
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20250712/"
+        f"cpython-{python_artifact.version}%2B20250712-aarch64-apple-darwin-install_only.tar.gz"
+    )
+    uv_licenses = {
+        item.source_url: item.sha256 for item in uv_artifact.license_files
+    }
+    python_licenses = {
+        item.source_url: item.sha256 for item in python_artifact.license_files
+    }
+    if (
+        uv_artifact.source_url != expected_uv_url
+        or uv_artifact.archive_root != "uv-aarch64-apple-darwin"
+        or uv_artifact.license_expression != "MIT OR Apache-2.0"
+        or uv_licenses != {
+            "https://raw.githubusercontent.com/astral-sh/uv/0.11.26/LICENSE-MIT":
+                "860e3d7a86b84e6a7012c7a635fc64df475cebc6cce34dfeb73a5982ec58176c",
+            "https://raw.githubusercontent.com/astral-sh/uv/0.11.26/LICENSE-APACHE":
+                "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        }
+        or python_artifact.source_url != expected_python_url
+        or python_artifact.archive_root != "python"
+        or python_artifact.license_expression != "MPL-2.0 AND PSF-2.0"
+        or python_licenses != {
+            "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20250712/LICENSE":
+                "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+            "https://raw.githubusercontent.com/python/cpython/v3.11.13/LICENSE":
+                "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+        }
+        or wheelhouse.source_allowlist != ["https://files.pythonhosted.org/packages/"]
+    ):
+        raise ComfyUIRuntimeError(
+            "download_source_untrusted", "The fixed Python toolchain source contract is not approved"
+        )
+
+
+def prepare_python_toolchain(
+    root: Path,
+    manifest: ComfyUIRuntimeManifest,
+    cancel: CancellationCheck,
+) -> VerifiedPythonToolchain:
+    _validate_toolchain_source_contract(manifest)
+    uv_artifact = manifest.python.uv_artifact
+    python_artifact = manifest.python.python_runtime
+    wheelhouse_artifact = manifest.python.wheelhouse
+    assert uv_artifact is not None and python_artifact is not None and wheelhouse_artifact is not None
+    managed_root_identity: RuntimeDirectoryIdentity | None = None
+    try:
+        root.relative_to(_managed_root())
+        managed_root_identity = _current_managed_root_identity()
+    except ValueError:
+        pass
+    try:
+        if managed_root_identity is not None:
+            _ensure_managed_directory(root, root_identity=managed_root_identity)
+        else:
+            if root.exists():
+                if not stat.S_ISDIR(root.lstat().st_mode) or any(root.iterdir()):
+                    raise OSError
+            else:
+                root.mkdir(parents=True, mode=0o700)
+        downloads = root / "downloads"
+        uv_archive = downloads / "uv.tar.gz"
+        python_archive = downloads / "python.tar.gz"
+        uv_root = root.joinpath(*PurePosixPath(uv_artifact.relative_path).parts)
+        python_root = root.joinpath(*PurePosixPath(python_artifact.relative_path).parts)
+        wheelhouse = root.joinpath(*PurePosixPath(wheelhouse_artifact.relative_path).parts)
+        if managed_root_identity is not None:
+            for directory in (downloads, uv_root, python_root, wheelhouse):
+                _ensure_managed_directory(directory, root_identity=managed_root_identity)
+        else:
+            downloads.mkdir(mode=0o700)
+            wheelhouse.mkdir(mode=0o700)
+    except OSError as exc:
+        raise ComfyUIRuntimeError("python_environment_failed", "Toolchain staging cannot be created safely") from exc
+
+    _download_exact_artifact(
+        uv_archive,
+        source_url=uv_artifact.source_url,
+        expected_size=uv_artifact.archive_size,
+        expected_sha256=uv_artifact.archive_sha256,
+        allowed_redirect_hosts=frozenset({"release-assets.githubusercontent.com"}),
+        progress=lambda _current, _total: None,
+        cancel=cancel,
+        size_error_code="python_environment_failed",
+        checksum_error_code="python_environment_failed",
+        managed_root_identity=managed_root_identity,
+    )
+    try:
+        if managed_root_identity is not None:
+            with _open_managed_directory(
+                uv_root, expected_root=managed_root_identity
+            ) as (uv_fd, _root, _identity):
+                extract_pinned_tool_archive(
+                    uv_archive,
+                    uv_root,
+                    archive_size=uv_artifact.archive_size,
+                    archive_sha256=uv_artifact.archive_sha256,
+                    archive_root=uv_artifact.archive_root,
+                    executable_paths={uv_artifact.executable_relative_path},
+                    destination_fd=uv_fd,
+                )
+                unused_uvx = os.stat("uvx", dir_fd=uv_fd, follow_symlinks=False)
+                if not stat.S_ISREG(unused_uvx.st_mode):
+                    raise ComfyUIArchiveError("archive_special_file", "Unexpected uvx artifact type")
+                os.unlink("uvx", dir_fd=uv_fd)
+        else:
+            extract_pinned_tool_archive(
+                uv_archive,
+                uv_root,
+                archive_size=uv_artifact.archive_size,
+                archive_sha256=uv_artifact.archive_sha256,
+                archive_root=uv_artifact.archive_root,
+                executable_paths={uv_artifact.executable_relative_path},
+            )
+            unused_uvx_path = uv_root / "uvx"
+            if not stat.S_ISREG(unused_uvx_path.lstat().st_mode):
+                raise ComfyUIArchiveError("archive_special_file", "Unexpected uvx artifact type")
+            unused_uvx_path.unlink()
+    except ComfyUIArchiveError as exc:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed uv archive is invalid") from exc
+
+    _download_exact_artifact(
+        python_archive,
+        source_url=python_artifact.source_url,
+        expected_size=python_artifact.archive_size,
+        expected_sha256=python_artifact.archive_sha256,
+        allowed_redirect_hosts=frozenset({"release-assets.githubusercontent.com"}),
+        progress=lambda _current, _total: None,
+        cancel=cancel,
+        size_error_code="python_environment_failed",
+        checksum_error_code="python_environment_failed",
+        managed_root_identity=managed_root_identity,
+    )
+    try:
+        if managed_root_identity is not None:
+            with _open_managed_directory(
+                python_root, expected_root=managed_root_identity
+            ) as (python_fd, _root, _identity):
+                extract_pinned_tool_archive(
+                    python_archive,
+                    python_root,
+                    archive_size=python_artifact.archive_size,
+                    archive_sha256=python_artifact.archive_sha256,
+                    archive_root=python_artifact.archive_root,
+                    ignored_symlinks=python_artifact.ignored_symlinks,
+                    executable_paths={python_artifact.executable_relative_path},
+                    destination_fd=python_fd,
+                )
+        else:
+            extract_pinned_tool_archive(
+                python_archive,
+                python_root,
+                archive_size=python_artifact.archive_size,
+                archive_sha256=python_artifact.archive_sha256,
+                archive_root=python_artifact.archive_root,
+                ignored_symlinks=python_artifact.ignored_symlinks,
+                executable_paths={python_artifact.executable_relative_path},
+            )
+    except ComfyUIArchiveError as exc:
+        raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python archive is invalid") from exc
+
+    artifact_lock_path = storage.ROOT_DIR / wheelhouse_artifact.artifact_lock_file
+    artifact_lock = _read_wheel_artifact_lock(artifact_lock_path)
+    for wheel in artifact_lock.wheels:
+        cancel()
+        if not wheel.source_url.endswith(f"/{wheel.filename}"):
+            raise ComfyUIRuntimeError("download_source_untrusted", "A fixed wheel source does not match its filename")
+        _download_exact_artifact(
+            wheelhouse / wheel.filename,
+            source_url=wheel.source_url,
+            expected_size=wheel.size,
+            expected_sha256=wheel.sha256,
+            allowed_redirect_hosts=frozenset(),
+            progress=lambda _current, _total: None,
+            cancel=cancel,
+            size_error_code="dependency_lock_mismatch",
+            checksum_error_code="dependency_lock_mismatch",
+            managed_root_identity=managed_root_identity,
+        )
+    if managed_root_identity is None:
+        uv_archive.unlink(missing_ok=True)
+        python_archive.unlink(missing_ok=True)
+        downloads.rmdir()
+    else:
+        _secure_unlink_managed_regular(uv_archive, root_identity=managed_root_identity)
+        _secure_unlink_managed_regular(python_archive, root_identity=managed_root_identity)
+        downloads_identity = _managed_directory_identity(
+            downloads, expected_root=managed_root_identity
+        )
+        _secure_remove_managed_directory(
+            downloads,
+            root_identity=managed_root_identity,
+            target_identity=downloads_identity,
+        )
+    return verify_python_toolchain(manifest, root)
+
+
+TOOLCHAIN_PREPARER = prepare_python_toolchain
+
+
+def verify_python_toolchain(manifest: ComfyUIRuntimeManifest, root: Path) -> VerifiedPythonToolchain:
     python_contract = manifest.python
     if python_contract.toolchain_status != "ready":
         raise ComfyUIRuntimeError(
@@ -1255,26 +1696,31 @@ def verify_python_toolchain(manifest: ComfyUIRuntimeManifest) -> VerifiedPythonT
     if uv_artifact is None or python_artifact is None or wheelhouse_artifact is None:
         raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python toolchain is incomplete")
 
-    uv = _project_artifact(uv_artifact.relative_path, directory=False)
-    if uv.stat().st_size != uv_artifact.size or sha256_file(uv) != uv_artifact.sha256:
+    uv_root = _toolchain_path(root, uv_artifact.relative_path, directory=True)
+    uv = _toolchain_path(uv_root, uv_artifact.executable_relative_path, directory=False)
+    if uv.stat().st_size != uv_artifact.executable_size or sha256_file(uv) != uv_artifact.executable_sha256:
         raise ComfyUIRuntimeError("python_environment_failed", "The fixed uv identity does not match")
     if _environment_manager_version(str(uv)) != python_contract.environment_manager_version:
         raise ComfyUIRuntimeError("python_environment_failed", "The fixed uv version does not match")
 
-    python_root = _project_artifact(python_artifact.relative_path, directory=True)
+    python_root = _toolchain_path(root, python_artifact.relative_path, directory=True)
     python_size, python_identity = _regular_tree_identity(python_root)
-    if python_size != python_artifact.size or python_identity != python_artifact.tree_sha256:
+    if python_size != python_artifact.tree_size or python_identity != python_artifact.tree_sha256:
         raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python Runtime identity does not match")
-    python = python_root.joinpath(*PurePosixPath(python_artifact.executable_relative_path).parts)
+    python = _toolchain_path(python_root, python_artifact.executable_relative_path, directory=False)
     try:
-        if not stat.S_ISREG(python.lstat().st_mode):
+        if (
+            not stat.S_ISREG(python.lstat().st_mode)
+            or python.stat().st_size != python_artifact.executable_size
+            or sha256_file(python) != python_artifact.executable_sha256
+        ):
             raise OSError
     except OSError as exc:
         raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python executable is invalid") from exc
 
-    wheelhouse = _project_artifact(wheelhouse_artifact.relative_path, directory=True)
+    wheelhouse = _toolchain_path(root, wheelhouse_artifact.relative_path, directory=True)
     wheelhouse_size, wheelhouse_identity = _regular_tree_identity(wheelhouse)
-    if wheelhouse_size != wheelhouse_artifact.size or wheelhouse_identity != wheelhouse_artifact.sha256:
+    if wheelhouse_size != wheelhouse_artifact.size or wheelhouse_identity != wheelhouse_artifact.tree_sha256:
         raise ComfyUIRuntimeError("dependency_lock_mismatch", "The fixed wheelhouse identity does not match")
     artifact_lock_path = _project_artifact(wheelhouse_artifact.artifact_lock_file, directory=False)
     artifact_lock = _read_wheel_artifact_lock(artifact_lock_path)
@@ -1282,6 +1728,11 @@ def verify_python_toolchain(manifest: ComfyUIRuntimeManifest) -> VerifiedPythonT
         sha256_file(artifact_lock_path) != wheelhouse_artifact.artifact_lock_sha256
         or artifact_lock.python_version != python_contract.version
         or (artifact_lock.operating_system, artifact_lock.architecture) != ("macos", "arm64")
+        or artifact_lock.minimum_os_version != "14.0"
+        or artifact_lock.package_count != wheelhouse_artifact.package_count
+        or artifact_lock.package_count != len(artifact_lock.wheels)
+        or artifact_lock.total_size != wheelhouse_artifact.size
+        or artifact_lock.source_allowlist != wheelhouse_artifact.source_allowlist
     ):
         raise ComfyUIRuntimeError("dependency_lock_mismatch", "The fixed wheel artifact lock does not match")
     expected = _expected_dependencies(storage.ROOT_DIR / python_contract.lock_file)
@@ -1304,6 +1755,14 @@ def verify_python_toolchain(manifest: ComfyUIRuntimeManifest) -> VerifiedPythonT
         raise ComfyUIRuntimeError("dependency_lock_mismatch", "The fixed wheelhouse contains an unexpected artifact")
     for wheel in artifact_lock.wheels:
         target = wheelhouse / wheel.filename
+        if (
+            not wheel.source_url.startswith("https://files.pythonhosted.org/packages/")
+            or (wheel.license_evidence == "pinned_upstream")
+            != (wheel.license_source_url is not None and wheel.license_source_sha256 is not None)
+        ):
+            raise ComfyUIRuntimeError(
+                "dependency_lock_mismatch", "A fixed wheel source or license contract is incomplete"
+            )
         try:
             info = target.lstat()
             if (
@@ -1316,6 +1775,7 @@ def verify_python_toolchain(manifest: ComfyUIRuntimeManifest) -> VerifiedPythonT
             raise ComfyUIRuntimeError(
                 "dependency_lock_mismatch", "A fixed wheel artifact identity does not match"
             ) from exc
+        _verify_locked_wheel_metadata(target, wheel)
     identity = _toolchain_contract_identity(manifest)
     return VerifiedPythonToolchain(
         uv=uv,
@@ -1336,19 +1796,32 @@ def create_python_environment(
     manifest: ComfyUIRuntimeManifest,
     cancel: CancellationCheck,
 ) -> str:
-    toolchain = verify_python_toolchain(manifest)
+    toolchain_root = environment.parent / "toolchain"
+    toolchain = verify_python_toolchain(manifest, toolchain_root)
     uv = str(toolchain.uv)
+    python_distribution = toolchain.python.parent.parent
+    try:
+        if environment.exists():
+            raise OSError
+        os.replace(python_distribution, environment)
+    except OSError as exc:
+        raise ComfyUIRuntimeError(
+            "python_environment_failed", "The fixed Python distribution could not be published"
+        ) from exc
+    environment_python = str(_environment_python(environment))
     manager_environment = _controlled_environment()
     manager_environment.update({
         "PATH": str(toolchain.uv.parent),
         "UV_OFFLINE": "1",
+        "UV_NO_CACHE": "1",
         "UV_PYTHON_DOWNLOADS": "never",
         "UV_NO_CONFIG": "1",
     })
     _run_controlled(
         [
-            uv, "venv", "--offline", "--relocatable",
-            "--python", str(toolchain.python), str(environment),
+            uv, "pip", "uninstall", "--python", environment_python,
+            "--no-cache",
+            "pip", "setuptools",
         ],
         cwd=_managed_root(), timeout=120,
         error_code="python_environment_failed", cancel=cancel, environment=manager_environment,
@@ -1356,8 +1829,8 @@ def create_python_environment(
     )
     _run_controlled(
         [
-            uv, "pip", "install", "--python", str(_environment_python(environment)),
-            "--offline", "--no-index", "--find-links", str(toolchain.wheelhouse),
+            uv, "pip", "install", "--python", environment_python,
+            "--offline", "--no-cache", "--no-index", "--find-links", str(toolchain.wheelhouse),
             "--require-hashes", "--only-binary=:all:", "--no-build-isolation", "--no-deps",
             "-r", str(storage.ROOT_DIR / manifest.python.lock_file),
         ],
@@ -1515,9 +1988,9 @@ def validate_runtime_tree(version_root: Path, manifest: ComfyUIRuntimeManifest) 
         or wheelhouse_artifact is None
         or record.environment_manager_version != manifest.python.environment_manager_version
         or record.toolchain_identity_sha256 != _toolchain_contract_identity(manifest)
-        or record.uv_artifact_sha256 != uv_artifact.sha256
+        or record.uv_artifact_sha256 != uv_artifact.archive_sha256
         or record.python_runtime_sha256 != python_artifact.tree_sha256
-        or record.wheelhouse_sha256 != wheelhouse_artifact.sha256
+        or record.wheelhouse_sha256 != wheelhouse_artifact.tree_sha256
         or record.wheel_artifact_lock_sha256 != wheelhouse_artifact.artifact_lock_sha256
         or record.source_tree_sha256 != manifest.source.source_tree_sha256
     ):
@@ -1842,12 +2315,12 @@ def run_runtime_install(
             cancel()
             environment = payload / "environment"
             progress("creating_python_environment", 53, "正在创建隔离 Python 环境", None, None)
-            toolchain = verify_python_toolchain(manifest)
             uv_artifact = manifest.python.uv_artifact
             python_artifact = manifest.python.python_runtime
             wheelhouse_artifact = manifest.python.wheelhouse
             if uv_artifact is None or python_artifact is None or wheelhouse_artifact is None:
                 raise ComfyUIRuntimeError("python_environment_failed", "The fixed Python toolchain is incomplete")
+            toolchain = TOOLCHAIN_PREPARER(payload / "toolchain", manifest, cancel)
             environment_fingerprint_value = ENVIRONMENT_BUILDER(environment, manifest, cancel)
             _update_journal(journal, "environment_created")
             progress("installing_dependencies", 78, "正在安装固定且校验过的依赖", None, None)
@@ -1880,9 +2353,9 @@ def run_runtime_install(
                 python_executable_sha256=sha256_file(_environment_python(environment)),
                 environment_manager_version=manifest.python.environment_manager_version,
                 toolchain_identity_sha256=toolchain.identity_sha256,
-                uv_artifact_sha256=uv_artifact.sha256,
+                uv_artifact_sha256=uv_artifact.archive_sha256,
                 python_runtime_sha256=python_artifact.tree_sha256,
-                wheelhouse_sha256=wheelhouse_artifact.sha256,
+                wheelhouse_sha256=wheelhouse_artifact.tree_sha256,
                 wheel_artifact_lock_sha256=wheelhouse_artifact.artifact_lock_sha256,
                 platform_adapter=adapter,
                 managed_root_identity=managed_root_identity,

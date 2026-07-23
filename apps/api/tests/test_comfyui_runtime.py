@@ -18,9 +18,6 @@ import hcs_api.comfyui_runtime as runtime
 import hcs_api.storage as storage
 from hcs_api.comfyui_archive import (
     ComfyUIRuntimeManifest,
-    PythonRuntimeArtifact,
-    ToolBinaryArtifact,
-    WheelhouseArtifact,
     load_runtime_manifest,
 )
 
@@ -92,49 +89,16 @@ def _fixture_manifest(tmp_path: Path) -> tuple[ComfyUIRuntimeManifest, Path]:
 
 def _install_fakes(tmp_path: Path, monkeypatch) -> tuple[ComfyUIRuntimeManifest, Path]:
     manifest, archive = _fixture_manifest(tmp_path)
-    artifact_fields = {
-        "relative_path": "tests/fixtures/toolchain",
-        "source_url": "https://example.invalid/fixed-artifact",
-        "size": 1,
-        "sha256": "a" * 64,
-        "operating_system": "macos",
-        "architecture": "arm64",
-    }
-    manifest.python.toolchain_status = "ready"
-    manifest.python.toolchain_unavailable_reason = None
-    manifest.python.uv_artifact = ToolBinaryArtifact(
-        **artifact_fields,
-        version=manifest.python.environment_manager_version,
-    )
-    manifest.python.python_runtime = PythonRuntimeArtifact(
-        **artifact_fields,
-        implementation="cpython",
-        version=manifest.python.version,
-        executable_relative_path="bin/python3",
-        tree_sha256="a" * 64,
-    )
-    manifest.python.wheelhouse = WheelhouseArtifact(
-        **artifact_fields,
-        artifact_lock_file="tests/fixtures/wheels.json",
-        artifact_lock_sha256="b" * 64,
-        wheel_only=True,
-        allow_sdist=False,
-        allow_editable=False,
-        allow_build_backend=False,
-        allow_dependency_resolution=False,
-    )
     monkeypatch.setattr(runtime, "load_runtime_manifest", lambda: manifest)
     monkeypatch.setattr(runtime, "platform_adapter", lambda _manifest: ("test_adapter", "experimental", True))
-    monkeypatch.setattr(
-        runtime,
-        "verify_python_toolchain",
-        lambda _manifest: runtime.VerifiedPythonToolchain(
+    fake_toolchain = runtime.VerifiedPythonToolchain(
             uv=tmp_path / "toolchain/uv",
             python=tmp_path / "toolchain/python",
             wheelhouse=tmp_path / "toolchain/wheels",
             identity_sha256=runtime._toolchain_contract_identity(manifest),
-        ),
     )
+    monkeypatch.setattr(runtime, "TOOLCHAIN_PREPARER", lambda _root, _manifest, _cancel: fake_toolchain)
+    monkeypatch.setattr(runtime, "verify_python_toolchain", lambda _manifest, _root: fake_toolchain)
 
     def download(destination, _manifest, progress, cancel):
         cancel()
@@ -181,7 +145,7 @@ def test_install_uses_durable_journal_atomic_publish_and_runtime_only_boundary(t
 
     final = runtime._version_root(manifest)
     assert (final / "source/main.py").is_file()
-    assert (final / "environment/bin/python").read_bytes() == b"controlled-python-fixture"
+    assert (final / "environment/bin/python3.11").read_bytes() == b"controlled-python-fixture"
     assert not (runtime._managed_root() / "staging").exists() or not any((runtime._managed_root() / "staging").iterdir())
     state = runtime._read_state()
     assert state.installed is True
@@ -627,10 +591,15 @@ def test_environment_fingerprint_rejects_wrong_python_even_with_matching_package
 
 
 def test_python_toolchain_fails_closed_when_reviewed_artifacts_are_unavailable() -> None:
-    manifest = load_runtime_manifest()
+    manifest = load_runtime_manifest().model_copy(deep=True)
+    manifest.python.toolchain_status = "unavailable"
+    manifest.python.toolchain_unavailable_reason = "fixture"
+    manifest.python.uv_artifact = None
+    manifest.python.python_runtime = None
+    manifest.python.wheelhouse = None
 
     with pytest.raises(runtime.ComfyUIRuntimeError) as error:
-        runtime.verify_python_toolchain(manifest)
+        runtime.verify_python_toolchain(manifest, Path("unused"))
 
     assert error.value.code == "unsupported_platform"
 
@@ -642,12 +611,14 @@ def test_environment_install_is_offline_wheel_only_and_never_resolves_sources(
     toolchain_root = tmp_path / "toolchain"
     toolchain = runtime.VerifiedPythonToolchain(
         uv=toolchain_root / "uv",
-        python=toolchain_root / "python/bin/python3",
+        python=toolchain_root / "python/bin/python3.11",
         wheelhouse=toolchain_root / "wheels",
         identity_sha256="a" * 64,
     )
+    toolchain.python.parent.mkdir(parents=True)
+    toolchain.python.write_bytes(b"python")
     commands: list[tuple[list[str], dict[str, str]]] = []
-    monkeypatch.setattr(runtime, "verify_python_toolchain", lambda _manifest: toolchain)
+    monkeypatch.setattr(runtime, "verify_python_toolchain", lambda _manifest, _root: toolchain)
     monkeypatch.setattr(runtime, "environment_fingerprint", lambda _environment, _manifest: "f" * 64)
 
     def run_controlled(argv, **kwargs):
@@ -659,8 +630,8 @@ def test_environment_install_is_offline_wheel_only_and_never_resolves_sources(
 
     assert len(commands) == 2
     assert commands[0][0][0] == str(toolchain.uv)
-    assert "--python" in commands[0][0]
-    assert str(toolchain.python) in commands[0][0]
+    assert commands[0][0][1:3] == ["pip", "uninstall"]
+    assert commands[0][0][-2:] == ["pip", "setuptools"]
     dependency_command, environment = commands[1]
     assert "--offline" in dependency_command
     assert "--no-index" in dependency_command
@@ -670,6 +641,107 @@ def test_environment_install_is_offline_wheel_only_and_never_resolves_sources(
     assert "install" in dependency_command
     assert environment["UV_PYTHON_DOWNLOADS"] == "never"
     assert environment["UV_OFFLINE"] == "1"
+
+
+class _ArtifactResponse:
+    status = 200
+
+    def __init__(self, body: bytes, *, content_length: bool = True) -> None:
+        self._body = body
+        self._read = False
+        self.headers = {"Content-Length": str(len(body))} if content_length else {}
+
+    def read(self, _size: int = -1) -> bytes:
+        if self._read:
+            return b""
+        self._read = True
+        return self._body
+
+    def close(self) -> None:
+        return
+
+
+class _ArtifactConnection:
+    sock = None
+
+    def __init__(self, response: _ArtifactResponse) -> None:
+        self._response = response
+
+    def request(self, *_args, **_kwargs) -> None:
+        return
+
+    def getresponse(self) -> _ArtifactResponse:
+        return self._response
+
+    def close(self) -> None:
+        return
+
+
+def test_pinned_artifact_download_requires_declared_size_and_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_pinned_https_connection",
+        lambda _hostname: _ArtifactConnection(
+            _ArtifactResponse(b"fixed", content_length=False)
+        ),
+    )
+    destination = tmp_path / "artifact"
+
+    with pytest.raises(runtime.ComfyUIRuntimeError) as error:
+        runtime._download_exact_artifact(
+            destination,
+            source_url="https://files.pythonhosted.org/packages/fixed.whl",
+            expected_size=5,
+            expected_sha256=_sha(b"fixed"),
+            allowed_redirect_hosts=frozenset(),
+            progress=lambda _current, _total: None,
+            cancel=lambda: None,
+            size_error_code="dependency_lock_mismatch",
+            checksum_error_code="dependency_lock_mismatch",
+        )
+
+    assert error.value.code == "download_failed"
+    assert not destination.exists()
+
+
+def test_pinned_artifact_download_refuses_replaced_managed_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    with runtime._open_managed_root(create=True) as (_fd, root_identity):
+        pass
+    staging = runtime._managed_root() / "staging"
+    runtime._ensure_managed_directory(staging, root_identity=root_identity)
+    external = tmp_path / "external"
+    external.mkdir()
+    marker = external / "marker"
+    marker.write_bytes(b"unchanged")
+    staging.rmdir()
+    staging.symlink_to(external, target_is_directory=True)
+    monkeypatch.setattr(
+        runtime,
+        "_pinned_https_connection",
+        lambda _hostname: _ArtifactConnection(_ArtifactResponse(b"fixed")),
+    )
+
+    with pytest.raises(runtime.ComfyUIRuntimeError):
+        runtime._download_exact_artifact(
+            staging / "artifact",
+            source_url="https://files.pythonhosted.org/packages/fixed.whl",
+            expected_size=5,
+            expected_sha256=_sha(b"fixed"),
+            allowed_redirect_hosts=frozenset(),
+            progress=lambda _current, _total: None,
+            cancel=lambda: None,
+            size_error_code="dependency_lock_mismatch",
+            checksum_error_code="dependency_lock_mismatch",
+            managed_root_identity=root_identity,
+        )
+
+    assert marker.read_bytes() == b"unchanged"
+    assert not (external / "artifact").exists()
 
 
 def test_runtime_validation_rejects_changed_toolchain_identity(

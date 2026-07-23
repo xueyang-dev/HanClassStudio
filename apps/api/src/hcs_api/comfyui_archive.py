@@ -118,13 +118,37 @@ class PythonEnvironment(_StrictModel):
         return self
 
 
-class _PinnedArtifact(_StrictModel):
+class PinnedLicenseFile(_StrictModel):
+    source_url: str
+    sha256: str
+
+    @field_validator("source_url")
+    @classmethod
+    def _source_url(cls, value: str) -> str:
+        if not value.startswith("https://") or any(character.isspace() for character in value):
+            raise ValueError("license source must be an exact HTTPS URL")
+        return value
+
+    @field_validator("sha256")
+    @classmethod
+    def _sha256(cls, value: str) -> str:
+        if not _SHA256.fullmatch(value):
+            raise ValueError("license identity must be lowercase SHA-256")
+        return value
+
+
+class _PinnedArchiveArtifact(_StrictModel):
     relative_path: str
     source_url: str
-    size: int = Field(gt=0)
-    sha256: str
+    archive_size: int = Field(gt=0)
+    archive_sha256: str
+    archive_type: Literal["tar.gz"]
+    archive_root: str
     operating_system: Literal["macos"]
     architecture: Literal["arm64"]
+    license_expression: str = Field(min_length=1, max_length=256)
+    license_files: list[PinnedLicenseFile] = Field(min_length=1)
+    license_review: Literal["approved"]
 
     @field_validator("relative_path")
     @classmethod
@@ -132,7 +156,7 @@ class _PinnedArtifact(_StrictModel):
         _validated_relative_name(value, max_bytes=512, max_depth=12)
         return value
 
-    @field_validator("sha256")
+    @field_validator("archive_sha256")
     @classmethod
     def _artifact_sha256(cls, value: str) -> str:
         if not _SHA256.fullmatch(value):
@@ -147,8 +171,11 @@ class _PinnedArtifact(_StrictModel):
         return value
 
 
-class ToolBinaryArtifact(_PinnedArtifact):
+class ToolBinaryArtifact(_PinnedArchiveArtifact):
     version: str
+    executable_relative_path: str
+    executable_size: int = Field(gt=0)
+    executable_sha256: str
 
     @field_validator("version")
     @classmethod
@@ -157,12 +184,29 @@ class ToolBinaryArtifact(_PinnedArtifact):
             raise ValueError("tool version must be exact")
         return value
 
+    @field_validator("executable_relative_path")
+    @classmethod
+    def _executable_path(cls, value: str) -> str:
+        _validated_relative_name(value, max_bytes=256, max_depth=8)
+        return value
 
-class PythonRuntimeArtifact(_PinnedArtifact):
+    @field_validator("executable_sha256")
+    @classmethod
+    def _executable_sha256(cls, value: str) -> str:
+        if not _SHA256.fullmatch(value):
+            raise ValueError("tool executable identity must be lowercase SHA-256")
+        return value
+
+
+class PythonRuntimeArtifact(_PinnedArchiveArtifact):
     implementation: Literal["cpython"]
     version: str
     executable_relative_path: str
+    executable_size: int = Field(gt=0)
+    executable_sha256: str
+    tree_size: int = Field(gt=0)
     tree_sha256: str
+    ignored_symlinks: dict[str, str]
 
     @field_validator("version")
     @classmethod
@@ -177,36 +221,45 @@ class PythonRuntimeArtifact(_PinnedArtifact):
         _validated_relative_name(value, max_bytes=256, max_depth=8)
         return value
 
-    @field_validator("tree_sha256")
+    @field_validator("tree_sha256", "executable_sha256")
     @classmethod
     def _tree_sha256(cls, value: str) -> str:
         if not _SHA256.fullmatch(value):
             raise ValueError("Python tree identity must be lowercase SHA-256")
         return value
 
-    @model_validator(mode="after")
-    def _tree_matches_artifact(self) -> "PythonRuntimeArtifact":
-        if self.tree_sha256 != self.sha256:
-            raise ValueError("bundled Python artifact and tree identities disagree")
-        return self
+    @field_validator("ignored_symlinks")
+    @classmethod
+    def _ignored_symlinks(cls, value: dict[str, str]) -> dict[str, str]:
+        for name, target in value.items():
+            _validated_relative_name(name, max_bytes=256, max_depth=8)
+            if not target or "/" in target or "\\" in target or target in {".", ".."}:
+                raise ValueError("ignored Python symlink target must be one local filename")
+        return value
 
 
-class WheelhouseArtifact(_PinnedArtifact):
+class WheelhouseArtifact(_StrictModel):
+    relative_path: str
     artifact_lock_file: str
     artifact_lock_sha256: str
+    package_count: int = Field(gt=0)
+    size: int = Field(gt=0)
+    tree_sha256: str
+    source_allowlist: list[Literal["https://files.pythonhosted.org/packages/"]]
+    download_policy: Literal["strict_allowlist"]
     wheel_only: Literal[True]
     allow_sdist: Literal[False]
     allow_editable: Literal[False]
     allow_build_backend: Literal[False]
     allow_dependency_resolution: Literal[False]
 
-    @field_validator("artifact_lock_file")
+    @field_validator("relative_path", "artifact_lock_file")
     @classmethod
     def _artifact_lock_file(cls, value: str) -> str:
         _validated_relative_name(value, max_bytes=512, max_depth=12)
         return value
 
-    @field_validator("artifact_lock_sha256")
+    @field_validator("artifact_lock_sha256", "tree_sha256")
     @classmethod
     def _artifact_lock_sha256(cls, value: str) -> str:
         if not _SHA256.fullmatch(value):
@@ -231,6 +284,14 @@ class RuntimePlatform(_StrictModel):
     adapter: str
     support: Literal["experimental", "contract_only"]
     install_enabled: bool
+    minimum_os_version: str | None = None
+
+    @field_validator("minimum_os_version")
+    @classmethod
+    def _minimum_os_version(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"\d+\.\d+", value):
+            raise ValueError("minimum OS version must be exact major.minor")
+        return value
 
 
 class CapabilityBoundary(_StrictModel):
@@ -298,6 +359,8 @@ class ComfyUIRuntimeManifest(_StrictModel):
             raise ValueError("only the reviewed macOS Apple Silicon adapter may install")
         if enabled and self.python.toolchain_status != "ready":
             raise ValueError("platform installation cannot be enabled without a fixed toolchain")
+        if enabled and enabled[0].minimum_os_version != "14.0":
+            raise ValueError("the reviewed macOS wheel bundle requires macOS 14.0 or newer")
         if self.license.bundled_file not in self.critical_files:
             raise ValueError("bundled license is not covered by critical file identity")
         if self.critical_files[self.license.bundled_file] != self.license.bundled_file_sha256:
@@ -605,6 +668,200 @@ def extract_tar_gz(path: Path, destination: Path, manifest: ComfyUIRuntimeManife
         raise ComfyUIArchiveError("archive_extraction_failed", "ComfyUI archive extraction failed") from exc
     finally:
         os.close(root_fd)
+
+
+def extract_pinned_tool_archive(
+    path: Path,
+    destination: Path,
+    *,
+    archive_size: int,
+    archive_sha256: str,
+    archive_root: str,
+    ignored_symlinks: dict[str, str] | None = None,
+    executable_paths: set[str] | None = None,
+    destination_fd: int | None = None,
+) -> ArchiveInspection:
+    """Extract a fixed tool archive as regular files only, using the trusted destination dirfd."""
+    ignored_symlinks = ignored_symlinks or {}
+    executable_paths = executable_paths or set()
+    try:
+        info = path.lstat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_size != archive_size
+            or sha256_file(path, max_bytes=archive_size) != archive_sha256
+        ):
+            raise ComfyUIArchiveError("checksum_mismatch", "Toolchain archive identity differs from its manifest")
+    except OSError as exc:
+        raise ComfyUIArchiveError("download_failed", "Toolchain archive is unavailable") from exc
+
+    members: list[ArchiveMember] = []
+    portable_names: set[str] = set()
+    seen_ignored_symlinks: set[str] = set()
+    total_bytes = 0
+    try:
+        with tarfile.open(path, mode="r:gz") as archive:
+            raw_members = archive.getmembers()
+            if not raw_members or len(raw_members) > 25_000:
+                raise ComfyUIArchiveError("archive_entry_limit", "Toolchain archive entry count is invalid")
+            for member in raw_members:
+                raw_name = member.name[:-1] if member.name.endswith("/") else member.name
+                full_name = _validated_relative_name(raw_name, max_bytes=512, max_depth=20)
+                if full_name.parts[0] != archive_root:
+                    raise ComfyUIArchiveError("archive_root_mismatch", "Toolchain archive root differs from its manifest")
+                relative_name = PurePosixPath(*full_name.parts[1:]).as_posix() if len(full_name.parts) > 1 else ""
+                portable = unicodedata.normalize("NFKC", full_name.as_posix()).casefold()
+                if portable in portable_names:
+                    raise ComfyUIArchiveError("archive_path_collision", "Toolchain archive contains colliding paths")
+                portable_names.add(portable)
+                if member.isdir():
+                    kind: Literal["directory", "file"] = "directory"
+                elif member.isfile():
+                    kind = "file"
+                    if member.size < 0 or member.size > 128 * 1024 * 1024:
+                        raise ComfyUIArchiveError("archive_file_limit", "Toolchain archive contains an oversized file")
+                    total_bytes += member.size
+                    if total_bytes > 512 * 1024 * 1024:
+                        raise ComfyUIArchiveError("archive_expanded_size_limit", "Toolchain archive exceeds its expanded size limit")
+                elif member.issym() and relative_name in ignored_symlinks:
+                    if member.linkname != ignored_symlinks[relative_name]:
+                        raise ComfyUIArchiveError("archive_special_file", "Toolchain symlink identity differs from its manifest")
+                    seen_ignored_symlinks.add(relative_name)
+                    continue
+                else:
+                    raise ComfyUIArchiveError("archive_special_file", "Toolchain archive contains an unapproved link or special file")
+                members.append(ArchiveMember(
+                    archive_name=member.name,
+                    relative_name=relative_name,
+                    kind=kind,
+                    size=member.size if kind == "file" else 0,
+                ))
+    except ComfyUIArchiveError:
+        raise
+    except (OSError, tarfile.TarError, UnicodeError) as exc:
+        raise ComfyUIArchiveError("invalid_archive", "Toolchain archive cannot be parsed safely") from exc
+
+    if not members:
+        raise ComfyUIArchiveError("archive_root_mismatch", "Toolchain archive contains no approved content")
+    if seen_ignored_symlinks != set(ignored_symlinks):
+        raise ComfyUIArchiveError("archive_special_file", "Toolchain symlink set differs from its manifest")
+    inspection = ArchiveInspection(
+        members=members,
+        file_count=sum(item.kind == "file" for item in members),
+        directory_count=sum(item.kind == "directory" for item in members),
+        total_file_bytes=total_bytes,
+    )
+    if destination_fd is not None:
+        try:
+            if os.listdir(destination_fd):
+                raise ComfyUIArchiveError("staging_conflict", "Toolchain staging directory must be empty")
+            root_fd = os.dup(destination_fd)
+            root_identity = _directory_identity(os.fstat(root_fd))
+        except ComfyUIArchiveError:
+            raise
+        except OSError as exc:
+            raise ComfyUIArchiveError("staging_conflict", "Toolchain staging directory cannot be inspected") from exc
+    else:
+        if destination.exists():
+            try:
+                destination_info = destination.lstat()
+            except OSError as exc:
+                raise ComfyUIArchiveError("staging_conflict", "Toolchain staging directory cannot be inspected") from exc
+            if not stat.S_ISDIR(destination_info.st_mode) or any(destination.iterdir()):
+                raise ComfyUIArchiveError("staging_conflict", "Toolchain staging directory must be empty")
+        else:
+            destination.mkdir(parents=True, mode=0o700)
+        root_fd, root_identity = _open_verified_directory(destination)
+    try:
+        with tarfile.open(path, mode="r:gz") as archive:
+            raw_by_name = {member.name: member for member in archive.getmembers()}
+            for expected in inspection.members:
+                if not expected.relative_name:
+                    continue
+                relative = PurePosixPath(expected.relative_name)
+                if expected.kind == "directory":
+                    with _open_directory_chain(root_fd, relative.parts):
+                        pass
+                    continue
+                source = archive.extractfile(raw_by_name[expected.archive_name])
+                if source is None:
+                    raise ComfyUIArchiveError("invalid_archive", "Toolchain archive file content is missing")
+                mode = 0o700 if expected.relative_name in executable_paths else 0o600
+                written = 0
+                with _open_directory_chain(root_fd, relative.parts[:-1]) as parent_fd:
+                    fd = os.open(
+                        relative.name,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        mode,
+                        dir_fd=parent_fd,
+                    )
+                    try:
+                        with os.fdopen(fd, "wb", closefd=False) as output:
+                            while chunk := source.read(1024 * 1024):
+                                written += len(chunk)
+                                if written > expected.size:
+                                    raise ComfyUIArchiveError("archive_size_changed", "Toolchain file exceeded its inspected size")
+                                output.write(chunk)
+                            output.flush()
+                            os.fsync(output.fileno())
+                    finally:
+                        os.close(fd)
+                if written != expected.size:
+                    raise ComfyUIArchiveError("archive_size_changed", "Toolchain file size changed during extraction")
+        if _directory_identity(os.fstat(root_fd)) != root_identity:
+            raise ComfyUIArchiveError("unsafe_archive_path", "Toolchain staging directory identity changed")
+        _verify_regular_tree_fd(root_fd, inspection)
+        if path.stat().st_size != archive_size or sha256_file(path, max_bytes=archive_size) != archive_sha256:
+            raise ComfyUIArchiveError("checksum_mismatch", "Toolchain archive changed during extraction")
+        return inspection
+    except ComfyUIArchiveError:
+        raise
+    except (OSError, tarfile.TarError) as exc:
+        raise ComfyUIArchiveError("archive_extraction_failed", "Toolchain archive extraction failed") from exc
+    finally:
+        os.close(root_fd)
+
+
+def _verify_regular_tree(root: Path, inspection: ArchiveInspection) -> None:
+    root_fd, _identity = _open_verified_directory(root)
+    try:
+        _verify_regular_tree_fd(root_fd, inspection)
+    finally:
+        os.close(root_fd)
+
+
+def _verify_regular_tree_fd(root_fd: int, inspection: ArchiveInspection) -> None:
+    expected_files = {item.relative_name: item.size for item in inspection.members if item.kind == "file"}
+    expected_dirs = {item.relative_name for item in inspection.members if item.kind == "directory" and item.relative_name}
+    for relative_name in [*expected_files, *expected_dirs]:
+        parent = PurePosixPath(relative_name).parent
+        while parent.parts:
+            expected_dirs.add(parent.as_posix())
+            parent = parent.parent
+    actual_files: dict[str, int] = {}
+    actual_dirs: set[str] = set()
+    portable: set[str] = set()
+    for current_root, directory_names, file_names, current_fd in os.fwalk(
+        ".", topdown=True, follow_symlinks=False, dir_fd=root_fd
+    ):
+        current = PurePosixPath(current_root)
+        for name in [*directory_names, *file_names]:
+            target_info = os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+            relative = (current / name).relative_to(".").as_posix()
+            identity = unicodedata.normalize("NFKC", relative).casefold()
+            if identity in portable:
+                raise ComfyUIArchiveError("archive_path_collision", "Extracted toolchain tree contains colliding paths")
+            portable.add(identity)
+            if stat.S_ISLNK(target_info.st_mode) or not (
+                stat.S_ISDIR(target_info.st_mode) or stat.S_ISREG(target_info.st_mode)
+            ):
+                raise ComfyUIArchiveError("archive_special_file", "Extracted toolchain tree contains a link or special file")
+            if stat.S_ISDIR(target_info.st_mode):
+                actual_dirs.add(relative)
+            else:
+                actual_files[relative] = target_info.st_size
+    if actual_files != expected_files or actual_dirs != expected_dirs:
+        raise ComfyUIArchiveError("archive_tree_mismatch", "Extracted toolchain tree differs from its archive")
 
 
 def verify_extracted_tree(

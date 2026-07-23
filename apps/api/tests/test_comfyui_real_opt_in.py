@@ -28,8 +28,6 @@ def _directory_size(path: Path) -> int:
 def test_real_official_comfyui_install_start_health_stop_uninstall(tmp_path: Path, monkeypatch) -> None:
     if platform.system() != "Darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
         pytest.skip("real Phase 2B adapter is enabled only for macOS Apple Silicon")
-    if shutil.which("uv") is None:
-        pytest.skip("the reviewed uv environment manager is unavailable")
     if shutil.disk_usage(tmp_path).free < 8 * 1024**3:
         pytest.skip("real ComfyUI integration requires at least 8 GB free disk")
 
@@ -39,6 +37,26 @@ def test_real_official_comfyui_install_start_health_stop_uninstall(tmp_path: Pat
     monkeypatch.setattr(storage, "CONFIG_DIR", root / "config")
     monkeypatch.setattr(storage, "PROVIDER_SETTINGS_PATH", root / "config/provider_settings.json")
     manifest = load_runtime_manifest()
+    toolchain_cache_value = os.environ.get("HCS_COMFYUI_REAL_TOOLCHAIN_CACHE")
+    if toolchain_cache_value:
+        toolchain_cache = Path(toolchain_cache_value).resolve()
+        controlled_cache_root = (storage.ROOT_DIR / ".workbuddy").resolve()
+        try:
+            toolchain_cache.relative_to(controlled_cache_root)
+        except ValueError:
+            pytest.fail("real toolchain cache must remain inside the project-controlled fixture root")
+        runtime.verify_python_toolchain(manifest, toolchain_cache)
+
+        def prepare_cached_toolchain(
+            destination: Path,
+            current_manifest,
+            cancel,
+        ):
+            cancel()
+            shutil.copytree(toolchain_cache, destination)
+            return runtime.verify_python_toolchain(current_manifest, destination)
+
+        monkeypatch.setattr(runtime, "TOOLCHAIN_PREPARER", prepare_cached_toolchain)
     report: dict[str, object] = {
         "schema": "hanclassstudio.comfyui_real_validation.v1",
         "validated_at": runtime._iso(),
@@ -64,6 +82,8 @@ def test_real_official_comfyui_install_start_health_stop_uninstall(tmp_path: Pat
         installation = runtime.validate_runtime_tree(runtime._version_root(manifest), manifest)
         report["environment_manager"] = f"uv {installation.environment_manager_version}"
         report["python_executable_sha256"] = installation.python_executable_sha256
+        report["install_environment_fingerprint"] = installation.environment_fingerprint
+        report["install_toolchain_identity"] = installation.toolchain_identity_sha256
 
         start_started = time.monotonic()
         health = runtime.start_runtime()
@@ -84,10 +104,18 @@ def test_real_official_comfyui_install_start_health_stop_uninstall(tmp_path: Pat
         assert health.custom_nodes_pristine is True
         assert health.version == manifest.version
         assert health.port is not None
+        checked = runtime.check_runtime_health()
+        assert checked.healthy is True
+        assert checked.identity_verified is True
+        report["explicit_health_check"] = checked.model_dump(mode="json")
         process = runtime._read_process()
         assert process is not None
+        assert process.ownership.listener_pid is not None
         listener = subprocess.run(
-            ["lsof", "-nP", "-a", "-p", str(process.ownership.pid), f"-iTCP:{health.port}", "-sTCP:LISTEN", "-Fn"],
+            [
+                "lsof", "-nP", "-a", "-p", str(process.ownership.listener_pid),
+                f"-iTCP:{health.port}", "-sTCP:LISTEN", "-Fn",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -102,6 +130,25 @@ def test_real_official_comfyui_install_start_health_stop_uninstall(tmp_path: Pat
         running = False
         report["stop_result"] = stopped.status
         assert stopped.status == "stopped"
+
+        repair_started = time.monotonic()
+        prepared_repair = runtime.prepare_runtime_operation("repair")
+        repair_confirmation = runtime.consume_runtime_operation_confirmation(
+            "repair",
+            prepared_repair.confirmation_token,
+            prepared_repair.summary.installation_identity,
+        )
+        runtime.run_runtime_install(
+            "real-opt-in-repair",
+            operation="repair",
+            confirmation=repair_confirmation,
+        )
+        repaired = runtime.validate_runtime_tree(runtime._version_root(manifest), manifest)
+        report["repair_seconds"] = round(time.monotonic() - repair_started, 3)
+        report["repair_environment_fingerprint"] = repaired.environment_fingerprint
+        report["repair_toolchain_identity"] = repaired.toolchain_identity_sha256
+        assert repaired.environment_fingerprint == installation.environment_fingerprint
+        assert repaired.toolchain_identity_sha256 == installation.toolchain_identity_sha256
 
         prepared = runtime.prepare_runtime_operation("uninstall")
         confirmation = runtime.consume_runtime_operation_confirmation(
