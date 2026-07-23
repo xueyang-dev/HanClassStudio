@@ -32,6 +32,7 @@ from .comfyui_archive import (
     custom_node_tree_is_pristine,
     extract_tar_gz,
     load_runtime_manifest,
+    secure_dirfd_extraction_supported,
     sha256_file,
 )
 
@@ -404,7 +405,7 @@ def platform_adapter(manifest: ComfyUIRuntimeManifest) -> tuple[str, str, bool]:
     )
     for item in manifest.platforms:
         if item.operating_system == system and item.architecture == architecture:
-            return item.adapter, item.support, item.install_enabled
+            return item.adapter, item.support, item.install_enabled and secure_dirfd_extraction_supported()
     return "unsupported", "unavailable", False
 
 

@@ -9,8 +9,9 @@ import re
 import stat
 import tarfile
 import unicodedata
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Iterator, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -21,6 +22,14 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _NESTED_ARCHIVE_SUFFIXES = (
     ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz",
     ".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz",
+)
+_HAS_SECURE_DIRFD = (
+    hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+    and os.open in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and os.stat in os.supports_follow_symlinks
 )
 
 
@@ -341,56 +350,127 @@ def inspect_tar_gz(path: Path, manifest: ComfyUIRuntimeManifest) -> ArchiveInspe
     )
 
 
-def _destination_path(root: Path, relative_name: str) -> Path:
-    target = root.joinpath(*PurePosixPath(relative_name).parts) if relative_name else root
+def secure_dirfd_extraction_supported() -> bool:
+    return _HAS_SECURE_DIRFD
+
+
+def _directory_identity(info: os.stat_result) -> tuple[int, int]:
+    return info.st_dev, info.st_ino
+
+
+def _open_verified_directory(path: Path) -> tuple[int, tuple[int, int]]:
+    if not secure_dirfd_extraction_supported():
+        raise ComfyUIArchiveError(
+            "safe_extraction_unavailable",
+            "This platform cannot provide symlink-safe directory-relative extraction",
+        )
     try:
-        target.resolve(strict=False).relative_to(root.resolve(strict=True))
-    except (OSError, ValueError) as exc:
-        raise ComfyUIArchiveError("unsafe_archive_path", "Archive extraction would leave its staging directory") from exc
-    return target
+        before = path.lstat()
+        if not stat.S_ISDIR(before.st_mode):
+            raise ComfyUIArchiveError("staging_conflict", "ComfyUI staging directory must be a real directory")
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        after = os.fstat(fd)
+        if _directory_identity(before) != _directory_identity(after):
+            os.close(fd)
+            raise ComfyUIArchiveError("unsafe_archive_path", "ComfyUI staging directory identity changed")
+        os.fchmod(fd, 0o700)
+        return fd, _directory_identity(after)
+    except ComfyUIArchiveError:
+        raise
+    except OSError as exc:
+        raise ComfyUIArchiveError("unsafe_archive_path", "ComfyUI staging directory cannot be opened safely") from exc
+
+
+def _open_child_directory(parent_fd: int, name: str) -> int:
+    try:
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode):
+            raise ComfyUIArchiveError("unsafe_archive_path", "Archive parent is not a real directory")
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        after = os.fstat(fd)
+        if _directory_identity(before) != _directory_identity(after):
+            os.close(fd)
+            raise ComfyUIArchiveError("unsafe_archive_path", "Archive parent directory identity changed")
+        os.fchmod(fd, 0o700)
+        return fd
+    except ComfyUIArchiveError:
+        raise
+    except OSError as exc:
+        raise ComfyUIArchiveError("unsafe_archive_path", "Archive parent directory cannot be opened safely") from exc
+
+
+@contextmanager
+def _open_directory_chain(root_fd: int, parts: tuple[str, ...]) -> Iterator[int]:
+    current = os.dup(root_fd)
+    try:
+        for part in parts:
+            child = _open_child_directory(current, part)
+            os.close(current)
+            current = child
+        yield current
+    finally:
+        os.close(current)
+
+
+def _assert_directory_identity(path: Path, expected: tuple[int, int]) -> None:
+    try:
+        current = path.lstat()
+    except OSError as exc:
+        raise ComfyUIArchiveError("unsafe_archive_path", "ComfyUI staging directory disappeared") from exc
+    if not stat.S_ISDIR(current.st_mode) or _directory_identity(current) != expected:
+        raise ComfyUIArchiveError("unsafe_archive_path", "ComfyUI staging directory identity changed")
 
 
 def extract_tar_gz(path: Path, destination: Path, manifest: ComfyUIRuntimeManifest) -> ArchiveInspection:
     """Extract only pre-inspected regular files/directories into a private empty directory."""
     inspection = inspect_tar_gz(path, manifest)
     if destination.exists():
-        if not destination.is_dir() or any(destination.iterdir()):
+        try:
+            destination_info = destination.lstat()
+        except OSError as exc:
+            raise ComfyUIArchiveError("staging_conflict", "ComfyUI staging directory cannot be inspected") from exc
+        if not stat.S_ISDIR(destination_info.st_mode) or any(destination.iterdir()):
             raise ComfyUIArchiveError("staging_conflict", "ComfyUI staging directory must be empty")
     else:
         destination.mkdir(parents=True, mode=0o700)
+    root_fd, root_identity = _open_verified_directory(destination)
     try:
-        os.chmod(destination, 0o700)
         with tarfile.open(path, mode="r:gz") as archive:
             raw_by_name = {member.name: member for member in archive.getmembers()}
             for expected in inspection.members:
                 if not expected.relative_name:
                     continue
-                target = _destination_path(destination, expected.relative_name)
+                relative = PurePosixPath(expected.relative_name)
                 if expected.kind == "directory":
-                    target.mkdir(parents=True, exist_ok=False, mode=0o700)
+                    with _open_directory_chain(root_fd, relative.parts):
+                        pass
                     continue
-                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 source = archive.extractfile(raw_by_name[expected.archive_name])
                 if source is None:
                     raise ComfyUIArchiveError("invalid_archive", "ComfyUI archive file content is missing")
                 flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                if hasattr(os, "O_NOFOLLOW"):
-                    flags |= os.O_NOFOLLOW
+                flags |= os.O_NOFOLLOW
                 written = 0
-                fd = os.open(target, flags, 0o600)
-                try:
-                    with os.fdopen(fd, "wb", closefd=False) as output:
-                        while chunk := source.read(1024 * 1024):
-                            written += len(chunk)
-                            if written > expected.size:
-                                raise ComfyUIArchiveError("archive_size_changed", "Archive file exceeded its inspected size")
-                            output.write(chunk)
-                        output.flush()
-                        os.fsync(output.fileno())
-                finally:
-                    os.close(fd)
+                with _open_directory_chain(root_fd, relative.parts[:-1]) as parent_fd:
+                    fd = os.open(relative.name, flags, 0o600, dir_fd=parent_fd)
+                    try:
+                        with os.fdopen(fd, "wb", closefd=False) as output:
+                            while chunk := source.read(1024 * 1024):
+                                written += len(chunk)
+                                if written > expected.size:
+                                    raise ComfyUIArchiveError("archive_size_changed", "Archive file exceeded its inspected size")
+                                output.write(chunk)
+                            output.flush()
+                            os.fsync(output.fileno())
+                    finally:
+                        os.close(fd)
                 if written != expected.size:
                     raise ComfyUIArchiveError("archive_size_changed", "Archive file size changed during extraction")
+        _assert_directory_identity(destination, root_identity)
         verify_extracted_tree(destination, inspection, manifest)
         verify_archive_file(path, manifest)
         return inspection
@@ -398,6 +478,8 @@ def extract_tar_gz(path: Path, destination: Path, manifest: ComfyUIRuntimeManife
         raise
     except (OSError, tarfile.TarError) as exc:
         raise ComfyUIArchiveError("archive_extraction_failed", "ComfyUI archive extraction failed") from exc
+    finally:
+        os.close(root_fd)
 
 
 def verify_extracted_tree(

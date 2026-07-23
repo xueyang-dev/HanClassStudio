@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import tarfile
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from hcs_api.comfyui_archive import (
     inspect_tar_gz,
     load_runtime_manifest,
 )
+from hcs_api import comfyui_archive as archive_module
 
 
 def _sha(data: bytes) -> str:
@@ -131,6 +133,62 @@ def test_safe_archive_extracts_only_verified_regular_tree(tmp_path: Path) -> Non
     assert inspection.file_count == 8
     assert (destination / "main.py").read_bytes() == b"print('fixture')\n"
     assert not (tmp_path / "outside").exists()
+
+
+def test_parent_directory_replacement_cannot_write_outside_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = load_runtime_manifest().source.archive_root
+    archive = tmp_path / "source.tar.gz"
+    entries = _valid_entries(root)
+    _write_tar(archive, entries)
+    manifest = _mini_manifest(archive, entries)
+    destination = tmp_path / "staging"
+    displaced = tmp_path / "displaced-staging"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original_open = archive_module.os.open
+    swapped = False
+
+    def replace_root_before_file_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if path == "main.py" and dir_fd is not None and not swapped:
+            swapped = True
+            destination.rename(displaced)
+            destination.symlink_to(outside, target_is_directory=True)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(archive_module.os, "open", replace_root_before_file_open)
+
+    with pytest.raises(ComfyUIArchiveError) as error:
+        extract_tar_gz(archive, destination, manifest)
+
+    assert error.value.code == "unsafe_archive_path"
+    assert swapped is True
+    assert not (outside / "main.py").exists()
+    assert list(outside.iterdir()) == []
+
+
+def test_extraction_fails_closed_without_safe_dirfd_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = load_runtime_manifest().source.archive_root
+    archive = tmp_path / "source.tar.gz"
+    entries = _valid_entries(root)
+    _write_tar(archive, entries)
+    manifest = _mini_manifest(archive, entries)
+    monkeypatch.setattr(archive_module, "secure_dirfd_extraction_supported", lambda: False)
+
+    with pytest.raises(ComfyUIArchiveError) as error:
+        extract_tar_gz(archive, tmp_path / "staging", manifest)
+
+    assert error.value.code == "safe_extraction_unavailable"
 
 
 @pytest.mark.parametrize(
